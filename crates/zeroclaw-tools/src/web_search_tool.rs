@@ -281,14 +281,35 @@ impl WebSearchTool {
     }
 
     async fn search_tavily(&self, query: &str) -> anyhow::Result<String> {
-        self.search_tavily_at("https://api.tavily.com/search", query)
+        let client = self.build_tavily_client()?;
+        self.search_tavily_with_client(&client, "https://api.tavily.com/search", query)
             .await
     }
 
-    /// Inner Tavily request implementation, parameterized on the endpoint URL
-    /// so request-shape tests can target a local mock server. Production calls
-    /// always go through [`Self::search_tavily`].
-    async fn search_tavily_at(&self, url: &str, query: &str) -> anyhow::Result<String> {
+    /// Build the production HTTP client for Tavily, wired through the
+    /// process-global runtime proxy state. Extracted so the
+    /// `search_tavily_with_client` test path can substitute a fresh
+    /// client and stay isolated from concurrent tests that mutate
+    /// `RUNTIME_PROXY_CONFIG` (a request built off a stale "enabled"
+    /// proxy snapshot otherwise routes through a non-existent proxy
+    /// and the wiremock connection fails).
+    fn build_tavily_client(&self) -> anyhow::Result<reqwest::Client> {
+        let builder = reqwest::Client::builder().timeout(Duration::from_secs(self.timeout_secs));
+        let builder =
+            zeroclaw_config::schema::apply_runtime_proxy_to_builder(builder, "tool.web_search");
+        Ok(builder.build()?)
+    }
+
+    /// Inner Tavily request implementation, parameterized on the HTTP
+    /// client and endpoint URL so request-shape tests can target a local
+    /// mock server with a client that doesn't read process-global proxy
+    /// state. Production calls always go through [`Self::search_tavily`].
+    async fn search_tavily_with_client(
+        &self,
+        client: &reqwest::Client,
+        url: &str,
+        query: &str,
+    ) -> anyhow::Result<String> {
         let api_key = self.resolve_tavily_api_key()?;
 
         // Tavily authenticates via `Authorization: Bearer <key>` per
@@ -302,11 +323,6 @@ impl WebSearchTool {
             "include_answer": false,
             "include_raw_content": false,
         });
-
-        let builder = reqwest::Client::builder().timeout(Duration::from_secs(self.timeout_secs));
-        let builder =
-            zeroclaw_config::schema::apply_runtime_proxy_to_builder(builder, "tool.web_search");
-        let client = builder.build()?;
 
         let response = client
             .post(url)
@@ -938,8 +954,15 @@ mod tests {
             false,
         );
 
+        // Isolated client so the request shape under test isn't affected
+        // by `RUNTIME_PROXY_CONFIG` mutations from sibling proxy_config
+        // tests running concurrently in the same process.
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .expect("client builder should succeed without a proxy");
         let result = tool
-            .search_tavily_at(&format!("{}/search", server.uri()), "what is rust")
+            .search_tavily_with_client(&client, &format!("{}/search", server.uri()), "what is rust")
             .await
             .expect("request should succeed against the mock");
         assert!(
