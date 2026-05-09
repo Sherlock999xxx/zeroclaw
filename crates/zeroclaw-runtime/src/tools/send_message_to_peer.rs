@@ -254,9 +254,11 @@ mod tests {
         // The external peer is stored as "operator" (no @, lowercase);
         // inbound handles often arrive as "@Operator". The peer-set
         // check must accept the normalized match. Delivery itself will
-        // fail because no `DELIVERY_FN` is registered in unit tests,
-        // but that's a different layer than the peer-set authorization
-        // surface this test covers.
+        // fail because no DELIVERY_FN is registered in unit tests, but
+        // we still need to assert that the FAILURE is from delivery,
+        // not from the peer-set check — otherwise a regression that
+        // makes the peer-set check always pass for non-peers would
+        // also satisfy this test silently.
         let cfg = Arc::new(config_with_two_agents_and_one_peer_group());
         let tool = SendMessageToPeerTool::new(cfg, "alpha");
         let result = tool
@@ -267,10 +269,12 @@ mod tests {
             }))
             .await
             .expect("execute returns Ok with structured failure");
-        // We expect the peer-set check to PASS (so the error mentions
-        // delivery, not the peer set).
+        let err = result.error.unwrap_or_default();
+        assert!(
+            !err.contains("not on agent") && !err.contains("does not list channel"),
+            "peer-set check must accept @Operator after normalization (delivery-layer failure is expected, peer-set rejection is not). Got: {err}"
+        );
         if !result.success {
-            let err = result.error.unwrap_or_default();
             assert!(
                 err.contains("delivery") || err.contains("not registered"),
                 "expected delivery-layer error after peer-set passes, got: {err}"
