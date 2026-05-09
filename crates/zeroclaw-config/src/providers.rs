@@ -55,6 +55,7 @@ use super::schema::{
 // blocks in schema.rs); the newtype's job is to encode the *category* in
 // the type, not the existence — both layers reinforce each other.
 
+#[macro_export]
 macro_rules! define_provider_ref {
     ($name:ident, $category_doc:literal) => {
         #[doc = concat!("Reference to a configured `[", $category_doc, ".<type>.<alias>]` entry.")]

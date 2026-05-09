@@ -7,6 +7,7 @@ pub mod cost;
 pub mod domain_matcher;
 pub mod helpers;
 pub mod migration;
+pub mod multi_agent;
 pub mod pairing;
 pub mod platform;
 pub mod policy;
