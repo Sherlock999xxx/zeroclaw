@@ -262,6 +262,157 @@ pub struct MigrateReport {
     pub to_version: u32,
 }
 
+/// Move a legacy `<install>/workspace/` into
+/// `<install>/agents/default/workspace/` (#6272 P9 filesystem
+/// migration).
+///
+/// Idempotent: on a fresh install (no legacy dir) this is a no-op;
+/// on an already-migrated install (legacy dir gone, new dir
+/// populated) this is also a no-op. Mid-migration crash recovery is
+/// the operator's responsibility — the function refuses to overwrite
+/// a populated target dir, so a half-finished move surfaces as a
+/// loud error rather than data loss.
+///
+/// Before any move, copies the legacy workspace contents to
+/// `<install>/backup-<timestamp>/legacy-workspace/` so a rollback is
+/// just `mv` back. The backup uses copy-not-rename so a partial
+/// failure mid-copy does not orphan the legacy data.
+///
+/// Returns `Ok(true)` when a migration actually ran, `Ok(false)`
+/// when nothing needed to happen.
+pub fn migrate_legacy_workspace_to_default_agent(install_root: &Path) -> Result<bool> {
+    let legacy = install_root.join("workspace");
+    let agents_dir = install_root.join("agents");
+    let new_default = agents_dir.join("default").join("workspace");
+
+    // Fast path: legacy doesn't exist → nothing to do (fresh install or
+    // already migrated).
+    if !legacy.is_dir() {
+        return Ok(false);
+    }
+
+    // The new path already exists AND is populated → assume migration
+    // already ran and the operator (or a previous boot) hasn't
+    // cleaned up the legacy dir yet. Don't touch.
+    if new_default.is_dir() {
+        let populated = std::fs::read_dir(&new_default)
+            .map(|mut iter| iter.next().is_some())
+            .unwrap_or(false);
+        if populated {
+            tracing::info!(
+                target = %new_default.display(),
+                legacy = %legacy.display(),
+                "v0.8.0 filesystem migration: target already populated; skipping move. \
+                 Legacy dir can be removed manually after verifying the migration."
+            );
+            return Ok(false);
+        }
+    }
+
+    // Pre-migration backup. Copy-not-rename so a partial failure mid-
+    // copy does not orphan the legacy data. The timestamp keeps
+    // backups distinct across multiple boot attempts on a broken
+    // install.
+    let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S").to_string();
+    let backup_dir = install_root
+        .join(format!("backup-{timestamp}"))
+        .join("legacy-workspace");
+    std::fs::create_dir_all(&backup_dir).with_context(|| {
+        format!(
+            "[system] failed to create v0.8.0 migration backup dir at {}",
+            backup_dir.display()
+        )
+    })?;
+    copy_dir_recursive(&legacy, &backup_dir).with_context(|| {
+        format!(
+            "[system] failed to back up legacy workspace from {} to {}",
+            legacy.display(),
+            backup_dir.display()
+        )
+    })?;
+    tracing::info!(
+        target = %backup_dir.display(),
+        "[system] v0.8.0 filesystem migration: legacy workspace backed up"
+    );
+
+    // Build the agents/default/ tree, then move the legacy workspace
+    // dir into place under that. `rename` is the canonical "atomic"
+    // move on the same filesystem; on a cross-fs path (e.g. legacy on
+    // tmpfs, target on disk) `rename` fails and we fall back to
+    // copy-then-remove.
+    std::fs::create_dir_all(agents_dir.join("default")).with_context(|| {
+        format!(
+            "[system] failed to create per-agent dir {}",
+            agents_dir.join("default").display()
+        )
+    })?;
+
+    if new_default.exists() {
+        // Empty target dir from a previous skipped run; remove so
+        // rename has a clean slot.
+        std::fs::remove_dir(&new_default).with_context(|| {
+            format!(
+                "[system] failed to remove empty target {} before move",
+                new_default.display()
+            )
+        })?;
+    }
+
+    if std::fs::rename(&legacy, &new_default).is_err() {
+        // Cross-filesystem path: copy + remove.
+        copy_dir_recursive(&legacy, &new_default).with_context(|| {
+            format!(
+                "[system] failed to copy legacy workspace from {} to {}",
+                legacy.display(),
+                new_default.display()
+            )
+        })?;
+        std::fs::remove_dir_all(&legacy).with_context(|| {
+            format!(
+                "[system] failed to remove legacy workspace {} after copy",
+                legacy.display()
+            )
+        })?;
+    }
+
+    tracing::info!(
+        legacy = %legacy.display(),
+        target = %new_default.display(),
+        backup = %backup_dir.display(),
+        "[system] v0.8.0 filesystem migration: legacy workspace moved into default agent slot"
+    );
+    Ok(true)
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else if ft.is_symlink() {
+            // Preserve symlinks rather than following them — copying a
+            // symlink target out of the workspace would balloon the
+            // backup and risk reading-outside-install.
+            #[cfg(unix)]
+            {
+                let target = std::fs::read_link(&from)?;
+                std::os::unix::fs::symlink(&target, &to)?;
+            }
+            #[cfg(not(unix))]
+            {
+                std::fs::copy(&from, &to)?;
+            }
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
 /// Refuse to proceed if the on-disk config is at a stale schema version.
 ///
 /// Used by CLI write commands (`config set`, `config patch`, `config init`)
@@ -535,6 +686,122 @@ mod tests {
             !backup.exists(),
             "no `.backup` should be created on the no-op path; got {}",
             backup.display()
+        );
+    }
+
+    // ── v0.8.0 filesystem migration tests (#6272 P9) ─────────────
+
+    #[test]
+    fn fs_migration_no_op_on_fresh_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let install_root = tmp.path();
+        // Fresh install: no `<install>/workspace/`, no
+        // `<install>/agents/default/workspace/`. Migration should be
+        // a no-op.
+        let ran = migrate_legacy_workspace_to_default_agent(install_root).unwrap();
+        assert!(!ran, "no legacy dir → no migration runs");
+        assert!(
+            !install_root.join("agents").join("default").exists(),
+            "fresh install should not synthesize the default agent dir from this path"
+        );
+    }
+
+    #[test]
+    fn fs_migration_moves_legacy_workspace_into_default_agent_with_backup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let install_root = tmp.path();
+        let legacy = install_root.join("workspace");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("MEMORY.md"), "# Long-Term Memory\n\nfoo").unwrap();
+        std::fs::write(legacy.join("AGENTS.md"), "alpha agent identity").unwrap();
+
+        let ran = migrate_legacy_workspace_to_default_agent(install_root).unwrap();
+        assert!(ran, "populated legacy dir → migration runs");
+
+        // Legacy dir is gone.
+        assert!(
+            !legacy.exists(),
+            "legacy workspace must be moved out, not left behind"
+        );
+
+        // New target is populated with the legacy contents.
+        let new_default = install_root
+            .join("agents")
+            .join("default")
+            .join("workspace");
+        assert!(new_default.is_dir(), "target dir created");
+        assert_eq!(
+            std::fs::read_to_string(new_default.join("MEMORY.md")).unwrap(),
+            "# Long-Term Memory\n\nfoo"
+        );
+        assert_eq!(
+            std::fs::read_to_string(new_default.join("AGENTS.md")).unwrap(),
+            "alpha agent identity"
+        );
+
+        // Backup retains the legacy contents.
+        let backups: Vec<_> = std::fs::read_dir(install_root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|s| s.starts_with("backup-"))
+            })
+            .collect();
+        assert_eq!(backups.len(), 1, "exactly one timestamped backup dir");
+        let backup_legacy = backups[0].path().join("legacy-workspace");
+        assert_eq!(
+            std::fs::read_to_string(backup_legacy.join("MEMORY.md")).unwrap(),
+            "# Long-Term Memory\n\nfoo"
+        );
+    }
+
+    #[test]
+    fn fs_migration_idempotent_on_already_migrated_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let install_root = tmp.path();
+        let legacy = install_root.join("workspace");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("MEMORY.md"), "first").unwrap();
+
+        // First run does the work.
+        let ran_first = migrate_legacy_workspace_to_default_agent(install_root).unwrap();
+        assert!(ran_first);
+
+        // Second run is a no-op (legacy is gone).
+        let ran_second = migrate_legacy_workspace_to_default_agent(install_root).unwrap();
+        assert!(!ran_second, "no legacy dir → no migration runs");
+    }
+
+    #[test]
+    fn fs_migration_skips_when_target_already_populated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let install_root = tmp.path();
+
+        // Both legacy AND new-default exist + populated. The
+        // migration must NOT clobber the new dir.
+        let legacy = install_root.join("workspace");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("MEMORY.md"), "legacy-content").unwrap();
+
+        let new_default = install_root
+            .join("agents")
+            .join("default")
+            .join("workspace");
+        std::fs::create_dir_all(&new_default).unwrap();
+        std::fs::write(new_default.join("MEMORY.md"), "new-content").unwrap();
+
+        let ran = migrate_legacy_workspace_to_default_agent(install_root).unwrap();
+        assert!(!ran, "populated target → no migration runs");
+        assert!(
+            legacy.exists(),
+            "legacy workspace must be left in place when target is populated"
+        );
+        assert_eq!(
+            std::fs::read_to_string(new_default.join("MEMORY.md")).unwrap(),
+            "new-content",
+            "target contents must not be clobbered"
         );
     }
 }

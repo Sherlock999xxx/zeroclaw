@@ -12030,6 +12030,12 @@ impl Default for Config {
 
 fn default_config_and_workspace_dirs() -> Result<(PathBuf, PathBuf)> {
     let config_dir = default_config_dir()?;
+    // `config.workspace_dir` is the install's primary workspace dir.
+    // On v0.7.x and below this held everything; on v0.8.0+ per-agent
+    // workspaces live at `<install>/agents/<alias>/workspace/` and
+    // are resolved on demand by `zeroclaw_memory::agent_workspace_dir`,
+    // not from this function. The legacy path stays as a stable
+    // install-wide anchor for tools that aren't yet agent-aware.
     Ok((config_dir.clone(), config_dir.join("workspace")))
 }
 
@@ -12374,6 +12380,26 @@ impl Config {
 
     pub async fn load_or_init() -> Result<Self> {
         let (default_zeroclaw_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+
+        // v0.8.0 filesystem migration: a one-time, upgrade-only move
+        // of `<install>/workspace/` into
+        // `<install>/agents/default/workspace/` so v0.7.x installs land
+        // in the v0.8.0 per-agent layout. The "default" alias here is
+        // a deliberate v0.7.x→v0.8.0 transition bridge — V3 schema
+        // migration synthesizes the matching `agents.default` config
+        // entry, so the moved dir always lines up with a real agent.
+        // Idempotent: no-op on fresh installs and on already-migrated
+        // installs. Per-agent runtime code paths resolve their own
+        // workspace dir via `zeroclaw_memory::agent_workspace_dir`,
+        // not from `config.workspace_dir`.
+        if default_zeroclaw_dir.is_dir()
+            && let Err(e) =
+                crate::migration::migrate_legacy_workspace_to_default_agent(&default_zeroclaw_dir)
+        {
+            tracing::warn!(
+                "[system] v0.8.0 filesystem migration failed (continuing with legacy layout): {e}"
+            );
+        }
 
         let (zeroclaw_dir, workspace_dir, resolution_source) =
             resolve_runtime_config_dirs(&default_zeroclaw_dir, &default_workspace_dir).await?;
