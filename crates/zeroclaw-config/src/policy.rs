@@ -161,7 +161,18 @@ impl Default for PerSenderTracker {
     }
 }
 
-/// Security policy enforced on all tool executions
+/// Security policy enforced on all tool executions.
+///
+/// `allowed_roots` is the list of directories the agent can read AND
+/// write under (in addition to its own workspace). `allowed_roots_read_only`
+/// is the list it can only read from. Both are absolute, tilde-expanded
+/// paths populated when the policy is built. The two lists power the
+/// #6272 multi-agent cross-agent allowlist: when agent A grants
+/// `AccessMode::Read` to agent B over B's workspace, B's workspace
+/// path lands in A's `allowed_roots_read_only`; `AccessMode::Write` and
+/// `AccessMode::ReadWrite` land in A's `allowed_roots`. file_read tools
+/// consult the union; file_write and shell-level tools consult only
+/// `allowed_roots`.
 #[derive(Debug, Clone)]
 pub struct SecurityPolicy {
     pub autonomy: AutonomyLevel,
@@ -169,7 +180,16 @@ pub struct SecurityPolicy {
     pub workspace_only: bool,
     pub allowed_commands: Vec<String>,
     pub forbidden_paths: Vec<String>,
+    /// Directories the agent can read AND write under. Includes
+    /// `RiskProfileConfig.allowed_roots` plus any cross-agent
+    /// `AccessMode::Write`/`AccessMode::ReadWrite` grants resolved
+    /// from `agent.workspace.access` at policy construction time.
     pub allowed_roots: Vec<PathBuf>,
+    /// Directories the agent can read but NOT write under. Populated
+    /// from cross-agent `AccessMode::Read` grants at policy
+    /// construction time. Empty when no read-only cross-agent access
+    /// is configured.
+    pub allowed_roots_read_only: Vec<PathBuf>,
     pub max_actions_per_hour: u32,
     pub max_cost_per_day_cents: u32,
     pub require_approval_for_medium_risk: bool,
@@ -294,6 +314,18 @@ pub(crate) fn default_forbidden_paths() -> Vec<String> {
     ]
 }
 
+/// Shared helper for the two `is_under_*_allowed_root` checks: returns
+/// `true` when `expanded` falls under any entry of `roots`. Each entry
+/// is canonicalized when possible so symlinked roots match the on-disk
+/// shape, and the literal path is also tried as a fallback for cases
+/// where canonicalization fails (missing parent dir, permission, etc.).
+fn roots_contain(roots: &[PathBuf], expanded: &Path) -> bool {
+    roots.iter().any(|root| {
+        let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
+        expanded.starts_with(&canonical) || expanded.starts_with(root)
+    })
+}
+
 impl Default for SecurityPolicy {
     fn default() -> Self {
         Self {
@@ -303,6 +335,7 @@ impl Default for SecurityPolicy {
             allowed_commands: default_allowed_commands(),
             forbidden_paths: default_forbidden_paths(),
             allowed_roots: Vec::new(),
+            allowed_roots_read_only: Vec::new(),
             max_actions_per_hour: 20,
             max_cost_per_day_cents: 500,
             require_approval_for_medium_risk: true,
@@ -1567,15 +1600,43 @@ impl SecurityPolicy {
     /// an `allowed_roots` entry. Tilde expansion is applied to the path
     /// before comparison. This is useful for tool-level pre-checks that want
     /// to allow absolute paths that are explicitly permitted by policy.
+    ///
+    /// **Read+write semantics.** Use this from write-side tools
+    /// (`file_write`, `git_operations`, shell). Read-side tools should
+    /// use [`Self::is_under_any_allowed_root`] so a cross-agent
+    /// `AccessMode::Read` grant allows the read.
     pub fn is_under_allowed_root(&self, path: &str) -> bool {
         let expanded = expand_user_path(path);
         if !expanded.is_absolute() {
             return false;
         }
-        self.allowed_roots.iter().any(|root| {
-            let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
-            expanded.starts_with(&canonical) || expanded.starts_with(root)
-        })
+        roots_contain(&self.allowed_roots, &expanded)
+    }
+
+    /// Check whether the given raw path falls under a read-only allowed
+    /// root. Returns false for the read-write list; callers that want
+    /// the union should use [`Self::is_under_any_allowed_root`].
+    ///
+    /// Populated for #6272 multi-agent: an agent's
+    /// `workspace.access` entries with `AccessMode::Read` become
+    /// read-only roots on the policy.
+    #[must_use]
+    pub fn is_under_read_only_allowed_root(&self, path: &str) -> bool {
+        let expanded = expand_user_path(path);
+        if !expanded.is_absolute() {
+            return false;
+        }
+        roots_contain(&self.allowed_roots_read_only, &expanded)
+    }
+
+    /// Check whether the given raw path falls under EITHER an
+    /// `allowed_roots` (rw) OR an `allowed_roots_read_only` entry.
+    /// Read-side tools (`file_read`, `glob_search`, `content_search`)
+    /// should call this; write-side tools must use the rw-only
+    /// [`Self::is_under_allowed_root`].
+    #[must_use]
+    pub fn is_under_any_allowed_root(&self, path: &str) -> bool {
+        self.is_under_allowed_root(path) || self.is_under_read_only_allowed_root(path)
     }
 
     /// Build a `SecurityPolicy` from a resolved risk profile.
@@ -1621,6 +1682,11 @@ impl SecurityPolicy {
                     }
                 })
                 .collect(),
+            // RiskProfileConfig has no read-only-roots concept; the
+            // multi-agent runtime populates this list when it builds
+            // a per-agent policy from the workspace.access map (P10/P11),
+            // turning AccessMode::Read entries into read-only roots.
+            allowed_roots_read_only: Vec::new(),
             max_actions_per_hour: risk_profile.max_actions_per_hour,
             max_cost_per_day_cents: risk_profile.max_cost_per_day_cents,
             require_approval_for_medium_risk: risk_profile.require_approval_for_medium_risk,
@@ -3398,6 +3464,75 @@ mod tests {
             ..SecurityPolicy::default()
         };
         assert!(!p.is_under_allowed_root("/any/path"));
+    }
+
+    // ── #6272 P8: SecurityPolicy read/read-write split ──────────────
+
+    #[test]
+    fn is_under_read_only_allowed_root_matches_only_read_only_list() {
+        let p = SecurityPolicy {
+            workspace_dir: PathBuf::from("/workspace"),
+            workspace_only: true,
+            allowed_roots: vec![PathBuf::from("/rw-data")],
+            allowed_roots_read_only: vec![PathBuf::from("/ro-shared")],
+            ..SecurityPolicy::default()
+        };
+        // Read-only path resolves through the read-only check.
+        assert!(p.is_under_read_only_allowed_root("/ro-shared/notes.md"));
+        // Read-write path does NOT resolve through the read-only check.
+        assert!(!p.is_under_read_only_allowed_root("/rw-data/file.csv"));
+        // Path under neither list returns false.
+        assert!(!p.is_under_read_only_allowed_root("/etc/passwd"));
+        // Relative paths always return false.
+        assert!(!p.is_under_read_only_allowed_root("relative"));
+    }
+
+    #[test]
+    fn is_under_any_allowed_root_unions_read_only_and_read_write() {
+        let p = SecurityPolicy {
+            workspace_dir: PathBuf::from("/workspace"),
+            workspace_only: true,
+            allowed_roots: vec![PathBuf::from("/rw-data")],
+            allowed_roots_read_only: vec![PathBuf::from("/ro-shared")],
+            ..SecurityPolicy::default()
+        };
+        // Either list matches.
+        assert!(p.is_under_any_allowed_root("/rw-data/file.csv"));
+        assert!(p.is_under_any_allowed_root("/ro-shared/notes.md"));
+        // Neither list -> false.
+        assert!(!p.is_under_any_allowed_root("/etc/passwd"));
+    }
+
+    #[test]
+    fn is_under_allowed_root_does_not_see_read_only_entries() {
+        // Read+write tools (file_write, git_operations, shell) call
+        // is_under_allowed_root and must NOT accept read-only roots.
+        let p = SecurityPolicy {
+            workspace_dir: PathBuf::from("/workspace"),
+            workspace_only: true,
+            allowed_roots: vec![],
+            allowed_roots_read_only: vec![PathBuf::from("/ro-shared")],
+            ..SecurityPolicy::default()
+        };
+        assert!(!p.is_under_allowed_root("/ro-shared/notes.md"));
+        assert!(p.is_under_any_allowed_root("/ro-shared/notes.md"));
+    }
+
+    #[test]
+    fn from_risk_profile_leaves_allowed_roots_read_only_empty() {
+        // RiskProfileConfig has no read-only-roots concept; it's
+        // populated by the multi-agent runtime when it builds the
+        // per-agent policy from workspace.access (P10/P11).
+        let profile = crate::schema::RiskProfileConfig {
+            allowed_roots: vec!["/projects".to_string()],
+            ..crate::schema::RiskProfileConfig::default()
+        };
+        let policy = SecurityPolicy::from_risk_profile(&profile, Path::new("/workspace"));
+        assert_eq!(policy.allowed_roots, vec![PathBuf::from("/projects")]);
+        assert!(
+            policy.allowed_roots_read_only.is_empty(),
+            "read-only roots come from workspace.access, not RiskProfileConfig"
+        );
     }
 
     #[test]
