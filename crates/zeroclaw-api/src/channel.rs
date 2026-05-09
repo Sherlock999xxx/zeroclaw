@@ -144,6 +144,49 @@ pub trait Channel: Send + Sync {
         false
     }
 
+    /// Self-loop guard for #6272 multi-agent runs.
+    ///
+    /// Returns the bot's own handle/identity on this channel
+    /// (e.g. `@my_bot` for Telegram, the bot's user ID for Discord)
+    /// when known, so the orchestrator can drop inbound events whose
+    /// `sender` matches: a bot must never respond to its own
+    /// messages, even if a misconfigured peer group lists the bot's
+    /// handle as an external peer.
+    ///
+    /// `None` means "this channel doesn't expose its self-identity
+    /// to the orchestrator yet" — the agent-loop self-loop guard
+    /// (P11 fallback, separate from this SDK-side check) provides a
+    /// second layer that catches the case where
+    /// `sender == self_outbound_handle`.
+    ///
+    /// Override this in channel implementations that have access to
+    /// their own bot identity at runtime (e.g. after authenticating
+    /// with the platform's API). Default returns `None` so adding
+    /// the guard does not break any existing channel impl; channels
+    /// opt in as their identity becomes available.
+    fn self_handle(&self) -> Option<String> {
+        None
+    }
+
+    /// Whether the orchestrator should drop an inbound message as
+    /// self-authored (#6272 multi-agent self-loop guard).
+    ///
+    /// Default implementation compares `msg.sender` against
+    /// [`Self::self_handle`] case-insensitively, after stripping a
+    /// leading `@` from each side so Telegram-style handles match
+    /// regardless of which form the SDK delivers. Override only for
+    /// platforms whose identity comparison is non-string (e.g. a
+    /// numeric Discord user ID is `as_str` already; this default
+    /// works there too).
+    fn drop_self_messages(&self, msg: &ChannelMessage) -> bool {
+        let Some(handle) = self.self_handle() else {
+            return false;
+        };
+        let handle_norm = handle.trim_start_matches('@').to_ascii_lowercase();
+        let sender_norm = msg.sender.trim_start_matches('@').to_ascii_lowercase();
+        !handle_norm.is_empty() && handle_norm == sender_norm
+    }
+
     /// Whether this channel supports multi-message streaming delivery.
     fn supports_multi_message_streaming(&self) -> bool {
         false
@@ -283,5 +326,90 @@ pub trait Channel: Send + Sync {
     /// fast with a useful error instead of timing out on `listen`.
     fn supports_free_form_ask(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Stub channel that overrides `self_handle` so the default
+    /// `drop_self_messages` implementation can be exercised. Mirrors
+    /// the shape a real channel impl will take post-#6272 P11.
+    struct StubChannel {
+        handle: Option<String>,
+    }
+
+    #[async_trait]
+    impl Channel for StubChannel {
+        fn name(&self) -> &str {
+            "stub"
+        }
+        async fn send(&self, _message: &SendMessage) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn listen(
+            &self,
+            _tx: tokio::sync::mpsc::Sender<ChannelMessage>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn self_handle(&self) -> Option<String> {
+            self.handle.clone()
+        }
+    }
+
+    fn msg_from(sender: &str) -> ChannelMessage {
+        ChannelMessage {
+            id: "1".into(),
+            sender: sender.into(),
+            reply_target: String::new(),
+            content: "hi".into(),
+            channel: "stub".into(),
+            timestamp: 0,
+            thread_ts: None,
+            interruption_scope_id: None,
+            attachments: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn drop_self_messages_default_returns_false_when_handle_unknown() {
+        let channel = StubChannel { handle: None };
+        assert!(!channel.drop_self_messages(&msg_from("@anyone")));
+    }
+
+    #[test]
+    fn drop_self_messages_matches_exact_handle() {
+        let channel = StubChannel {
+            handle: Some("@my_bot".into()),
+        };
+        assert!(channel.drop_self_messages(&msg_from("@my_bot")));
+        assert!(!channel.drop_self_messages(&msg_from("@other_bot")));
+    }
+
+    #[test]
+    fn drop_self_messages_normalizes_at_prefix_and_case() {
+        let channel = StubChannel {
+            handle: Some("My_Bot".into()),
+        };
+        // SDK delivered with @ prefix, handle stored without. Match.
+        assert!(channel.drop_self_messages(&msg_from("@my_bot")));
+        // Both with @, mixed case. Match.
+        let channel = StubChannel {
+            handle: Some("@My_Bot".into()),
+        };
+        assert!(channel.drop_self_messages(&msg_from("@MY_BOT")));
+    }
+
+    #[test]
+    fn drop_self_messages_does_not_match_empty_handle() {
+        // A handle of "@" (effectively empty after normalization) must
+        // not match every inbound message; the guard only fires when
+        // the bot has a real handle to compare against.
+        let channel = StubChannel {
+            handle: Some("@".into()),
+        };
+        assert!(!channel.drop_self_messages(&msg_from("@anyone")));
     }
 }

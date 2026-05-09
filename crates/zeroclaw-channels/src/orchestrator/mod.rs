@@ -2733,6 +2733,26 @@ async fn process_channel_message(
                 .and_then(|(base, _)| ctx.channels_by_name.get(base))
         })
         .cloned();
+
+    // Self-loop guard (#6272 P11). A bot must never respond to its
+    // own messages, even when a misconfigured peer group lists the
+    // bot's handle as an external peer. Channels that expose their
+    // self-identity via Channel::self_handle() get caught here at the
+    // SDK boundary; channels that do not yet expose identity fall
+    // through (Channel::drop_self_messages defaults to false) and
+    // rely on the agent-loop fallback that compares against the
+    // outbound queue.
+    if let Some(channel) = target_channel.as_ref()
+        && channel.drop_self_messages(&msg)
+    {
+        tracing::debug!(
+            channel = %msg.channel,
+            sender = %msg.sender,
+            "dropping self-authored inbound message (self-loop guard)"
+        );
+        return;
+    }
+
     if let Err(err) = maybe_apply_runtime_config_update(ctx.as_ref()).await {
         tracing::warn!("Failed to apply runtime config update: {err}");
     }
