@@ -106,6 +106,11 @@ impl PostgresMemory {
                     .context("failed to connect to PostgreSQL memory backend")?;
 
                 Self::init_schema(&mut client, &schema_ident, &qualified_table)?;
+                Self::migrate_v0_8_0_multi_agent(
+                    &mut client,
+                    &schema_ident,
+                    &qualified_table,
+                )?;
                 Ok(client)
             })
             .context("failed to spawn PostgreSQL initializer thread")?;
@@ -113,6 +118,84 @@ impl PostgresMemory {
         init_handle
             .join()
             .map_err(|_| anyhow::anyhow!("PostgreSQL initializer thread panicked"))?
+    }
+
+    /// v0.8.0 multi-agent DB migration for the Postgres backend (#6272 P6).
+    ///
+    /// Adds the `agents` table and the `agent_id` column on the
+    /// memories table, with a default-agent backfill. Idempotent: every
+    /// step uses `IF NOT EXISTS` / `ON CONFLICT DO NOTHING` so re-runs
+    /// are no-ops.
+    ///
+    /// Backups are the operator's responsibility for Postgres
+    /// (documented in the release notes); we cannot reach across the
+    /// network to dump a managed cluster from inside the binary.
+    /// The default-agent UUID is generated in Rust so it has the same
+    /// shape as SQLite/Lucid (TEXT, lowercase hyphenated).
+    fn migrate_v0_8_0_multi_agent(
+        client: &mut Client,
+        schema_ident: &str,
+        qualified_table: &str,
+    ) -> Result<()> {
+        let qualified_agents = format!("{schema_ident}.agents");
+
+        // Create the agents table. Same shape as the SQLite migration:
+        // TEXT primary key for cross-DB UUID portability, alias UNIQUE
+        // for human reference and rename surface, created_at audit.
+        client.batch_execute(&format!(
+            "
+            CREATE TABLE IF NOT EXISTS {qualified_agents} (
+                id          TEXT PRIMARY KEY,
+                alias       TEXT NOT NULL UNIQUE,
+                created_at  TIMESTAMPTZ NOT NULL
+            );
+            "
+        ))?;
+
+        // Insert the default agent if absent. The Rust-side UUID is
+        // bound as a parameter so the row that ends up persisted has
+        // the same shape as the SQLite path.
+        let candidate_uuid = uuid::Uuid::new_v4().to_string();
+        client.execute(
+            &format!(
+                "INSERT INTO {qualified_agents} (id, alias, created_at)
+                 VALUES ($1, 'default', NOW())
+                 ON CONFLICT (alias) DO NOTHING"
+            ),
+            &[&candidate_uuid],
+        )?;
+
+        // Read back whatever row actually persisted so the backfill
+        // points at the canonical default-agent UUID even on
+        // concurrent first-init.
+        let default_uuid: String = client
+            .query_one(
+                &format!("SELECT id FROM {qualified_agents} WHERE alias = 'default' LIMIT 1"),
+                &[],
+            )?
+            .get(0);
+
+        // ALTER memories ADD COLUMN agent_id, backfill, index. Postgres
+        // accepts ADD COLUMN IF NOT EXISTS (since 9.6) and the
+        // CREATE INDEX IF NOT EXISTS (since 9.5), so the whole block is
+        // safely idempotent on every supported PG version. The
+        // default-agent UUID is bound rather than inlined to dodge any
+        // SQL-injection footgun even though uuid_v4 strings are
+        // hex+hyphens.
+        client.batch_execute(&format!(
+            "
+            ALTER TABLE {qualified_table} ADD COLUMN IF NOT EXISTS agent_id TEXT;
+            CREATE INDEX IF NOT EXISTS idx_memories_agent_id ON {qualified_table}(agent_id);
+            "
+        ))?;
+        client.execute(
+            &format!(
+                "UPDATE {qualified_table} SET agent_id = $1 WHERE agent_id IS NULL"
+            ),
+            &[&default_uuid],
+        )?;
+
+        Ok(())
     }
 
     fn init_schema(client: &mut Client, schema_ident: &str, qualified_table: &str) -> Result<()> {
