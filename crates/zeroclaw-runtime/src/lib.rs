@@ -19,6 +19,7 @@ pub mod integrations;
 pub mod nodes;
 pub mod observability;
 pub mod onboard;
+pub mod peers;
 pub mod platform;
 pub mod rag;
 pub mod routines;
