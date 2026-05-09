@@ -38,12 +38,7 @@ fn count_backup_files(workspace: &Path) -> usize {
     std::fs::read_dir(&memory_dir)
         .expect("read memory dir")
         .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .contains(".backup-")
-        })
+        .filter(|entry| entry.file_name().to_string_lossy().contains(".backup-"))
         .count()
 }
 
@@ -84,8 +79,8 @@ async fn fresh_install_creates_agents_table_and_default_agent() {
         1,
         "fresh install must seed exactly one agent (the default)"
     );
-    let uuid = fetch_default_agent_uuid(&conn)
-        .expect("default agent must be present after fresh init");
+    let uuid =
+        fetch_default_agent_uuid(&conn).expect("default agent must be present after fresh init");
     assert!(
         uuid::Uuid::parse_str(&uuid).is_ok(),
         "default agent id must be a UUID, got: {uuid:?}"

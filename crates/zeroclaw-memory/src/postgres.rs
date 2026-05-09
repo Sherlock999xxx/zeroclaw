@@ -106,11 +106,7 @@ impl PostgresMemory {
                     .context("failed to connect to PostgreSQL memory backend")?;
 
                 Self::init_schema(&mut client, &schema_ident, &qualified_table)?;
-                Self::migrate_v0_8_0_multi_agent(
-                    &mut client,
-                    &schema_ident,
-                    &qualified_table,
-                )?;
+                Self::migrate_v0_8_0_multi_agent(&mut client, &schema_ident, &qualified_table)?;
                 Ok(client)
             })
             .context("failed to spawn PostgreSQL initializer thread")?;
@@ -189,9 +185,7 @@ impl PostgresMemory {
             "
         ))?;
         client.execute(
-            &format!(
-                "UPDATE {qualified_table} SET agent_id = $1 WHERE agent_id IS NULL"
-            ),
+            &format!("UPDATE {qualified_table} SET agent_id = $1 WHERE agent_id IS NULL"),
             &[&default_uuid],
         )?;
 
