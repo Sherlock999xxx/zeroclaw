@@ -2094,7 +2094,27 @@ pub fn build_tool_instructions(tools_registry: &[Box<dyn Tool>]) -> String {
 // interactive REPL mode. The interactive loop manages history compaction
 // and hard trimming to keep the context window bounded.
 
-#[allow(clippy::too_many_lines)]
+/// Optional per-call overrides for [`run`].
+///
+/// SubAgent spawn paths use this to inject the validated child policy
+/// returned from [`SecurityPolicy::ensure_no_escalation_beyond`] (and,
+/// once v0.8.1 plumbs caller-supplied allowlist narrowing, the
+/// validated agent-scoped memory wrapper). Without this hook the run
+/// path rebuilds both surfaces from config, so the validator's
+/// guarantees never reach the agent loop. `None` on either field
+/// preserves the from-config behavior — the same shape as a fresh
+/// interactive launch.
+#[derive(Default)]
+pub struct AgentRunOverrides {
+    pub security: Option<Arc<SecurityPolicy>>,
+    pub memory: Option<Arc<dyn Memory>>,
+}
+
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+#[tracing::instrument(
+    skip_all,
+    fields(agent_alias = %agent_alias)
+)]
 pub async fn run(
     config: Config,
     agent_alias: &str,
@@ -2106,6 +2126,7 @@ pub async fn run(
     interactive: bool,
     session_state_file: Option<PathBuf>,
     allowed_tools: Option<Vec<String>>,
+    overrides: AgentRunOverrides,
 ) -> Result<String> {
     let agent = config
         .agent(agent_alias)
@@ -2125,18 +2146,32 @@ pub async fn run(
     let observer: Arc<dyn Observer> = Arc::from(base_observer);
     let runtime: Arc<dyn platform::RuntimeAdapter> =
         Arc::from(platform::create_runtime(&config.runtime)?);
-    let security = Arc::new(SecurityPolicy::for_agent(&config, agent_alias)?);
+    let security = match overrides.security {
+        Some(sec) => sec,
+        None => Arc::new(SecurityPolicy::for_agent(&config, agent_alias)?),
+    };
 
     let primary_model_provider = config.providers.first_model_provider();
 
     // ── Memory (the brain) ────────────────────────────────────────
-    let mem: Arc<dyn Memory> = Arc::from(zeroclaw_memory::create_memory_with_storage_and_routes(
-        &config.memory,
-        &config.providers.embedding_routes,
-        config.resolve_active_storage(),
-        &config.workspace_dir,
-        primary_model_provider.and_then(|e| e.api_key.as_deref()),
-    )?);
+    // Per-agent memory: the inner backend is the install-wide store
+    // (or, for Markdown agents, the agent's own dir composed with
+    // peer dirs); the wrapper stamps every store with the bound
+    // agent's UUID and filters every recall by the resolved
+    // `read_memory_from` allowlist. When the caller supplies a
+    // pre-built memory handle (SubAgent narrowing path), use that
+    // instead so the validator's allowlist subset reaches the loop.
+    let mem: Arc<dyn Memory> = match overrides.memory {
+        Some(m) => m,
+        None => {
+            zeroclaw_memory::create_memory_for_agent(
+                &config,
+                agent_alias,
+                primary_model_provider.and_then(|e| e.api_key.as_deref()),
+            )
+            .await?
+        }
+    };
     tracing::info!(backend = mem.name(), "Memory initialized");
 
     // ── Peripherals (merge peripheral tools into registry) ─
@@ -3136,6 +3171,10 @@ pub async fn run(
 
 /// Process a single message through the full agent (with tools, peripherals, memory).
 /// Used by channels (Telegram, Discord, etc.) to enable hardware and tool use.
+#[tracing::instrument(
+    skip_all,
+    fields(agent_alias = %agent_alias)
+)]
 pub async fn process_message(
     config: Config,
     agent_alias: &str,
@@ -3162,13 +3201,12 @@ pub async fn process_message(
     let security = Arc::new(SecurityPolicy::for_agent(&config, agent_alias)?);
     let primary_model_provider = config.providers.first_model_provider();
     let approval_manager = ApprovalManager::for_non_interactive(&risk_profile);
-    let mem: Arc<dyn Memory> = Arc::from(zeroclaw_memory::create_memory_with_storage_and_routes(
-        &config.memory,
-        &config.providers.embedding_routes,
-        config.resolve_active_storage(),
-        &config.workspace_dir,
+    let mem: Arc<dyn Memory> = zeroclaw_memory::create_memory_for_agent(
+        &config,
+        agent_alias,
         primary_model_provider.and_then(|e| e.api_key.as_deref()),
-    )?);
+    )
+    .await?;
 
     let (composio_key, composio_entity_id) = if config.composio.enabled {
         (

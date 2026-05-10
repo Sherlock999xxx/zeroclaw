@@ -32,6 +32,7 @@ const POSTGRES_CONNECT_TIMEOUT_CAP_SECS: u64 = 300;
 pub struct PostgresMemory {
     client: Arc<Mutex<Client>>,
     qualified_table: String,
+    qualified_agents: String,
 }
 
 impl PostgresMemory {
@@ -49,6 +50,7 @@ impl PostgresMemory {
         let schema_ident = quote_identifier(schema);
         let table_ident = quote_identifier(table);
         let qualified_table = format!("{schema_ident}.{table_ident}");
+        let qualified_agents = format!("{schema_ident}.agents");
 
         let client = Self::initialize_client(
             db_url.to_string(),
@@ -74,11 +76,13 @@ impl PostgresMemory {
             Ok(Self {
                 client: client_ref,
                 qualified_table,
+                qualified_agents,
             })
         } else {
             Ok(Self {
                 client: Arc::new(Mutex::new(client)),
                 qualified_table,
+                qualified_agents,
             })
         }
     }
@@ -106,6 +110,7 @@ impl PostgresMemory {
                     .context("failed to connect to PostgreSQL memory backend")?;
 
                 Self::init_schema(&mut client, &schema_ident, &qualified_table)?;
+                Self::migrate_multi_agent(&mut client, &schema_ident, &qualified_table)?;
                 Ok(client)
             })
             .context("failed to spawn PostgreSQL initializer thread")?;
@@ -113,6 +118,150 @@ impl PostgresMemory {
         init_handle
             .join()
             .map_err(|_| anyhow::anyhow!("PostgreSQL initializer thread panicked"))?
+    }
+
+    /// Multi-agent DB migration for the Postgres backend.
+    ///
+    /// Adds the `agents` table and the `agent_id` column on the
+    /// memories table, with a default-agent backfill. Idempotent: every
+    /// step uses `IF NOT EXISTS` / `ON CONFLICT DO NOTHING` so re-runs
+    /// are no-ops.
+    ///
+    /// Backups are the operator's responsibility for Postgres
+    /// (documented in the release notes); we cannot reach across the
+    /// network to dump a managed cluster from inside the binary.
+    /// The default-agent UUID is generated in Rust so it has the same
+    /// shape as SQLite/Lucid (TEXT, lowercase hyphenated).
+    fn migrate_multi_agent(
+        client: &mut Client,
+        schema_ident: &str,
+        qualified_table: &str,
+    ) -> Result<()> {
+        let qualified_agents = format!("{schema_ident}.agents");
+
+        // Create the agents table. Same shape as the SQLite migration:
+        // TEXT primary key for cross-DB UUID portability, alias UNIQUE
+        // for human reference and rename surface, created_at audit.
+        client.batch_execute(&format!(
+            "
+            CREATE TABLE IF NOT EXISTS {qualified_agents} (
+                id          TEXT PRIMARY KEY,
+                alias       TEXT NOT NULL UNIQUE,
+                created_at  TIMESTAMPTZ NOT NULL
+            );
+            "
+        ))?;
+
+        // Insert the default agent if absent. The Rust-side UUID is
+        // bound as a parameter so the row that ends up persisted has
+        // the same shape as the SQLite path.
+        let candidate_uuid = uuid::Uuid::new_v4().to_string();
+        client.execute(
+            &format!(
+                "INSERT INTO {qualified_agents} (id, alias, created_at)
+                 VALUES ($1, 'default', NOW())
+                 ON CONFLICT (alias) DO NOTHING"
+            ),
+            &[&candidate_uuid],
+        )?;
+
+        // Read back whatever row actually persisted so the backfill
+        // points at the canonical default-agent UUID even on
+        // concurrent first-init.
+        let default_uuid: String = client
+            .query_one(
+                &format!("SELECT id FROM {qualified_agents} WHERE alias = 'default' LIMIT 1"),
+                &[],
+            )?
+            .get(0);
+
+        // ALTER memories ADD COLUMN agent_id, backfill, index. Postgres
+        // accepts ADD COLUMN IF NOT EXISTS (since 9.6) and CREATE INDEX
+        // IF NOT EXISTS (since 9.5), so the whole block is safely
+        // idempotent on every supported PG version. The default-agent
+        // UUID is bound rather than inlined to dodge any SQL-injection
+        // footgun even though uuid_v4 strings are hex+hyphens.
+        client.batch_execute(&format!(
+            "
+            ALTER TABLE {qualified_table} ADD COLUMN IF NOT EXISTS agent_id TEXT;
+            CREATE INDEX IF NOT EXISTS idx_memories_agent_id ON {qualified_table}(agent_id);
+            "
+        ))?;
+        client.execute(
+            &format!("UPDATE {qualified_table} SET agent_id = $1 WHERE agent_id IS NULL"),
+            &[&default_uuid],
+        )?;
+
+        // Promote agent_id to NOT NULL REFERENCES agents(id) using the
+        // low-lock pattern so operators with populated production
+        // databases don't take an ACCESS EXCLUSIVE during the upgrade:
+        //
+        //  1. Add a CHECK (agent_id IS NOT NULL) NOT VALID — catalog-
+        //     only, no scan, brief lock.
+        //  2. VALIDATE CONSTRAINT in its own statement — SHARE UPDATE
+        //     EXCLUSIVE lock; concurrent reads and writes continue.
+        //  3. Once the CHECK is validated, ALTER COLUMN ... SET NOT
+        //     NULL becomes metadata-only on PostgreSQL 12+: the
+        //     planner uses the validated CHECK as proof and skips the
+        //     full table scan that would otherwise hold ACCESS
+        //     EXCLUSIVE for minutes on a large table.
+        //  4. The FK is added NOT VALID for the same reason, then
+        //     validated in a separate statement.
+        //
+        // Each step is idempotent (DO-block guard against re-runs);
+        // the migration is safe to re-run after a partial failure.
+        let qualified_agents = format!("{schema_ident}.agents");
+        client.batch_execute(&format!(
+            "
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'memories_agent_id_notnull_chk'
+                ) THEN
+                    ALTER TABLE {qualified_table}
+                        ADD CONSTRAINT memories_agent_id_notnull_chk
+                        CHECK (agent_id IS NOT NULL) NOT VALID;
+                END IF;
+            END$$;
+            ALTER TABLE {qualified_table} VALIDATE CONSTRAINT memories_agent_id_notnull_chk;
+            ALTER TABLE {qualified_table} ALTER COLUMN agent_id SET NOT NULL;
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'memories_agent_id_fk'
+                ) THEN
+                    ALTER TABLE {qualified_table}
+                        ADD CONSTRAINT memories_agent_id_fk
+                        FOREIGN KEY (agent_id) REFERENCES {qualified_agents}(id) NOT VALID;
+                END IF;
+            END$$;
+            ALTER TABLE {qualified_table} VALIDATE CONSTRAINT memories_agent_id_fk;
+            "
+        ))?;
+
+        // Stamp the schema version so future migrations can detect
+        // on-disk shape without parsing system catalogs.
+        client.batch_execute(&format!(
+            "
+            CREATE TABLE IF NOT EXISTS {schema_ident}.schema_version (
+                component  TEXT PRIMARY KEY,
+                version    INTEGER NOT NULL,
+                applied_at TIMESTAMPTZ NOT NULL
+            );
+            "
+        ))?;
+        client.execute(
+            &format!(
+                "INSERT INTO {schema_ident}.schema_version (component, version, applied_at) \
+                 VALUES ('memories', $1, NOW()) \
+                 ON CONFLICT (component) DO UPDATE SET version = EXCLUDED.version, applied_at = EXCLUDED.applied_at"
+            ),
+            &[&1_i64],
+        )?;
+
+        Ok(())
     }
 
     fn init_schema(client: &mut Client, schema_ident: &str, qualified_table: &str) -> Result<()> {
@@ -198,6 +347,7 @@ impl PostgresMemory {
                 .unwrap_or_else(|_| "default".into()),
             importance: row.try_get("importance").ok(),
             superseded_by: None,
+            agent_id: row.try_get("agent_id").ok(),
         })
     }
 }
@@ -266,35 +416,14 @@ impl Memory for PostgresMemory {
         category: MemoryCategory,
         session_id: Option<&str>,
     ) -> Result<()> {
-        let client = self.client.clone();
-        let qualified_table = self.qualified_table.clone();
-        let key = key.to_string();
-        let content = content.to_string();
-        let category = Self::category_to_str(&category);
-        let sid = session_id.map(str::to_string);
-
-        run_on_os_thread(move || -> Result<()> {
-            let now = Utc::now();
-            let mut client = client.lock();
-            let stmt = format!(
-                "
-                INSERT INTO {qualified_table}
-                    (id, key, content, category, created_at, updated_at, session_id)
-                VALUES
-                    ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (key) DO UPDATE SET
-                    content = EXCLUDED.content,
-                    category = EXCLUDED.category,
-                    updated_at = EXCLUDED.updated_at,
-                    session_id = EXCLUDED.session_id
-                "
-            );
-
-            let id = Uuid::new_v4().to_string();
-            client.execute(&stmt, &[&id, &key, &content, &category, &now, &now, &sid])?;
-            Ok(())
-        })
-        .await
+        // Trait-level `store` has no agent context. Route through
+        // `store_with_agent` so the row is attributed to the default
+        // agent (the NOT NULL FK on `agent_id` rejects unattributed
+        // inserts; un-attributed callers like the heartbeat memory
+        // path land under the synthesized `default` agent rather than
+        // surfacing a constraint violation).
+        self.store_with_agent(key, content, category, session_id, None, None, None)
+            .await
     }
 
     async fn recall(
@@ -328,7 +457,7 @@ impl Memory for PostgresMemory {
 
             let stmt = format!(
                 "
-                SELECT id, key, content, category, created_at, session_id,
+                SELECT id, key, content, category, created_at, session_id, agent_id,
                        (
                          CASE WHEN to_tsvector('simple', key) @@ plainto_tsquery('simple', $1)
                            THEN ts_rank_cd(to_tsvector('simple', key), plainto_tsquery('simple', $1)) * 2.0
@@ -371,7 +500,7 @@ impl Memory for PostgresMemory {
             let mut client = client.lock();
             let stmt = format!(
                 "
-                SELECT id, key, content, category, created_at, session_id
+                SELECT id, key, content, category, created_at, session_id, agent_id
                 FROM {qualified_table}
                 WHERE key = $1
                 LIMIT 1
@@ -398,7 +527,7 @@ impl Memory for PostgresMemory {
             let mut client = client.lock();
             let stmt = format!(
                 "
-                SELECT id, key, content, category, created_at, session_id
+                SELECT id, key, content, category, created_at, session_id, agent_id
                 FROM {qualified_table}
                 WHERE ($1::TEXT IS NULL OR category = $1)
                   AND ($2::TEXT IS NULL OR session_id = $2)
@@ -450,6 +579,168 @@ impl Memory for PostgresMemory {
         run_on_os_thread(move || Ok(client.lock().simple_query("SELECT 1").is_ok()))
             .await
             .unwrap_or(false)
+    }
+
+    async fn store_with_agent(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+        _namespace: Option<&str>,
+        _importance: Option<f64>,
+        agent_id: Option<&str>,
+    ) -> Result<()> {
+        let client = self.client.clone();
+        let qualified_table = self.qualified_table.clone();
+        let qualified_agents = self.qualified_agents.clone();
+        let key = key.to_string();
+        let content = content.to_string();
+        let category = Self::category_to_str(&category);
+        let sid = session_id.map(str::to_string);
+        let aid = agent_id.map(str::to_string);
+
+        run_on_os_thread(move || -> Result<()> {
+            let now = Utc::now();
+            let mut client = client.lock();
+            // `agent_id = COALESCE($8, default-agent-uuid)` so callers
+            // without an agent context still satisfy the NOT NULL FK
+            // by attributing to the synthesized default agent. The
+            // subquery is indexed (UNIQUE alias) so the lookup is
+            // metadata-cached after the first call.
+            let stmt = format!(
+                "
+                INSERT INTO {qualified_table}
+                    (id, key, content, category, created_at, updated_at, session_id, agent_id)
+                VALUES
+                    ($1, $2, $3, $4, $5, $6, $7,
+                     COALESCE($8, (SELECT id FROM {qualified_agents} WHERE alias = 'default' LIMIT 1)))
+                ON CONFLICT (key) DO UPDATE SET
+                    content = EXCLUDED.content,
+                    category = EXCLUDED.category,
+                    updated_at = EXCLUDED.updated_at,
+                    session_id = EXCLUDED.session_id,
+                    agent_id = EXCLUDED.agent_id
+                "
+            );
+
+            let id = Uuid::new_v4().to_string();
+            client.execute(
+                &stmt,
+                &[&id, &key, &content, &category, &now, &now, &sid, &aid],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn recall_for_agents(
+        &self,
+        allowed_agent_ids: &[&str],
+        query: &str,
+        limit: usize,
+        session_id: Option<&str>,
+        since: Option<&str>,
+        until: Option<&str>,
+    ) -> Result<Vec<MemoryEntry>> {
+        // Empty allowlist means "no agent filter": fall back to plain
+        // recall. The wrapper always includes the bound agent's UUID,
+        // so a non-empty allowlist is the live-runtime case.
+        if allowed_agent_ids.is_empty() {
+            return self.recall(query, limit, session_id, since, until).await;
+        }
+
+        let client = self.client.clone();
+        let qualified_table = self.qualified_table.clone();
+        let q = normalize_recent_recall_query(query).trim().to_string();
+        let sid = session_id.map(str::to_string);
+        let since_owned = since.map(str::to_string);
+        let until_owned = until.map(str::to_string);
+        let allowed: Vec<String> = allowed_agent_ids.iter().map(|s| (*s).to_string()).collect();
+
+        run_on_os_thread(move || -> Result<Vec<MemoryEntry>> {
+            let mut client = client.lock();
+            let since_ref = since_owned.as_deref();
+            let until_ref = until_owned.as_deref();
+
+            // The agent_id filter lives in the WHERE clause so the
+            // backend never returns a foreign-agent row to the caller;
+            // post-fetch attribution lookups in earlier impls were the
+            // privacy escape Audacity flagged. The NOT NULL FK on
+            // `memories.agent_id` means there are no legacy
+            // unattributed rows to special-case.
+            let time_filter: String = match (since_ref, until_ref) {
+                (Some(_), Some(_)) => {
+                    " AND created_at >= $5::TIMESTAMPTZ AND created_at <= $6::TIMESTAMPTZ".into()
+                }
+                (Some(_), None) => " AND created_at >= $5::TIMESTAMPTZ".into(),
+                (None, Some(_)) => " AND created_at <= $5::TIMESTAMPTZ".into(),
+                (None, None) => String::new(),
+            };
+
+            let stmt = format!(
+                "
+                SELECT id, key, content, category, created_at, session_id, agent_id,
+                       (
+                         CASE WHEN to_tsvector('simple', key) @@ plainto_tsquery('simple', $1)
+                           THEN ts_rank_cd(to_tsvector('simple', key), plainto_tsquery('simple', $1)) * 2.0
+                           ELSE 0.0 END +
+                         CASE WHEN to_tsvector('simple', content) @@ plainto_tsquery('simple', $1)
+                           THEN ts_rank_cd(to_tsvector('simple', content), plainto_tsquery('simple', $1))
+                           ELSE 0.0 END
+                       ) AS score
+                FROM {qualified_table}
+                WHERE ($2::TEXT IS NULL OR session_id = $2)
+                  AND ($1 = '' OR to_tsvector('simple', key || ' ' || content) @@ plainto_tsquery('simple', $1))
+                  AND agent_id = ANY($4)
+                  {time_filter}
+                ORDER BY score DESC, updated_at DESC
+                LIMIT $3
+                "
+            );
+
+            #[allow(clippy::cast_possible_wrap)]
+            let limit_i64 = limit as i64;
+
+            let rows = match (since_ref, until_ref) {
+                (Some(s), Some(u)) => {
+                    client.query(&stmt, &[&q, &sid, &limit_i64, &allowed, &s, &u])?
+                }
+                (Some(s), None) => client.query(&stmt, &[&q, &sid, &limit_i64, &allowed, &s])?,
+                (None, Some(u)) => client.query(&stmt, &[&q, &sid, &limit_i64, &allowed, &u])?,
+                (None, None) => client.query(&stmt, &[&q, &sid, &limit_i64, &allowed])?,
+            };
+            rows.iter()
+                .map(Self::row_to_entry)
+                .collect::<Result<Vec<MemoryEntry>>>()
+        })
+        .await
+    }
+
+    async fn ensure_agent_uuid(&self, alias: &str) -> Result<String> {
+        let client = self.client.clone();
+        let qualified_agents = self.qualified_agents.clone();
+        let alias = alias.to_string();
+        run_on_os_thread(move || -> Result<String> {
+            let mut client = client.lock();
+            let candidate = Uuid::new_v4().to_string();
+            client.execute(
+                &format!(
+                    "INSERT INTO {qualified_agents} (id, alias, created_at)
+                     VALUES ($1, $2, NOW())
+                     ON CONFLICT (alias) DO NOTHING"
+                ),
+                &[&candidate, &alias],
+            )?;
+            let row: String = client
+                .query_one(
+                    &format!("SELECT id FROM {qualified_agents} WHERE alias = $1 LIMIT 1"),
+                    &[&alias],
+                )?
+                .get(0);
+            Ok(row)
+        })
+        .await
     }
 }
 

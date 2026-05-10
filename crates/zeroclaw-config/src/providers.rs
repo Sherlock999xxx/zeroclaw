@@ -55,13 +55,16 @@ use super::schema::{
 // blocks in schema.rs); the newtype's job is to encode the *category* in
 // the type, not the existence — both layers reinforce each other.
 
+#[macro_export]
 macro_rules! define_provider_ref {
     ($name:ident, $category_doc:literal) => {
         #[doc = concat!("Reference to a configured `[", $category_doc, ".<type>.<alias>]` entry.")]
         ///
         /// Empty value means "no preference" (opt-out). Non-empty values must
         /// resolve to a configured alias; `Config::validate()` enforces this.
-        #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[derive(
+            Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+        )]
         #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
         #[serde(transparent)]
         pub struct $name(pub String);

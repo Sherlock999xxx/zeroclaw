@@ -1156,10 +1156,10 @@ fn drain_enabled_keep(channel_type: &str, instance: &mut toml::Table) -> bool {
 ///   brain with `model_provider = "<provider>.agent_<id>"`.
 /// - **T14a max_iterations rename**: V2 `max_iterations: usize` →
 ///   V3 `max_tool_iterations: usize` (V3 keeps it inline on
-///   `DelegateAgentConfig`, just renamed).
+///   `AliasedAgentConfig`, just renamed).
 /// - **T14b runtime override synthesis**: V2 `agentic`, `allowed_tools`,
 ///   `timeout_secs`, `agentic_timeout_secs` are removed from
-///   `DelegateAgentConfig` in V3 — they belong on `RuntimeProfileConfig`.
+///   `AliasedAgentConfig` in V3 — they belong on `RuntimeProfileConfig`.
 ///   When any are set, synthesize a per-agent runtime profile at
 ///   `runtime_profiles.agent_<id>` and point `runtime_profile = "agent_<id>"`.
 /// - **T14c risk override synthesis**: V2 `max_depth` → per-agent
@@ -1168,8 +1168,10 @@ fn drain_enabled_keep(channel_type: &str, instance: &mut toml::Table) -> bool {
 /// - **T14d skills_directory drop**: V3 wants `skill_bundles: Vec<String>`
 ///   alias references; the V2 path-on-disk has no clean V3 equivalent.
 ///   Logged and dropped.
-/// - **T14e memory_namespace type widening**: V2 `Option<String>` → V3
-///   `String`. `None`/missing maps to `""` (V3's "no namespace" sentinel).
+/// - **T14e memory_namespace drop**: V3 retired V2's `memory_namespace`
+///   field on agents alongside the top-level `[memory_namespaces.<alias>]`
+///   section. Per-agent memory backends under `[agents.<alias>.memory]`
+///   serve the isolation use case. The V2 key is silently discarded.
 fn synthesize_agent_brains(
     agents: HashMap<String, toml::Value>,
     passthrough: &mut toml::Table,
@@ -1280,7 +1282,7 @@ fn synthesize_agent_brains(
 
         // T14d: skills_directory → synthesize a per-agent skill_bundle and
         //   point agent.skill_bundles at it. Per #5947: "per-agent V2
-        //   DelegateAgentConfig.skills_directory overrides become per-agent
+        //   AliasedAgentConfig.skills_directory overrides become per-agent
         //   skill bundles." V3 SkillBundleConfig has a `directory:
         //   Option<String>` slot that carries the V2 path verbatim.
         if let Some(toml::Value::String(skills_dir)) = agent_table.remove("skills_directory")
@@ -1290,7 +1292,7 @@ fn synthesize_agent_brains(
             let mut bundle_entry = toml::Table::new();
             bundle_entry.insert("directory".to_string(), toml::Value::String(skills_dir));
             install_profile_entry(passthrough, "skill_bundles", &bundle_alias, bundle_entry);
-            // V3 DelegateAgentConfig.skill_bundles is Vec<String> of aliases.
+            // V3 AliasedAgentConfig.skill_bundles is Vec<String> of aliases.
             // Append our synthesized bundle alias (preserve any user-set list).
             let existing = agent_table
                 .remove("skill_bundles")
@@ -1340,53 +1342,19 @@ fn synthesize_agent_brains(
             toml::Value::String(runtime_alias),
         );
 
-        // T14e: memory_namespace type widening (Option<String> → String).
-        // V3 wants a bare string; missing or unset becomes "". Also
-        // synthesize an empty memory_namespaces.<ns> entry when an agent
-        // references one, since V3 dangling-reference validation rejects
-        // unresolved alias references.
-        let referenced_ns = match agent_table.get("memory_namespace") {
-            Some(toml::Value::String(s)) if !s.is_empty() => Some(s.clone()),
-            Some(toml::Value::String(_)) => None,
-            Some(_) => {
-                agent_table.insert(
-                    "memory_namespace".to_string(),
-                    toml::Value::String(String::new()),
-                );
-                None
-            }
-            None => None,
-        };
-        if let Some(ns) = referenced_ns {
-            ensure_memory_namespace(passthrough, &ns);
-        }
+        // V3 retired the V2 `memory_namespace` field on agents (and the
+        // top-level [memory_namespaces.<alias>] section it referenced)
+        // when per-agent memory backends landed under
+        // [agents.<alias>.memory]. Drop the V2 key so it doesn't carry
+        // through to the V3 deserialization step.
+        agent_table.remove("memory_namespace");
 
         new_agents.insert(alias, toml::Value::Table(agent_table));
     }
     new_agents
 }
 
-/// Ensure `memory_namespaces.<alias>` exists with at least `namespace = "<alias>"`.
-/// V3 `MemoryNamespaceConfig` requires a `namespace` field — when an agent
-/// references a namespace alias and the user hasn't defined it explicitly,
-/// synthesize a minimal entry so V3 dangling-reference validation passes.
-fn ensure_memory_namespace(passthrough: &mut toml::Table, alias: &str) {
-    let section_value = passthrough
-        .entry("memory_namespaces".to_string())
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-    if let Some(section_table) = section_value.as_table_mut() {
-        let entry_value = section_table
-            .entry(alias.to_string())
-            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-        if let Some(entry_table) = entry_value.as_table_mut() {
-            entry_table
-                .entry("namespace".to_string())
-                .or_insert_with(|| toml::Value::String(alias.to_string()));
-        }
-    }
-}
-
-/// Pull V2 `DelegateAgentConfig` fields that V3 moved onto
+/// Pull V2 `AliasedAgentConfig` fields that V3 moved onto
 /// `RuntimeProfileConfig` out of the agent table. Returns `Some(table)` if
 /// any V3 runtime-profile field was set; `None` otherwise.
 fn extract_runtime_overrides(agent: &mut toml::Table) -> Option<toml::Table> {

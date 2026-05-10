@@ -58,8 +58,6 @@ pub(crate) mod doctor;
 #[cfg(feature = "gateway")]
 pub mod gateway;
 #[cfg(feature = "agent-runtime")]
-pub mod hands;
-#[cfg(feature = "agent-runtime")]
 pub(crate) mod hardware;
 #[cfg(feature = "agent-runtime")]
 pub(crate) mod health;

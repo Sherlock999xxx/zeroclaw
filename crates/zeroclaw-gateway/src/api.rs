@@ -1281,6 +1281,31 @@ mod tests {
         async fn health_check(&self) -> bool {
             true
         }
+
+        async fn store_with_agent(
+            &self,
+            _key: &str,
+            _content: &str,
+            _category: MemoryCategory,
+            _session_id: Option<&str>,
+            _namespace: Option<&str>,
+            _importance: Option<f64>,
+            _agent_id: Option<&str>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn recall_for_agents(
+            &self,
+            _allowed_agent_ids: &[&str],
+            _query: &str,
+            _limit: usize,
+            _session_id: Option<&str>,
+            _since: Option<&str>,
+            _until: Option<&str>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(Vec::new())
+        }
     }
 
     struct MockModelProvider;
@@ -1313,7 +1338,7 @@ mod tests {
         );
         config.agents.insert(
             "test-agent".to_string(),
-            zeroclaw_config::schema::DelegateAgentConfig {
+            zeroclaw_config::schema::AliasedAgentConfig {
                 model_provider: "openrouter.default".into(),
                 risk_profile: "test-profile".to_string(),
                 ..Default::default()

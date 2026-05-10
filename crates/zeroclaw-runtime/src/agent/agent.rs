@@ -32,7 +32,7 @@ pub struct Agent {
     prompt_builder: SystemPromptBuilder,
     tool_dispatcher: Box<dyn ToolDispatcher>,
     memory_loader: Box<dyn MemoryLoader>,
-    config: zeroclaw_config::schema::DelegateAgentConfig,
+    config: zeroclaw_config::schema::AliasedAgentConfig,
     model_name: String,
     temperature: f64,
     workspace_dir: std::path::PathBuf,
@@ -130,7 +130,7 @@ pub struct AgentBuilder {
     prompt_builder: Option<SystemPromptBuilder>,
     tool_dispatcher: Option<Box<dyn ToolDispatcher>>,
     memory_loader: Option<Box<dyn MemoryLoader>>,
-    config: Option<zeroclaw_config::schema::DelegateAgentConfig>,
+    config: Option<zeroclaw_config::schema::AliasedAgentConfig>,
     model_name: Option<String>,
     temperature: Option<f64>,
     workspace_dir: Option<std::path::PathBuf>,
@@ -224,7 +224,7 @@ impl AgentBuilder {
         self
     }
 
-    pub fn config(mut self, config: zeroclaw_config::schema::DelegateAgentConfig) -> Self {
+    pub fn config(mut self, config: zeroclaw_config::schema::AliasedAgentConfig) -> Self {
         self.config = Some(config);
         self
     }
@@ -492,20 +492,35 @@ impl Agent {
             Arc::from(observability::create_observer(&config.observability));
         let runtime: Arc<dyn platform::RuntimeAdapter> =
             Arc::from(platform::create_runtime(&config.runtime)?);
+        // Per-agent workspace becomes the SecurityPolicy boundary
+        // (file_read/write/edit + shell tool jail to the agent's own
+        // dir). The session-cwd override still wins so ACP sessions
+        // can pin tool path resolution to an IDE-provided cwd.
+        let agent_workspace = config.agent_workspace_dir(agent_alias);
+        // Seed the agent's bootstrap files (AGENTS.md / SOUL.md /
+        // IDENTITY.md / USER.md / TOOLS.md / BOOTSTRAP.md) on first
+        // run. Idempotent — never overwrites existing files; only
+        // fills in the gaps so a freshly-created agent has a basic
+        // identity to load.
+        if let Err(e) = zeroclaw_config::schema::ensure_bootstrap_files(&agent_workspace).await {
+            tracing::warn!(
+                agent = %agent_alias,
+                workspace = %agent_workspace.display(),
+                "Failed to ensure per-agent bootstrap files (continuing with whatever exists): {e}"
+            );
+        }
         let security = Arc::new(SecurityPolicy::from_risk_profile(
             risk_profile,
-            session_cwd.unwrap_or(&config.workspace_dir),
+            session_cwd.unwrap_or(&agent_workspace),
         ));
 
         let primary_model_provider = config.providers.first_model_provider();
-        let memory: Arc<dyn Memory> =
-            Arc::from(zeroclaw_memory::create_memory_with_storage_and_routes(
-                &config.memory,
-                &config.providers.embedding_routes,
-                config.resolve_active_storage(),
-                &config.workspace_dir,
-                primary_model_provider.and_then(|e| e.api_key.as_deref()),
-            )?);
+        let memory: Arc<dyn Memory> = zeroclaw_memory::create_memory_for_agent(
+            config,
+            agent_alias,
+            primary_model_provider.and_then(|e| e.api_key.as_deref()),
+        )
+        .await?;
 
         let composio_key = if config.composio.enabled {
             config.composio.api_key.as_deref()
@@ -2248,10 +2263,10 @@ mod tests {
             .first_model_provider_type()
             .expect("model_provider configured above")
             .to_string();
-        let agent_cfg = zeroclaw_config::schema::DelegateAgentConfig {
+        let agent_cfg = zeroclaw_config::schema::AliasedAgentConfig {
             model_provider: format!("{provider_alias}.default").into(),
             risk_profile: "test-profile".to_string(),
-            ..zeroclaw_config::schema::DelegateAgentConfig::default()
+            ..zeroclaw_config::schema::AliasedAgentConfig::default()
         };
         config.agents.insert("test-agent".to_string(), agent_cfg);
 
@@ -2752,9 +2767,9 @@ mod tests {
         // Force trimming with the boundary landing inside a pair:
         // 5 entries (AC, TR, AC, TR, AC) > 4 → drop_count = 1 → AC1 dropped,
         // TR1 left as an orphan unless the trim guards against it.
-        let agent_config = zeroclaw_config::schema::DelegateAgentConfig {
+        let agent_config = zeroclaw_config::schema::AliasedAgentConfig {
             max_history_messages: 4,
-            ..zeroclaw_config::schema::DelegateAgentConfig::default()
+            ..zeroclaw_config::schema::AliasedAgentConfig::default()
         };
 
         let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});

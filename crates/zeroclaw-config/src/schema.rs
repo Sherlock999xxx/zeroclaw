@@ -71,7 +71,7 @@ static RUNTIME_PROXY_CLIENT_CACHE: OnceLock<RwLock<HashMap<String, reqwest::Clie
 
 /// Top-level ZeroClaw configuration, loaded from `config.toml`.
 ///
-/// Resolution order: `ZEROCLAW_WORKSPACE` env → `active_workspace.toml` marker → `~/.zeroclaw/config.toml`.
+/// Resolution order: `ZEROCLAW_CONFIG_DIR` env → `ZEROCLAW_WORKSPACE` env → `~/.zeroclaw/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct Config {
@@ -338,10 +338,14 @@ pub struct Config {
     #[nested]
     pub delegate: DelegateToolConfig,
 
-    /// Delegate agent configurations for multi-agent workflows.
+    /// Aliased agents in this install. Each entry under `[agents.<alias>]`
+    /// is one user-facing agent with its own identity, channels, model
+    /// provider, risk profile, workspace, and memory scope.
+    /// `DelegateTool` consults this map when one agent delegates a
+    /// subtask to another.
     #[serde(default)]
     #[nested]
-    pub agents: HashMap<String, DelegateAgentConfig>,
+    pub agents: HashMap<String, AliasedAgentConfig>,
 
     /// Named risk/autonomy profiles (`[risk_profiles.<alias>]`).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -358,11 +362,6 @@ pub struct Config {
     #[nested]
     pub skill_bundles: HashMap<String, SkillBundleConfig>,
 
-    /// Named memory namespaces (`[memory_namespaces.<alias>]`).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    #[nested]
-    pub memory_namespaces: HashMap<String, MemoryNamespaceConfig>,
-
     /// Named knowledge bundles (`[knowledge_bundles.<alias>]`).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[nested]
@@ -372,6 +371,16 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[nested]
     pub mcp_bundles: HashMap<String, McpBundleConfig>,
+
+    /// Named peer groups (`[peer_groups.<name>]`). Each entry binds a
+    /// channel, a list of member agents, and optional non-agent
+    /// (external) members and a per-group blocklist. Mutual opt-in:
+    /// two agents become peers only when both appear in the same
+    /// group's `agents`. Empty by default for single-agent installs.
+    /// See `crate::multi_agent::PeerGroupConfig`.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[nested]
+    pub peer_groups: HashMap<String, crate::multi_agent::PeerGroupConfig>,
 
     /// Hooks configuration (lifecycle hooks and built-in hook toggles).
     #[serde(default)]
@@ -402,11 +411,6 @@ pub struct Config {
     #[serde(default)]
     #[nested]
     pub nodes: NodesConfig,
-
-    /// Multi-client workspace isolation configuration (`[workspace]`).
-    #[serde(default)]
-    #[nested]
-    pub workspace: WorkspaceConfig,
 
     /// Meta-state for `zeroclaw onboard` (which sections the user has
     /// already walked through). Not user-facing config (`[onboard_state]`).
@@ -526,51 +530,6 @@ pub struct OnboardStateConfig {
     /// (`"workspace"`, `"model_providers"`, …).
     #[serde(default)]
     pub completed_sections: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
-#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
-#[prefix = "workspace"]
-pub struct WorkspaceConfig {
-    /// Turn on multi-workspace profiles — each named engagement gets its own memory, secrets, and audit directories so work for one client/project never bleeds into another. Leave off for single-workspace mode where everything lives under `~/.zeroclaw/workspace`.
-    #[serde(default)]
-    pub enabled: bool,
-    /// Which workspace profile is currently active — picks the `<workspaces_dir>/<name>/` directory ZeroClaw reads from and writes to. Required when multi-workspace is enabled; ignored otherwise.
-    #[serde(default)]
-    pub active_workspace: Option<String>,
-    /// Parent directory holding all workspace profiles, one subdirectory per profile. Override to keep profiles on a separate disk or inside an encrypted volume.
-    #[serde(default = "default_workspaces_dir")]
-    pub workspaces_dir: String,
-    /// Give each profile its own `brain.db` so conversation history, notes, and memories from one engagement don't leak into another. Turn off only if you want all profiles sharing a single memory store.
-    #[serde(default = "default_true")]
-    pub isolate_memory: bool,
-    /// Scope model_provider API keys, channel tokens, and other secrets to the active profile — so a key added while on `client-a` isn't visible from `client-b`. Turn off only if you want all profiles sharing one secret namespace.
-    #[serde(default = "default_true")]
-    pub isolate_secrets: bool,
-    /// Give each profile its own tool-call and channel-message audit trail, so you can hand off logs for a single engagement without exposing other work.
-    #[serde(default = "default_true")]
-    pub isolate_audit: bool,
-    /// Let memory search span all workspaces instead of only the active one. Off by default — turning it on defeats the point of isolation and is only useful for global admin queries.
-    #[serde(default)]
-    pub cross_workspace_search: bool,
-}
-
-fn default_workspaces_dir() -> String {
-    default_path_under_config_dir("workspaces")
-}
-
-impl Default for WorkspaceConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            active_workspace: None,
-            workspaces_dir: default_workspaces_dir(),
-            isolate_memory: true,
-            isolate_secrets: true,
-            isolate_audit: true,
-            cross_workspace_search: false,
-        }
-    }
 }
 
 /// Used by `#[serde(skip_serializing_if)]` on plain `bool` fields to omit
@@ -2653,19 +2612,18 @@ impl Default for DelegateToolConfig {
     }
 }
 
-// ── Delegate Agents ──────────────────────────────────────────────
+// ── Aliased Agents ───────────────────────────────────────────────
 
-/// Configuration for a delegate sub-agent used by the `delegate` tool.
+/// Configuration for an aliased agent. Each `[agents.<alias>]` TOML
+/// block deserializes into one of these. The `DelegateTool` looks up
+/// entries here to dispatch a subtask to a named sibling agent.
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "delegate-agent"]
-pub struct DelegateAgentConfig {
+pub struct AliasedAgentConfig {
     /// Whether this agent is active. Set false to disable without removing the definition.
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Optional system prompt. Prefer placing prose in `agents/<alias>/AGENTS.md`.
-    #[serde(default)]
-    pub system_prompt: Option<String>,
     /// Channel aliases this agent handles (e.g. `["telegram.<alias>", "discord.<alias>"]`).
     /// Each entry is a `ChannelRef` resolving through `[channels.<type>.<alias>]`;
     /// `Config::validate()` fails loud on dangling references.
@@ -2696,11 +2654,6 @@ pub struct DelegateAgentConfig {
     /// load.
     #[serde(default)]
     pub mcp_bundles: Vec<String>,
-    /// Memory namespace alias. Single-select reference into
-    /// `memory_namespaces[key]`. Empty string = no namespace isolation.
-    /// Multiple agents sharing a namespace see the same memory.
-    #[serde(default)]
-    pub memory_namespace: String,
     /// Cron job aliases. Each entry references `cron[key]` — a declarative
     /// scheduled job invoked by the scheduler on its configured trigger.
     /// When the cron fires, this agent is the actor that executes the job.
@@ -2803,17 +2756,33 @@ pub struct DelegateAgentConfig {
     #[nested]
     #[serde(default)]
     pub tool_receipts: ToolReceiptsConfig,
+
+    /// Per-agent workspace block (`[agents.<alias>.workspace]`).
+    /// Holds the agent's filesystem path, cross-agent access allowlist,
+    /// filesystem-escape boolean, and cross-agent memory allowlist.
+    /// Default is fully jailed (no cross-agent access). See
+    /// `crate::multi_agent::AgentWorkspaceConfig`.
+    #[serde(default)]
+    #[nested]
+    pub workspace: crate::multi_agent::AgentWorkspaceConfig,
+
+    /// Per-agent memory backend selection (`[agents.<alias>.memory]`).
+    /// The `backend` field is locked at agent creation and immutable on
+    /// subsequent loads. Defaults to `Sqlite`. See
+    /// `crate::multi_agent::AgentMemoryConfig`.
+    #[serde(default)]
+    #[nested]
+    pub memory: crate::multi_agent::AgentMemoryConfig,
 }
 
 fn default_agent_compact_context() -> bool {
     true
 }
 
-impl Default for DelegateAgentConfig {
+impl Default for AliasedAgentConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            system_prompt: None,
             channels: Vec::new(),
             model_provider: crate::providers::ModelProviderRef::default(),
             risk_profile: String::new(),
@@ -2821,7 +2790,6 @@ impl Default for DelegateAgentConfig {
             skill_bundles: Vec::new(),
             knowledge_bundles: Vec::new(),
             mcp_bundles: Vec::new(),
-            memory_namespace: String::new(),
             cron_jobs: Vec::new(),
             tts_provider: crate::providers::TtsProviderRef::default(),
             transcription_provider: crate::providers::TranscriptionProviderRef::default(),
@@ -2843,6 +2811,8 @@ impl Default for DelegateAgentConfig {
             max_tool_result_chars: default_max_tool_result_chars(),
             keep_tool_context_turns: default_keep_tool_context_turns(),
             tool_receipts: ToolReceiptsConfig::default(),
+            workspace: crate::multi_agent::AgentWorkspaceConfig::default(),
+            memory: crate::multi_agent::AgentMemoryConfig::default(),
         }
     }
 }
@@ -2877,7 +2847,7 @@ impl Config {
     /// under the same model_provider family to whichever entry happens to be
     /// first. The matching split logic lives in
     /// `crates/zeroclaw-runtime/src/tools/delegate.rs::resolve_brain` for
-    /// delegate sub-agents; this helper exposes the same contract for the
+    /// the delegation path; this helper exposes the same contract for the
     /// channel-server startup path.
     #[must_use]
     pub fn model_provider_for_agent(&self, agent_alias: &str) -> Option<&ModelProviderConfig> {
@@ -2915,11 +2885,47 @@ impl Config {
             .map(|(alias, _)| alias.as_str())
     }
 
-    /// Resolve a delegate-agent config by alias. `None` when the alias
-    /// isn't configured — callers should treat this as a config error
+    /// Resolve the per-agent workspace directory for `alias`.
+    ///
+    /// Returns the agent's `[agents.<alias>.workspace.path]` override
+    /// when set (operator-explicit, e.g. for putting a workspace on a
+    /// different disk), otherwise derives
+    /// `<install>/agents/<alias>/workspace/` from the install root
+    /// (the directory containing `config.toml`).
+    ///
+    /// Per-agent workspaces live under
+    /// `<install>/agents/<alias>/workspace/`; the legacy
+    /// `<install>/workspace/` is migrated into the default agent's
+    /// slot on first boot. Per-agent code paths (identity-file load,
+    /// `SecurityPolicy::for_agent`, the memory factory) consult this
+    /// method directly. `config.workspace_dir` points at the
+    /// default agent's per-agent workspace (the same path this method
+    /// returns for `"default"`) so legacy install-wide callers that
+    /// have not yet migrated to `agent_workspace_dir(alias)` read the
+    /// live agent workspace rather than an orphaned legacy path.
+    #[must_use]
+    pub fn agent_workspace_dir(&self, agent_alias: &str) -> std::path::PathBuf {
+        if let Some(cfg) = self.agents.get(agent_alias)
+            && let Some(custom) = cfg.workspace.path.as_ref()
+        {
+            return custom.clone();
+        }
+        let install_root = self
+            .config_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        install_root
+            .join("agents")
+            .join(agent_alias)
+            .join("workspace")
+    }
+
+    /// Resolve an aliased-agent config by alias. `None` when the alias
+    /// isn't configured; callers should treat this as a config error
     /// rather than synthesizing a default.
     #[must_use]
-    pub fn agent(&self, agent_alias: &str) -> Option<&DelegateAgentConfig> {
+    pub fn agent(&self, agent_alias: &str) -> Option<&AliasedAgentConfig> {
         self.agents.get(agent_alias)
     }
 
@@ -5871,9 +5877,6 @@ pub struct KnowledgeConfig {
     /// Proactively suggest relevant knowledge on queries. Default: true.
     #[serde(default = "default_true")]
     pub suggest_on_query: bool,
-    /// Allow searching across workspaces (disabled by default for client data isolation).
-    #[serde(default)]
-    pub cross_workspace_search: bool,
 }
 
 fn default_knowledge_db_path() -> String {
@@ -5892,7 +5895,6 @@ impl Default for KnowledgeConfig {
             max_nodes: default_knowledge_max_nodes(),
             auto_capture: false,
             suggest_on_query: true,
-            cross_workspace_search: false,
         }
     }
 }
@@ -8362,7 +8364,7 @@ pub struct RuntimeProfileConfig {
     pub allowed_tools: Vec<String>,
     /// Agentic run timeout in seconds.
     pub agentic_timeout_secs: Option<u64>,
-    // ── Per-agent runtime tunables (also live on DelegateAgentConfig) ─
+    // ── Per-agent runtime tunables (also live on AliasedAgentConfig) ─
     /// Maximum conversation history messages retained per session. `None` inherits.
     pub max_history_messages: Option<usize>,
     /// Maximum estimated tokens for context before compaction. `None` inherits.
@@ -8400,38 +8402,6 @@ pub struct SkillBundleConfig {
     pub include: Vec<String>,
     /// Skill names to exclude from this bundle.
     pub exclude: Vec<String>,
-}
-
-/// Named memory namespace (`[memory_namespaces.<alias>]`).
-///
-/// Isolates agent memory operations within a named namespace, preventing
-/// cross-contamination between agents sharing the same backend.
-///
-/// Namespaces are tags within the active memory backend — they do not pick
-/// a different backend. SQL backends column-tag rows with the namespace
-/// value; qdrant uses per-namespace collections; markdown uses per-namespace
-/// directories. The per-backend isolation primitive is the runtime backend's
-/// responsibility.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
-#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
-#[prefix = "memory-namespace"]
-#[serde(default)]
-pub struct MemoryNamespaceConfig {
-    /// Namespace key used to scope memory operations.
-    pub namespace: String,
-    /// Optional backend override (DEPRECATED — namespaces share the
-    /// global backend; this field will be removed once runtime backend
-    /// routing migrates to per-agent storage selection).
-    pub backend: Option<String>,
-    /// Days to retain entries before purge for this namespace. `None`
-    /// inherits the global `[memory].purge_after_days` policy.
-    pub retention_days: Option<u32>,
-    /// Reject writes against this namespace at the runtime backend layer.
-    /// Reads remain unaffected — useful for archival namespaces.
-    pub read_only: bool,
-    /// Memory categories to pin from purge in this namespace (entries
-    /// tagged with any of these stay regardless of `retention_days`).
-    pub pinned_categories: Vec<String>,
 }
 
 /// Named knowledge bundle (`[knowledge_bundles.<alias>]`).
@@ -12164,9 +12134,9 @@ impl Default for Config {
             risk_profiles: HashMap::new(),
             runtime_profiles: HashMap::new(),
             skill_bundles: HashMap::new(),
-            memory_namespaces: HashMap::new(),
             knowledge_bundles: HashMap::new(),
             mcp_bundles: HashMap::new(),
+            peer_groups: HashMap::new(),
             hooks: HooksConfig::default(),
             hardware: HardwareConfig::default(),
             query_classification: QueryClassificationConfig::default(),
@@ -12174,7 +12144,6 @@ impl Default for Config {
             tts: TtsConfig::default(),
             mcp: McpConfig::default(),
             nodes: NodesConfig::default(),
-            workspace: WorkspaceConfig::default(),
             onboard_state: OnboardStateConfig::default(),
             notion: NotionConfig::default(),
             jira: JiraConfig::default(),
@@ -12199,15 +12168,13 @@ impl Default for Config {
 
 fn default_config_and_workspace_dirs() -> Result<(PathBuf, PathBuf)> {
     let config_dir = default_config_dir()?;
+    // The second value is the legacy single-workspace path. It is
+    // input to the V3 filesystem migration (which moves its contents
+    // into `<install>/agents/default/workspace/`) and to the
+    // `resolve_runtime_dirs_for_onboarding` API. After
+    // `Config::load_or_init` completes, `config.workspace_dir` points
+    // at the per-agent default-agent workspace, not this legacy path.
     Ok((config_dir.clone(), config_dir.join("workspace")))
-}
-
-const ACTIVE_WORKSPACE_STATE_FILE: &str = "active_workspace.toml";
-
-#[derive(Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
-struct ActiveWorkspaceState {
-    config_dir: String,
 }
 
 fn default_config_dir() -> Result<PathBuf> {
@@ -12241,142 +12208,6 @@ fn default_path_under_config_dir(relative: &str) -> String {
         Ok(dir) => dir.join(relative).to_string_lossy().into_owned(),
         Err(_) => format!("~/.zeroclaw/{relative}"),
     }
-}
-
-fn active_workspace_state_path(default_dir: &Path) -> PathBuf {
-    default_dir.join(ACTIVE_WORKSPACE_STATE_FILE)
-}
-
-/// Returns `true` if `path` lives under the OS temp directory.
-fn is_temp_directory(path: &Path) -> bool {
-    let temp = std::env::temp_dir();
-    // Canonicalize when possible to handle symlinks (macOS /var → /private/var)
-    let canon_temp = temp.canonicalize().unwrap_or_else(|_| temp.clone());
-    let canon_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    canon_path.starts_with(&canon_temp)
-}
-
-async fn load_persisted_workspace_dirs(
-    default_config_dir: &Path,
-) -> Result<Option<(PathBuf, PathBuf)>> {
-    let state_path = active_workspace_state_path(default_config_dir);
-    if !state_path.exists() {
-        return Ok(None);
-    }
-
-    let contents = match fs::read_to_string(&state_path).await {
-        Ok(contents) => contents,
-        Err(error) => {
-            tracing::warn!(
-                "Failed to read active workspace marker {}: {error}",
-                state_path.display()
-            );
-            return Ok(None);
-        }
-    };
-
-    let state: ActiveWorkspaceState = match toml::from_str(&contents) {
-        Ok(state) => state,
-        Err(error) => {
-            tracing::warn!(
-                "Failed to parse active workspace marker {}: {error}",
-                state_path.display()
-            );
-            return Ok(None);
-        }
-    };
-
-    let raw_config_dir = state.config_dir.trim();
-    if raw_config_dir.is_empty() {
-        tracing::warn!(
-            "Ignoring active workspace marker {} because config_dir is empty",
-            state_path.display()
-        );
-        return Ok(None);
-    }
-
-    let parsed_dir = expand_tilde_path(raw_config_dir);
-    let config_dir = if parsed_dir.is_absolute() {
-        parsed_dir
-    } else {
-        default_config_dir.join(parsed_dir)
-    };
-    Ok(Some((config_dir.clone(), config_dir.join("workspace"))))
-}
-
-pub async fn persist_active_workspace_config_dir(config_dir: &Path) -> Result<()> {
-    persist_active_workspace_config_dir_in(config_dir, &default_config_dir()?).await
-}
-
-/// Inner implementation that accepts the default config directory explicitly,
-/// so callers (including tests) control where the marker is written without
-/// manipulating process-wide environment variables.
-async fn persist_active_workspace_config_dir_in(
-    config_dir: &Path,
-    default_config_dir: &Path,
-) -> Result<()> {
-    let state_path = active_workspace_state_path(default_config_dir);
-
-    // Guard: refuse to write a temp-directory config_dir into a non-temp
-    // default location. This prevents transient test runs or one-off
-    // invocations from hijacking the real user's daemon config resolution.
-    // When both paths are temp (e.g. in tests), the write is harmless.
-    if is_temp_directory(config_dir) && !is_temp_directory(default_config_dir) {
-        tracing::warn!(
-            path = %config_dir.display(),
-            "Refusing to persist temp directory as active workspace marker"
-        );
-        return Ok(());
-    }
-
-    if config_dir == default_config_dir {
-        if state_path.exists() {
-            fs::remove_file(&state_path).await.with_context(|| {
-                format!(
-                    "Failed to clear active workspace marker: {}",
-                    state_path.display()
-                )
-            })?;
-        }
-        return Ok(());
-    }
-
-    fs::create_dir_all(&default_config_dir)
-        .await
-        .with_context(|| {
-            format!(
-                "Failed to create default config directory: {}",
-                default_config_dir.display()
-            )
-        })?;
-
-    let state = ActiveWorkspaceState {
-        config_dir: config_dir.to_string_lossy().into_owned(),
-    };
-    let serialized =
-        toml::to_string_pretty(&state).context("Failed to serialize active workspace marker")?;
-
-    let temp_path = default_config_dir.join(format!(
-        ".{ACTIVE_WORKSPACE_STATE_FILE}.tmp-{}",
-        uuid::Uuid::new_v4()
-    ));
-    fs::write(&temp_path, serialized).await.with_context(|| {
-        format!(
-            "Failed to write temporary active workspace marker: {}",
-            temp_path.display()
-        )
-    })?;
-
-    if let Err(error) = fs::rename(&temp_path, &state_path).await {
-        let _ = fs::remove_file(&temp_path).await;
-        anyhow::bail!(
-            "Failed to atomically persist active workspace marker {}: {error}",
-            state_path.display()
-        );
-    }
-
-    sync_directory(default_config_dir).await?;
-    Ok(())
 }
 
 pub fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf, PathBuf) {
@@ -12425,7 +12256,6 @@ pub async fn resolve_runtime_dirs_for_onboarding() -> Result<(PathBuf, PathBuf)>
 enum ConfigResolutionSource {
     EnvConfigDir,
     EnvWorkspace,
-    ActiveWorkspaceMarker,
     DefaultConfigDir,
 }
 
@@ -12434,7 +12264,6 @@ impl ConfigResolutionSource {
         match self {
             Self::EnvConfigDir => "ZEROCLAW_CONFIG_DIR",
             Self::EnvWorkspace => "ZEROCLAW_WORKSPACE",
-            Self::ActiveWorkspaceMarker => "active_workspace.toml",
             Self::DefaultConfigDir => "default",
         }
     }
@@ -12497,16 +12326,6 @@ async fn resolve_runtime_config_dirs(
         ));
     }
 
-    if let Some((zeroclaw_dir, workspace_dir)) =
-        load_persisted_workspace_dirs(default_zeroclaw_dir).await?
-    {
-        return Ok((
-            zeroclaw_dir,
-            workspace_dir,
-            ConfigResolutionSource::ActiveWorkspaceMarker,
-        ));
-    }
-
     Ok((
         default_zeroclaw_dir.to_path_buf(),
         default_workspace_dir.to_path_buf(),
@@ -12557,7 +12376,7 @@ fn normalize_wire_api(raw: &str) -> Option<&'static str> {
 /// When the workspace is created outside of `zeroclaw onboard` (e.g., non-tty
 /// daemon/cron sessions), these files would otherwise be missing. This function
 /// creates sensible defaults that allow the agent to operate with a basic identity.
-async fn ensure_bootstrap_files(workspace_dir: &Path) -> Result<()> {
+pub async fn ensure_bootstrap_files(workspace_dir: &Path) -> Result<()> {
     let defaults: &[(&str, &str)] = &[
         (
             "IDENTITY.md",
@@ -12668,10 +12487,46 @@ impl Config {
     pub async fn load_or_init() -> Result<Self> {
         let (default_zeroclaw_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
 
-        let (zeroclaw_dir, workspace_dir, resolution_source) =
+        // Resolve env overrides FIRST so the migration runs against
+        // the install root the operator actually uses. Running the
+        // migration against `default_zeroclaw_dir` would silently skip
+        // any install reached via `ZEROCLAW_CONFIG_DIR` or
+        // `ZEROCLAW_WORKSPACE`.
+        let (zeroclaw_dir, _legacy_workspace_dir, resolution_source) =
             resolve_runtime_config_dirs(&default_zeroclaw_dir, &default_workspace_dir).await?;
 
+        // One-time, upgrade-only move of `<install>/workspace/` into
+        // `<install>/agents/default/workspace/` so legacy single-
+        // workspace installs land in the per-agent layout. The
+        // "default" alias is the transition bridge: V3 schema
+        // migration synthesizes the matching `agents.default` config
+        // entry, so the moved dir always lines up with a real agent.
+        // Idempotent: no-op on fresh installs and on already-migrated
+        // installs.
+        if zeroclaw_dir.is_dir()
+            && let Err(e) =
+                crate::migration::migrate_legacy_workspace_to_default_agent(&zeroclaw_dir)
+        {
+            tracing::warn!(
+                "[system] filesystem migration failed (continuing with legacy layout): {e}"
+            );
+        }
+
         let config_path = zeroclaw_dir.join("config.toml");
+
+        // V3 default-agent workspace anchor. Per-agent code paths
+        // (identity load, `SecurityPolicy::for_agent`, the memory
+        // factory) resolve via `Config::agent_workspace_dir(alias)`;
+        // legacy install-wide callers (`cost::CostTracker`,
+        // `plugins::PluginHost`, `sop`, `skills`, `memory CLI`) read
+        // `config.workspace_dir`, which now points at the migrated
+        // default-agent workspace so a freshly opened SQLite memory
+        // file lands in the same place the migration deposited the
+        // legacy DB.
+        let workspace_dir = zeroclaw_dir
+            .join("agents")
+            .join("default")
+            .join("workspace");
 
         fs::create_dir_all(&zeroclaw_dir)
             .await
@@ -12722,10 +12577,9 @@ impl Config {
             // current `Config` shape.
             //
             // Detect the on-disk version up-front so we can emit one WARN
-            // line (per the v0.8.0 schema rollout plan) when the daemon
-            // auto-migrates an older config in memory: the disk file is left
-            // untouched and the user is advised to lock the migration in
-            // with `zeroclaw config migrate`.
+            // line when the daemon auto-migrates an older config in memory:
+            // the disk file is left untouched and the user is advised to lock
+            // the migration in with `zeroclaw config migrate`.
             let stale_version = toml::from_str::<toml::Value>(&contents)
                 .ok()
                 .as_ref()
@@ -13729,11 +13583,6 @@ impl Config {
                     "runtime-profile",
                     agent.runtime_profile.as_str(),
                 ),
-                (
-                    "memory-namespaces",
-                    "memory-namespace",
-                    agent.memory_namespace.as_str(),
-                ),
             ];
             for (section, field, raw) in bare_single {
                 let trimmed = raw.trim();
@@ -13762,6 +13611,99 @@ impl Config {
                     format!("agents.{alias}.risk-profile"),
                     "agents.{alias}.risk_profile must reference a configured [risk_profiles.<alias>] entry",
                 );
+            }
+
+            // workspace.access: keys must point at OTHER agents, never
+            // self, and every target must be a configured agent.
+            for (target, mode) in &agent.workspace.access {
+                let target_str = target.as_str();
+                if target_str == alias.as_str() {
+                    validation_bail!(
+                        InvalidFormat,
+                        format!("agents.{alias}.workspace.access.{target_str}"),
+                        "agents.{alias}.workspace.access.{target_str} = {mode:?} but {target_str} is this agent itself; an agent always has full access to its own workspace, so self-references in the cross-agent allowlist are not permitted",
+                    );
+                }
+                if !self.agents.contains_key(target_str) {
+                    validation_bail!(
+                        DanglingReference,
+                        format!("agents.{alias}.workspace.access.{target_str}"),
+                        "agents.{alias}.workspace.access.{target_str} = {mode:?} but agents.{target_str} is not configured",
+                    );
+                }
+            }
+
+            // workspace.read_memory_from: every alias must exist as a
+            // configured agent and must use the same MemoryBackendKind
+            // as the declaring agent. Mismatched backends fail at
+            // config load rather than producing a runtime error when
+            // the per-agent memory plumbing consumes the allowlist.
+            let agent_backend = agent.memory.backend;
+            for (i, target) in agent.workspace.read_memory_from.iter().enumerate() {
+                let target_str = target.as_str();
+                if target_str == alias.as_str() {
+                    validation_bail!(
+                        InvalidFormat,
+                        format!("agents.{alias}.workspace.read_memory_from[{i}]"),
+                        "agents.{alias}.workspace.read_memory_from[{i}] = {target_str:?} but {target_str} is this agent itself; an agent always sees its own memory rows, so self-references in the cross-agent allowlist are not permitted",
+                    );
+                }
+                let Some(target_agent) = self.agents.get(target_str) else {
+                    validation_bail!(
+                        DanglingReference,
+                        format!("agents.{alias}.workspace.read_memory_from[{i}]"),
+                        "agents.{alias}.workspace.read_memory_from[{i}] = {target_str:?} but agents.{target_str} is not configured",
+                    );
+                };
+                if target_agent.memory.backend != agent_backend {
+                    let target_backend = target_agent.memory.backend;
+                    validation_bail!(
+                        InvalidFormat,
+                        format!("agents.{alias}.workspace.read_memory_from[{i}]"),
+                        "agents.{alias}.workspace.read_memory_from[{i}] points at agents.{target_str} which uses memory backend {target_backend:?}, but agents.{alias} uses {agent_backend:?}; the allowlist must point at same-backend siblings only",
+                    );
+                }
+            }
+        }
+
+        // Peer groups: every member alias must exist as a configured
+        // agent, and the group's channel must be in each member's
+        // channels list. Mutual opt-in resolution happens at runtime;
+        // this cross-reference check keeps misconfigured group
+        // members from looking like real peer relationships at load
+        // time.
+        let mut peer_group_names: Vec<&String> = self.peer_groups.keys().collect();
+        peer_group_names.sort();
+        for group_name in peer_group_names {
+            let group = &self.peer_groups[group_name];
+            let group_channel = group.channel.as_str();
+            if group_channel.trim().is_empty() {
+                validation_bail!(
+                    RequiredFieldEmpty,
+                    format!("peer_groups.{group_name}.channel"),
+                    "peer_groups.{group_name}.channel must reference a configured [channels.<type>.<alias>] entry",
+                );
+            }
+            for (i, member) in group.agents.iter().enumerate() {
+                let member_str = member.as_str();
+                let Some(member_agent) = self.agents.get(member_str) else {
+                    validation_bail!(
+                        DanglingReference,
+                        format!("peer_groups.{group_name}.agents[{i}]"),
+                        "peer_groups.{group_name}.agents[{i}] = {member_str:?} but agents.{member_str} is not configured",
+                    );
+                };
+                let channel_in_list = member_agent
+                    .channels
+                    .iter()
+                    .any(|ch| ch.as_str() == group_channel);
+                if !channel_in_list {
+                    validation_bail!(
+                        InvalidFormat,
+                        format!("peer_groups.{group_name}.agents[{i}]"),
+                        "peer_groups.{group_name}.agents[{i}] = {member_str:?} but agents.{member_str}.channels does not include {group_channel:?}; an agent can only join a peer group whose channel it has access to",
+                    );
+                }
             }
         }
 
@@ -14767,16 +14709,15 @@ auto_save = true
             agents: HashMap::new(),
             runtime_profiles: HashMap::new(),
             skill_bundles: HashMap::new(),
-            memory_namespaces: HashMap::new(),
             knowledge_bundles: HashMap::new(),
             mcp_bundles: HashMap::new(),
+            peer_groups: HashMap::new(),
             hooks: HooksConfig::default(),
             hardware: HardwareConfig::default(),
             transcription: TranscriptionConfig::default(),
             tts: TtsConfig::default(),
             mcp: McpConfig::default(),
             nodes: NodesConfig::default(),
-            workspace: WorkspaceConfig::default(),
             onboard_state: OnboardStateConfig::default(),
             notion: NotionConfig::default(),
             jira: JiraConfig::default(),
@@ -15120,7 +15061,7 @@ reasoning_effort = "turbo"
 
     #[test]
     async fn agent_config_defaults() {
-        let cfg = DelegateAgentConfig::default();
+        let cfg = AliasedAgentConfig::default();
         assert!(cfg.compact_context);
         assert_eq!(cfg.max_tool_iterations, 10);
         assert_eq!(cfg.max_history_messages, 50);
@@ -15275,16 +15216,15 @@ default_temperature = 0.7
             risk_profiles: HashMap::new(),
             runtime_profiles: HashMap::new(),
             skill_bundles: HashMap::new(),
-            memory_namespaces: HashMap::new(),
             knowledge_bundles: HashMap::new(),
             mcp_bundles: HashMap::new(),
+            peer_groups: HashMap::new(),
             hooks: HooksConfig::default(),
             hardware: HardwareConfig::default(),
             transcription: TranscriptionConfig::default(),
             tts: TtsConfig::default(),
             mcp: McpConfig::default(),
             nodes: NodesConfig::default(),
-            workspace: WorkspaceConfig::default(),
             onboard_state: OnboardStateConfig::default(),
             notion: NotionConfig::default(),
             jira: JiraConfig::default(),
@@ -15399,7 +15339,7 @@ default_temperature = 0.7
         );
         config.agents.insert(
             "worker".into(),
-            DelegateAgentConfig {
+            AliasedAgentConfig {
                 model_provider: "openrouter.worker".into(),
                 ..Default::default()
             },
@@ -16954,16 +16894,8 @@ model = "primary-model"
         let default_config_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         let default_workspace_dir = default_config_dir.join("workspace");
         let explicit_config_dir = default_config_dir.join("explicit-config");
-        let marker_config_dir = default_config_dir.join("profiles").join("alpha");
-        let state_path = default_config_dir.join(ACTIVE_WORKSPACE_STATE_FILE);
 
         fs::create_dir_all(&default_config_dir).await.unwrap();
-        let state = ActiveWorkspaceState {
-            config_dir: marker_config_dir.to_string_lossy().into_owned(),
-        };
-        fs::write(&state_path, toml::to_string(&state).unwrap())
-            .await
-            .unwrap();
 
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("ZEROCLAW_CONFIG_DIR", &explicit_config_dir) };
@@ -16984,36 +16916,6 @@ model = "primary-model"
 
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::remove_var("ZEROCLAW_CONFIG_DIR") };
-        let _ = fs::remove_dir_all(default_config_dir).await;
-    }
-
-    #[test]
-    async fn resolve_runtime_config_dirs_uses_active_workspace_marker() {
-        let _env_guard = env_override_lock().await;
-        let default_config_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
-        let default_workspace_dir = default_config_dir.join("workspace");
-        let marker_config_dir = default_config_dir.join("profiles").join("alpha");
-        let state_path = default_config_dir.join(ACTIVE_WORKSPACE_STATE_FILE);
-
-        // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("ZEROCLAW_WORKSPACE") };
-        fs::create_dir_all(&default_config_dir).await.unwrap();
-        let state = ActiveWorkspaceState {
-            config_dir: marker_config_dir.to_string_lossy().into_owned(),
-        };
-        fs::write(&state_path, toml::to_string(&state).unwrap())
-            .await
-            .unwrap();
-
-        let (config_dir, resolved_workspace_dir, source) =
-            resolve_runtime_config_dirs(&default_config_dir, &default_workspace_dir)
-                .await
-                .unwrap();
-
-        assert_eq!(source, ConfigResolutionSource::ActiveWorkspaceMarker);
-        assert_eq!(config_dir, marker_config_dir);
-        assert_eq!(resolved_workspace_dir, marker_config_dir.join("workspace"));
-
         let _ = fs::remove_dir_all(default_config_dir).await;
     }
 
@@ -17052,7 +16954,16 @@ model = "primary-model"
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
-        assert_eq!(config.workspace_dir, workspace_dir.join("workspace"));
+        // V3: config.workspace_dir is the per-agent default workspace
+        // under the resolved install root, not the legacy
+        // <install>/workspace/.
+        assert_eq!(
+            config.workspace_dir,
+            workspace_dir
+                .join("agents")
+                .join("default")
+                .join("workspace")
+        );
         assert_eq!(config.config_path, workspace_dir.join("config.toml"));
         assert!(workspace_dir.join("config.toml").exists());
 
@@ -17074,7 +16985,8 @@ model = "primary-model"
         let temp_home =
             std::env::temp_dir().join(format!("zeroclaw_test_home_{}", uuid::Uuid::new_v4()));
         let workspace_dir = temp_home.join("workspace");
-        let legacy_config_path = temp_home.join(".zeroclaw").join("config.toml");
+        let legacy_config_dir = temp_home.join(".zeroclaw");
+        let legacy_config_path = legacy_config_dir.join("config.toml");
 
         let original_home = std::env::var("HOME").ok();
         // SAFETY: test-only, single-threaded test runner.
@@ -17084,7 +16996,19 @@ model = "primary-model"
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
-        assert_eq!(config.workspace_dir, workspace_dir);
+        // V3: config.workspace_dir is the default agent's per-agent
+        // workspace under the resolved config dir. The
+        // ZEROCLAW_WORKSPACE env var resolved the install root via
+        // `resolve_config_dir_for_workspace`; the legacy
+        // <workspace_dir>/ path is the migration's input, not the
+        // post-load workspace anchor.
+        assert_eq!(
+            config.workspace_dir,
+            legacy_config_dir
+                .join("agents")
+                .join("default")
+                .join("workspace")
+        );
         assert_eq!(config.config_path, legacy_config_path);
         assert!(config.config_path.exists());
 
@@ -17127,7 +17051,16 @@ default_model = "legacy-model"
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
-        assert_eq!(config.workspace_dir, workspace_dir);
+        // V3: config.workspace_dir resolves to the default agent's
+        // per-agent workspace under the legacy config dir, regardless
+        // of the ZEROCLAW_WORKSPACE override.
+        assert_eq!(
+            config.workspace_dir,
+            legacy_config_dir
+                .join("agents")
+                .join("default")
+                .join("workspace")
+        );
         assert_eq!(config.config_path, legacy_config_path);
         assert_eq!(
             config
@@ -17205,131 +17138,6 @@ default_model = "legacy-model"
     }
 
     #[test]
-    async fn load_or_init_uses_persisted_active_workspace_marker() {
-        let _env_guard = env_override_lock().await;
-        let temp_home =
-            std::env::temp_dir().join(format!("zeroclaw_test_home_{}", uuid::Uuid::new_v4()));
-        let temp_default_dir = temp_home.join(".zeroclaw");
-        let custom_config_dir = temp_home.join("profiles").join("agent-alpha");
-
-        fs::create_dir_all(&custom_config_dir).await.unwrap();
-        // Pre-create the default dir so is_temp_directory() can canonicalize
-        // the path on macOS (where /var → /private/var symlink requires
-        // the directory to exist for canonicalize to resolve correctly).
-        fs::create_dir_all(&temp_default_dir).await.unwrap();
-        fs::write(
-            custom_config_dir.join("config.toml"),
-            "default_temperature = 0.7\ndefault_model = \"persisted-profile\"\n",
-        )
-        .await
-        .unwrap();
-
-        // Write the marker using the explicit default dir (no HOME manipulation
-        // needed for the persist call itself).
-        persist_active_workspace_config_dir_in(&custom_config_dir, &temp_default_dir)
-            .await
-            .unwrap();
-
-        // Config::load_or_init still reads HOME to find the marker, so we
-        // must override HOME here. The persist above already wrote to the
-        // correct temp location, so no stale marker can leak.
-        let original_home = std::env::var("HOME").ok();
-        // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("HOME", &temp_home) };
-        // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("ZEROCLAW_WORKSPACE") };
-
-        let config = Box::pin(Config::load_or_init()).await.unwrap();
-
-        assert_eq!(config.config_path, custom_config_dir.join("config.toml"));
-        assert_eq!(config.workspace_dir, custom_config_dir.join("workspace"));
-        assert_eq!(
-            config
-                .providers
-                .first_model_provider()
-                .and_then(|e| e.model.as_deref()),
-            Some("persisted-profile")
-        );
-
-        if let Some(home) = original_home {
-            // SAFETY: test-only, single-threaded test runner.
-            unsafe { std::env::set_var("HOME", home) };
-        } else {
-            // SAFETY: test-only, single-threaded test runner.
-            unsafe { std::env::remove_var("HOME") };
-        }
-        let _ = fs::remove_dir_all(temp_home).await;
-    }
-
-    #[test]
-    async fn load_or_init_env_workspace_override_takes_priority_over_marker() {
-        let _env_guard = env_override_lock().await;
-        let temp_home =
-            std::env::temp_dir().join(format!("zeroclaw_test_home_{}", uuid::Uuid::new_v4()));
-        let temp_default_dir = temp_home.join(".zeroclaw");
-        let marker_config_dir = temp_home.join("profiles").join("persisted-profile");
-        let env_workspace_dir = temp_home.join("env-workspace");
-
-        fs::create_dir_all(&marker_config_dir).await.unwrap();
-        fs::write(
-            marker_config_dir.join("config.toml"),
-            "default_temperature = 0.7\ndefault_model = \"marker-model\"\n",
-        )
-        .await
-        .unwrap();
-
-        // Write marker via explicit default dir, then set HOME for load_or_init.
-        persist_active_workspace_config_dir_in(&marker_config_dir, &temp_default_dir)
-            .await
-            .unwrap();
-
-        let original_home = std::env::var("HOME").ok();
-        // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("HOME", &temp_home) };
-        // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("ZEROCLAW_WORKSPACE", &env_workspace_dir) };
-
-        let config = Box::pin(Config::load_or_init()).await.unwrap();
-
-        assert_eq!(config.workspace_dir, env_workspace_dir.join("workspace"));
-        assert_eq!(config.config_path, env_workspace_dir.join("config.toml"));
-
-        // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("ZEROCLAW_WORKSPACE") };
-        if let Some(home) = original_home {
-            // SAFETY: test-only, single-threaded test runner.
-            unsafe { std::env::set_var("HOME", home) };
-        } else {
-            // SAFETY: test-only, single-threaded test runner.
-            unsafe { std::env::remove_var("HOME") };
-        }
-        let _ = fs::remove_dir_all(temp_home).await;
-    }
-
-    #[test]
-    async fn persist_active_workspace_marker_is_cleared_for_default_config_dir() {
-        let temp_home =
-            std::env::temp_dir().join(format!("zeroclaw_test_home_{}", uuid::Uuid::new_v4()));
-        let default_config_dir = temp_home.join(".zeroclaw");
-        let custom_config_dir = temp_home.join("profiles").join("custom-profile");
-        let marker_path = default_config_dir.join(ACTIVE_WORKSPACE_STATE_FILE);
-
-        // Use the _in variant directly -- no HOME manipulation needed since
-        // this test only exercises persist/clear logic, not Config::load_or_init.
-        persist_active_workspace_config_dir_in(&custom_config_dir, &default_config_dir)
-            .await
-            .unwrap();
-        assert!(marker_path.exists());
-
-        persist_active_workspace_config_dir_in(&default_config_dir, &default_config_dir)
-            .await
-            .unwrap();
-        assert!(!marker_path.exists());
-
-        let _ = fs::remove_dir_all(temp_home).await;
-    }
-
-    #[test]
     #[allow(clippy::large_futures)]
     async fn load_or_init_logs_existing_config_as_initialized() {
         let _env_guard = env_override_lock().await;
@@ -17369,7 +17177,15 @@ default_model = "persisted-profile"
         drop(guard);
         let logs = capture.captured();
 
-        assert_eq!(config.workspace_dir, workspace_dir.join("workspace"));
+        // V3: per-agent default-agent workspace under the resolved
+        // install root.
+        assert_eq!(
+            config.workspace_dir,
+            workspace_dir
+                .join("agents")
+                .join("default")
+                .join("workspace")
+        );
         assert_eq!(config.config_path, config_path);
         assert_eq!(
             config
@@ -20307,5 +20123,225 @@ allowed_users = []
         let whatsapp: WhatsAppConfig =
             serde_json::from_str(r#"{"approval_timeout_secs":180}"#).unwrap();
         assert_eq!(whatsapp.approval_timeout_secs, 180);
+    }
+
+    // ── Multi-agent cross-reference validators ─────────────────────
+
+    /// Build a minimal valid Config with one agent on a configured
+    /// channel + risk profile + model provider. Each test mutates a
+    /// single field to provoke a validator.
+    fn multi_agent_test_config() -> Config {
+        use crate::providers::ChannelRef;
+
+        let mut config = Config::default();
+
+        // Risk profile (mandatory for enabled agents).
+        config
+            .risk_profiles
+            .insert("default".to_string(), RiskProfileConfig::default());
+
+        // Anthropic model provider (mandatory for the agent).
+        config.providers.models.anthropic.insert(
+            "default".to_string(),
+            AnthropicModelProviderConfig::default(),
+        );
+
+        // A configured Telegram channel the agent can reference. Just
+        // having the entry in the map is enough for the dotted-alias
+        // validator; we are not exercising channel-level behavior here.
+        config
+            .channels
+            .telegram
+            .insert("draft".to_string(), TelegramConfig::default());
+
+        // Agent that targets the model provider, risk profile, and
+        // channel. Default workspace is jailed.
+        let agent = AliasedAgentConfig {
+            channels: vec![ChannelRef::new("telegram.draft")],
+            model_provider: crate::providers::ModelProviderRef::new("anthropic.default"),
+            risk_profile: "default".to_string(),
+            ..AliasedAgentConfig::default()
+        };
+        config.agents.insert("alpha".to_string(), agent);
+
+        config
+    }
+
+    #[test]
+    async fn validate_rejects_workspace_access_self_reference() {
+        let mut config = multi_agent_test_config();
+        let alpha = config.agents.get_mut("alpha").unwrap();
+        alpha.workspace.access.insert(
+            crate::multi_agent::AgentAlias::new("alpha"),
+            crate::multi_agent::AccessMode::Read,
+        );
+        let err = config
+            .validate()
+            .expect_err("self-reference must fail validation");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("agents.alpha.workspace.access.alpha"),
+            "expected field path in error, got: {msg}"
+        );
+        assert!(
+            msg.contains("self-references"),
+            "expected self-reference explanation, got: {msg}"
+        );
+    }
+
+    #[test]
+    async fn validate_rejects_workspace_access_dangling_target() {
+        let mut config = multi_agent_test_config();
+        let alpha = config.agents.get_mut("alpha").unwrap();
+        alpha.workspace.access.insert(
+            crate::multi_agent::AgentAlias::new("ghost"),
+            crate::multi_agent::AccessMode::ReadWrite,
+        );
+        let err = config
+            .validate()
+            .expect_err("dangling target must fail validation");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("agents.ghost is not configured"),
+            "expected dangling-ref explanation, got: {msg}"
+        );
+    }
+
+    #[test]
+    async fn validate_rejects_read_memory_from_self_reference() {
+        let mut config = multi_agent_test_config();
+        let alpha = config.agents.get_mut("alpha").unwrap();
+        alpha
+            .workspace
+            .read_memory_from
+            .push(crate::multi_agent::AgentAlias::new("alpha"));
+        let err = config
+            .validate()
+            .expect_err("self-reference must fail validation");
+        assert!(
+            err.to_string().contains("read_memory_from[0]"),
+            "expected indexed field path, got: {err}"
+        );
+    }
+
+    #[test]
+    async fn validate_rejects_read_memory_from_cross_backend() {
+        let mut config = multi_agent_test_config();
+
+        // Add a second agent on Postgres.
+        let beta = AliasedAgentConfig {
+            channels: vec![crate::providers::ChannelRef::new("telegram.draft")],
+            model_provider: crate::providers::ModelProviderRef::new("anthropic.default"),
+            risk_profile: "default".to_string(),
+            memory: crate::multi_agent::AgentMemoryConfig {
+                backend: crate::multi_agent::MemoryBackendKind::Postgres,
+            },
+            ..AliasedAgentConfig::default()
+        };
+        config.agents.insert("beta".to_string(), beta);
+
+        // Alpha (Sqlite default) tries to read from beta (Postgres).
+        let alpha = config.agents.get_mut("alpha").unwrap();
+        alpha
+            .workspace
+            .read_memory_from
+            .push(crate::multi_agent::AgentAlias::new("beta"));
+
+        let err = config
+            .validate()
+            .expect_err("cross-backend allowlist must fail validation");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("same-backend siblings only"),
+            "expected cross-backend explanation, got: {msg}"
+        );
+    }
+
+    #[test]
+    async fn validate_rejects_peer_group_dangling_member() {
+        let mut config = multi_agent_test_config();
+        let group = crate::multi_agent::PeerGroupConfig {
+            channel: crate::providers::ChannelRef::new("telegram.draft"),
+            agents: vec![
+                crate::multi_agent::AgentAlias::new("alpha"),
+                crate::multi_agent::AgentAlias::new("ghost"),
+            ],
+            ..crate::multi_agent::PeerGroupConfig::default()
+        };
+        config.peer_groups.insert("team_chat".to_string(), group);
+        let err = config
+            .validate()
+            .expect_err("dangling group member must fail validation");
+        assert!(
+            err.to_string().contains("peer_groups.team_chat.agents[1]"),
+            "expected indexed field path, got: {err}"
+        );
+    }
+
+    #[test]
+    async fn validate_rejects_peer_group_member_without_channel() {
+        let mut config = multi_agent_test_config();
+
+        // Add a discord channel and a beta agent that ONLY uses discord.
+        config
+            .channels
+            .discord
+            .insert("ops".to_string(), DiscordConfig::default());
+        let beta = AliasedAgentConfig {
+            channels: vec![crate::providers::ChannelRef::new("discord.ops")],
+            model_provider: crate::providers::ModelProviderRef::new("anthropic.default"),
+            risk_profile: "default".to_string(),
+            ..AliasedAgentConfig::default()
+        };
+        config.agents.insert("beta".to_string(), beta);
+
+        // Group on telegram.draft includes beta (who only has discord).
+        let group = crate::multi_agent::PeerGroupConfig {
+            channel: crate::providers::ChannelRef::new("telegram.draft"),
+            agents: vec![
+                crate::multi_agent::AgentAlias::new("alpha"),
+                crate::multi_agent::AgentAlias::new("beta"),
+            ],
+            ..crate::multi_agent::PeerGroupConfig::default()
+        };
+        config.peer_groups.insert("team_chat".to_string(), group);
+
+        let err = config
+            .validate()
+            .expect_err("channel-mismatch group member must fail validation");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("agents.beta.channels does not include"),
+            "expected channel-mismatch explanation, got: {msg}"
+        );
+    }
+
+    #[test]
+    async fn validate_accepts_valid_peer_group_with_two_compatible_members() {
+        let mut config = multi_agent_test_config();
+
+        // Beta on the same telegram channel.
+        let beta = AliasedAgentConfig {
+            channels: vec![crate::providers::ChannelRef::new("telegram.draft")],
+            model_provider: crate::providers::ModelProviderRef::new("anthropic.default"),
+            risk_profile: "default".to_string(),
+            ..AliasedAgentConfig::default()
+        };
+        config.agents.insert("beta".to_string(), beta);
+
+        // Group on telegram.draft includes both members.
+        let group = crate::multi_agent::PeerGroupConfig {
+            channel: crate::providers::ChannelRef::new("telegram.draft"),
+            agents: vec![
+                crate::multi_agent::AgentAlias::new("alpha"),
+                crate::multi_agent::AgentAlias::new("beta"),
+            ],
+            ..crate::multi_agent::PeerGroupConfig::default()
+        };
+        config.peer_groups.insert("team_chat".to_string(), group);
+
+        config
+            .validate()
+            .expect("two-member same-channel peer group must validate cleanly");
     }
 }

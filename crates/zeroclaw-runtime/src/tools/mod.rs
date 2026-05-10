@@ -27,6 +27,7 @@ pub mod model_switch;
 pub mod read_skill;
 pub mod schedule;
 pub mod security_ops;
+pub mod send_message_to_peer;
 pub mod shell;
 pub mod skill_http;
 pub mod skill_tool;
@@ -35,6 +36,7 @@ pub mod sop_approve;
 pub mod sop_execute;
 pub mod sop_list;
 pub mod sop_status;
+pub mod spawn_subagent;
 pub mod verifiable_intent;
 
 // Tool types from zeroclaw-tools (direct imports, no shims)
@@ -107,7 +109,6 @@ pub use zeroclaw_tools::tool_search::ToolSearchTool;
 pub use zeroclaw_tools::weather_tool::WeatherTool;
 pub use zeroclaw_tools::web_fetch::WebFetchTool;
 pub use zeroclaw_tools::web_search_tool::WebSearchTool;
-pub use zeroclaw_tools::workspace_tool::WorkspaceTool;
 pub use zeroclaw_tools::wrappers::{PathGuardedTool, RateLimitedTool};
 
 // Traits from zeroclaw-api
@@ -127,6 +128,7 @@ pub use model_switch::ModelSwitchTool;
 pub use read_skill::ReadSkillTool;
 pub use schedule::ScheduleTool;
 pub use security_ops::SecurityOpsTool;
+pub use send_message_to_peer::SendMessageToPeerTool;
 pub use shell::ShellTool;
 pub use skill_http::SkillHttpTool;
 pub use skill_tool::SkillShellTool;
@@ -135,6 +137,7 @@ pub use sop_approve::SopApproveTool;
 pub use sop_execute::SopExecuteTool;
 pub use sop_list::SopListTool;
 pub use sop_status::SopStatusTool;
+pub use spawn_subagent::SpawnSubagentTool;
 pub use verifiable_intent::VerifiableIntentTool;
 
 use crate::platform::{NativeRuntime, RuntimeAdapter};
@@ -143,7 +146,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use zeroclaw_config::schema::{Config, DelegateAgentConfig};
+use zeroclaw_config::schema::{AliasedAgentConfig, Config};
 use zeroclaw_memory::Memory;
 
 /// Shared handle to the delegate tool's parent-tools list.
@@ -273,6 +276,10 @@ pub const BUILTIN_TOOL_INTEGRATIONS: &[(&str, &str)] = &[
     ("Shell", "Terminal command execution"),
     ("File System", "Read/write files"),
     ("Weather", "Forecasts & conditions (wttr.in)"),
+    (
+        "Spawn SubAgent",
+        "Spawn an ephemeral SubAgent that inherits this agent's identity",
+    ),
 ];
 
 /// Create full tool registry including memory tools and optional Composio
@@ -293,7 +300,7 @@ pub fn all_tools(
     http_config: &zeroclaw_config::schema::HttpRequestConfig,
     web_fetch_config: &zeroclaw_config::schema::WebFetchConfig,
     workspace_dir: &std::path::Path,
-    agents: &HashMap<String, DelegateAgentConfig>,
+    agents: &HashMap<String, AliasedAgentConfig>,
     fallback_api_key: Option<&str>,
     root_config: &zeroclaw_config::schema::Config,
     canvas_store: Option<CanvasStore>,
@@ -344,7 +351,7 @@ pub fn all_tools_with_runtime(
     http_config: &zeroclaw_config::schema::HttpRequestConfig,
     web_fetch_config: &zeroclaw_config::schema::WebFetchConfig,
     workspace_dir: &std::path::Path,
-    agents: &HashMap<String, DelegateAgentConfig>,
+    agents: &HashMap<String, AliasedAgentConfig>,
     fallback_api_key: Option<&str>,
     root_config: &zeroclaw_config::schema::Config,
     canvas_store: Option<CanvasStore>,
@@ -402,6 +409,14 @@ pub fn all_tools_with_runtime(
         Arc::new(ScheduleTool::new(
             security.clone(),
             root_config.clone(),
+            agent_alias,
+        )),
+        Arc::new(SpawnSubagentTool::new(
+            Arc::new(root_config.clone()),
+            agent_alias,
+        )),
+        Arc::new(SendMessageToPeerTool::new(
+            Arc::new(root_config.clone()),
             agent_alias,
         )),
         Arc::new(ModelRoutingConfigTool::new(
@@ -920,7 +935,7 @@ pub fn all_tools_with_runtime(
     let delegate_handle: Option<DelegateParentToolsHandle> = if agents.is_empty() {
         None
     } else {
-        let delegate_agents: HashMap<String, DelegateAgentConfig> = agents
+        let delegate_agents: HashMap<String, AliasedAgentConfig> = agents
             .iter()
             .map(|(name, cfg)| (name.clone(), cfg.clone()))
             .collect();
@@ -958,27 +973,17 @@ pub fn all_tools_with_runtime(
         .with_risk_profiles(root_config.risk_profiles.clone())
         .with_runtime_profiles(root_config.runtime_profiles.clone())
         .with_skill_bundles(root_config.skill_bundles.clone())
-        .with_memory_namespaces(root_config.memory_namespaces.clone());
+        .with_install_root(
+            root_config
+                .config_path
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_default(),
+        )
+        .with_root_config(config.clone());
         tool_arcs.push(Arc::new(delegate_tool));
         Some(parent_tools)
     };
-
-    // Workspace management tool (conditionally registered when workspace isolation is enabled)
-    if root_config.workspace.enabled {
-        let workspaces_dir = if root_config.workspace.workspaces_dir.starts_with("~/") {
-            let home = directories::UserDirs::new()
-                .map(|u| u.home_dir().to_path_buf())
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
-            home.join(&root_config.workspace.workspaces_dir[2..])
-        } else {
-            std::path::PathBuf::from(&root_config.workspace.workspaces_dir)
-        };
-        let ws_manager = zeroclaw_config::workspace::WorkspaceManager::new(workspaces_dir);
-        tool_arcs.push(Arc::new(WorkspaceTool::new(
-            Arc::new(tokio::sync::RwLock::new(ws_manager)),
-            security.clone(),
-        )));
-    }
 
     // Verifiable Intent tool (opt-in via config)
     if root_config.verifiable_intent.enabled {
@@ -1274,7 +1279,7 @@ mod tests {
         let mut agents = HashMap::new();
         agents.insert(
             "researcher".to_string(),
-            DelegateAgentConfig {
+            AliasedAgentConfig {
                 model_provider: "ollama.researcher".into(),
                 ..Default::default()
             },

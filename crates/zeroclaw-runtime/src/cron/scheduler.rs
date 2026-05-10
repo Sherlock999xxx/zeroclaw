@@ -289,6 +289,18 @@ async fn run_agent_job(
     agent_alias: &str,
     job: &CronJob,
 ) -> (bool, String) {
+    // Cron is one of two SubAgent spawn sites; the other is the
+    // agent-loop `spawn_subagent` tool. Both funnel through
+    // `SubAgentSpawn::for_agent` so permission inheritance, tracing
+    // span shape, and audit attribution stay uniform across spawn
+    // sites.
+    let subagent_ctx = match crate::subagent::SubAgentSpawn::for_agent(config, agent_alias)
+        .and_then(|spawn| spawn.build(crate::subagent::SubAgentOverrides::default()))
+    {
+        Ok(ctx) => ctx,
+        Err(e) => return (false, format!("subagent spawn failed: {e:#}")),
+    };
+
     if !security.can_act() {
         return (
             false,
@@ -315,18 +327,22 @@ async fn run_agent_job(
     // Recall relevant memories so cron jobs have context awareness.
     // Skipped when `job.uses_memory` is false (e.g. stateless digest jobs).
     // Exclude `Conversation` memories to prevent chat context from
-    // leaking into scheduled executions (see #5415).
+    // leaking into scheduled executions (see #5415). Routes through
+    // the cron-owning agent's per-agent memory wrapper so the
+    // recall is scoped to that agent's bound + allowlisted rows.
     let memory_context = if !job.uses_memory {
         String::new()
     } else {
-        match zeroclaw_memory::create_memory(
-            &config.memory,
-            &config.workspace_dir,
+        match zeroclaw_memory::create_memory_for_agent(
+            config,
+            agent_alias,
             config
                 .providers
                 .first_model_provider()
                 .and_then(|e| e.api_key.as_deref()),
-        ) {
+        )
+        .await
+        {
             Ok(mem) => match mem.recall(&prompt, 5, None, None, None).await {
                 Ok(entries) if !entries.is_empty() => {
                     let ctx: String = entries
@@ -360,27 +376,50 @@ async fn run_agent_job(
 
     // Assign a unique session ID so memories written during this run can be
     // purged atomically if the run fails (prevents snowball accumulation).
+    // Doubles as the SubAgent run_id in the tracing span so a failed
+    // memory purge can be correlated with its sub-run.
     let run_session_id = uuid::Uuid::new_v4().to_string();
     let session_path = std::path::PathBuf::from(format!("cron-{run_session_id}"));
 
+    let subagent_span = tracing::info_span!(
+        "subagent",
+        parent_alias = %subagent_ctx.parent_alias,
+        run_id = %run_session_id,
+        spawn_site = "cron",
+    );
+
+    // Pass the validated SubAgent context as run-time overrides so the
+    // policy that came back from `SubAgentSpawn::build` reaches the
+    // agent loop. Without this the loop reconstructs from config and
+    // any future caller-supplied narrowing override would silently
+    // collapse back to the parent's verbatim policy.
+    let run_overrides = crate::agent::loop_::AgentRunOverrides {
+        security: Some(subagent_ctx.policy.clone()),
+        memory: None,
+    };
     let run_result = match job.session_target {
         SessionTarget::Main | SessionTarget::Isolated => {
-            Box::pin(crate::agent::run(
-                cron_config,
-                agent_alias,
-                Some(prefixed_prompt),
-                None,
-                model_override,
-                config
-                    .providers
-                    .first_model_provider()
-                    .and_then(|e| e.temperature)
-                    .unwrap_or(0.7),
-                vec![],
-                false,
-                Some(session_path.clone()),
-                job.allowed_tools.clone(),
-            ))
+            use tracing::Instrument;
+            Box::pin(
+                crate::agent::run(
+                    cron_config,
+                    agent_alias,
+                    Some(prefixed_prompt),
+                    None,
+                    model_override,
+                    config
+                        .providers
+                        .first_model_provider()
+                        .and_then(|e| e.temperature)
+                        .unwrap_or(0.7),
+                    vec![],
+                    false,
+                    Some(session_path.clone()),
+                    job.allowed_tools.clone(),
+                    run_overrides,
+                )
+                .instrument(subagent_span),
+            )
             .await
         }
     };
@@ -396,16 +435,20 @@ async fn run_agent_job(
         ),
         Err(e) => {
             // Purge memories written during this failed run so they don't
-            // pollute future recall and cause context snowball.
+            // pollute future recall and cause context snowball. Routes
+            // through the cron-owning agent's per-agent memory wrapper
+            // so the purge stays scoped to the agent that wrote them.
             let mem_session_key = format!("cli:{}", session_path.display());
-            if let Ok(mem) = zeroclaw_memory::create_memory(
-                &config.memory,
-                &config.workspace_dir,
+            if let Ok(mem) = zeroclaw_memory::create_memory_for_agent(
+                config,
+                agent_alias,
                 config
                     .providers
                     .first_model_provider()
                     .and_then(|e| e.api_key.as_deref()),
-            ) {
+            )
+            .await
+            {
                 let _ = mem.purge_session(&mem_session_key).await;
             }
             (false, format!("agent job failed: {e}"))
@@ -727,7 +770,7 @@ mod tests {
         );
         config.agents.insert(
             "test-agent".to_string(),
-            zeroclaw_config::schema::DelegateAgentConfig {
+            zeroclaw_config::schema::AliasedAgentConfig {
                 model_provider: "openrouter.default".into(),
                 risk_profile: "default".to_string(),
                 ..Default::default()

@@ -47,6 +47,12 @@ pub struct RuntimeTraceEvent {
     pub success: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// Owning agent's alias. `None` on system-level traces (boot,
+    /// migration, scheduler ticks not bound to any specific agent) and
+    /// on legacy entries written before the alias field existed. The
+    /// agent loop binds the alias at run() entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_alias: Option<String>,
     #[serde(default)]
     pub payload: Value,
 }
@@ -193,6 +199,10 @@ pub fn init_from_config(config: &ObservabilityConfig, workspace_dir: &Path) {
 }
 
 /// Record a runtime trace event.
+///
+/// Forwards to [`record_event_with_agent`] with `agent_alias = None`.
+/// Sites that have a bound agent alias in scope should call
+/// [`record_event_with_agent`] directly for proper attribution.
 pub fn record_event(
     event_type: &str,
     channel: Option<&str>,
@@ -201,6 +211,35 @@ pub fn record_event(
     turn_id: Option<&str>,
     success: Option<bool>,
     message: Option<&str>,
+    payload: Value,
+) {
+    record_event_with_agent(
+        event_type,
+        channel,
+        model_provider,
+        model,
+        turn_id,
+        success,
+        message,
+        None,
+        payload,
+    );
+}
+
+/// Record a runtime trace event with an explicit owning agent alias.
+/// The alias appears as a structured field on the emitted event so
+/// multi-agent runs are grep-filterable by alias and otel/dora/
+/// prometheus exports carry the attribution.
+#[allow(clippy::too_many_arguments)]
+pub fn record_event_with_agent(
+    event_type: &str,
+    channel: Option<&str>,
+    model_provider: Option<&str>,
+    model: Option<&str>,
+    turn_id: Option<&str>,
+    success: Option<bool>,
+    message: Option<&str>,
+    agent_alias: Option<&str>,
     payload: Value,
 ) {
     let logger = TRACE_LOGGER
@@ -221,6 +260,7 @@ pub fn record_event(
         turn_id: turn_id.map(str::to_string),
         success,
         message: message.map(str::to_string),
+        agent_alias: agent_alias.map(str::to_string),
         payload,
     };
 
@@ -377,6 +417,7 @@ mod tests {
                 success: None,
                 message: Some(format!("event-{i}")),
                 payload: serde_json::json!({ "i": i }),
+                agent_alias: None,
             };
             logger.append(&event).unwrap();
         }
@@ -405,6 +446,7 @@ mod tests {
             success: Some(false),
             message: Some("boom".into()),
             payload: serde_json::json!({ "error": "boom" }),
+            agent_alias: None,
         };
         logger.append(&event).unwrap();
 

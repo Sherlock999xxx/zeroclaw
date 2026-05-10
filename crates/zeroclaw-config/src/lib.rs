@@ -8,6 +8,7 @@ pub mod domain_matcher;
 pub mod env_overrides;
 pub mod helpers;
 pub mod migration;
+pub mod multi_agent;
 pub mod pairing;
 pub mod platform;
 pub mod policy;
@@ -19,7 +20,6 @@ pub mod secrets;
 pub mod traits;
 pub mod typed_value;
 pub mod validation_warnings;
-pub mod workspace;
 
 /// Shim module so `Configurable` derive macro's generated `crate::config::*` paths resolve.
 /// The macro was written assuming it runs inside the root crate where `mod config` exists.

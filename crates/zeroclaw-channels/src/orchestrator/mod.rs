@@ -343,10 +343,10 @@ struct ChannelRuntimeContext {
     channels_by_name: Arc<HashMap<String, Arc<dyn Channel>>>,
     model_provider: Arc<dyn ModelProvider>,
     default_model_provider: Arc<String>,
-    /// Resolved delegate-agent config for the agent owning this
+    /// Resolved aliased-agent config for the agent owning this
     /// runtime context. Per-channel agent dispatch (one agent per
     /// channel.<type>.<alias>) is a follow-up.
-    agent_cfg: Arc<zeroclaw_config::schema::DelegateAgentConfig>,
+    agent_cfg: Arc<zeroclaw_config::schema::AliasedAgentConfig>,
     prompt_config: Arc<zeroclaw_config::schema::Config>,
     memory: Arc<dyn Memory>,
     tools_registry: Arc<Vec<Box<dyn Tool>>>,
@@ -2733,6 +2733,41 @@ async fn process_channel_message(
                 .and_then(|(base, _)| ctx.channels_by_name.get(base))
         })
         .cloned();
+
+    // Self-loop guard, two-layer.
+    //
+    // Layer 1 — SDK side: channels that expose `Channel::self_handle()`
+    // get caught here.
+    //
+    // Layer 2 — agent-loop fallback: even when the channel returned a
+    // handle and Layer 1 ran, re-check via the shared
+    // `peers::should_drop_self_loop` helper using the same handle. The
+    // fallback exists so a channel impl that gains its
+    // self-identity later in its lifecycle (after Layer 1's check
+    // fired with `None`) still has a guard available; both layers use
+    // identical normalization so they agree on what "self" means.
+    if let Some(channel) = target_channel.as_ref() {
+        if channel.drop_self_messages(&msg) {
+            tracing::debug!(
+                channel = %msg.channel,
+                sender = %msg.sender,
+                "dropping self-authored inbound message (self-loop guard, sdk layer)"
+            );
+            return;
+        }
+        if zeroclaw_runtime::peers::should_drop_self_loop(
+            &msg.sender,
+            channel.self_handle().as_deref(),
+        ) {
+            tracing::debug!(
+                channel = %msg.channel,
+                sender = %msg.sender,
+                "dropping self-authored inbound message (self-loop guard, agent-loop fallback)"
+            );
+            return;
+        }
+    }
+
     if let Err(err) = maybe_apply_runtime_config_update(ctx.as_ref()).await {
         tracing::warn!("Failed to apply runtime config update: {err}");
     }
@@ -6537,7 +6572,7 @@ mod tests {
             channels_by_name: Arc::new(HashMap::new()),
             model_provider: Arc::new(DummyModelProvider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -6665,7 +6700,7 @@ mod tests {
             channels_by_name: Arc::new(HashMap::new()),
             model_provider: Arc::new(DummyModelProvider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -6754,7 +6789,7 @@ mod tests {
             channels_by_name: Arc::new(HashMap::new()),
             model_provider: Arc::new(DummyModelProvider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -6859,7 +6894,7 @@ mod tests {
             channels_by_name: Arc::new(HashMap::new()),
             model_provider: Arc::new(DummyModelProvider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -7462,7 +7497,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::new(ToolCallingModelProvider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
             observer: Arc::new(NoopObserver),
@@ -7632,7 +7667,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 zeroclaw_runtime::agent::tool_receipts::ReceiptGenerator::new(),
             ),
             show_receipts_in_response: true,
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             agent_transcription_provider: String::new(),
         });
 
@@ -7769,7 +7804,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 zeroclaw_runtime::agent::tool_receipts::ReceiptGenerator::new(),
             ),
             show_receipts_in_response: false,
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             agent_transcription_provider: String::new(),
         });
 
@@ -7875,7 +7910,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             agent_transcription_provider: String::new(),
         });
 
@@ -7943,7 +7978,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::new(ToolCallingModelProvider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
             observer: Arc::new(NoopObserver),
@@ -8053,7 +8088,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::new(RawToolArtifactModelProvider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
             observer: Arc::new(NoopObserver),
@@ -8148,7 +8183,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::new(ToolCallingAliasModelProvider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
             observer: Arc::new(NoopObserver),
@@ -8256,7 +8291,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::clone(&default_model_provider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -8390,7 +8425,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::clone(&default_model_provider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -8505,7 +8540,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::clone(&startup_model_provider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -8634,7 +8669,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::clone(&model_provider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -8744,7 +8779,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 required_tool_iterations: 11,
             }),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
             observer: Arc::new(NoopObserver),
@@ -8844,7 +8879,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 required_tool_iterations: 20,
             }),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
             observer: Arc::new(NoopObserver),
@@ -8989,6 +9024,31 @@ BTC is currently around $65,000 based on latest tool output."#
         async fn health_check(&self) -> bool {
             true
         }
+
+        async fn store_with_agent(
+            &self,
+            _key: &str,
+            _content: &str,
+            _category: zeroclaw_memory::MemoryCategory,
+            _session_id: Option<&str>,
+            _namespace: Option<&str>,
+            _importance: Option<f64>,
+            _agent_id: Option<&str>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn recall_for_agents(
+            &self,
+            _allowed_agent_ids: &[&str],
+            _query: &str,
+            _limit: usize,
+            _session_id: Option<&str>,
+            _since: Option<&str>,
+            _until: Option<&str>,
+        ) -> anyhow::Result<Vec<zeroclaw_memory::MemoryEntry>> {
+            Ok(Vec::new())
+        }
     }
 
     struct RecallMemory;
@@ -9028,6 +9088,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 namespace: "default".into(),
                 importance: None,
                 superseded_by: None,
+                agent_id: None,
             }])
         }
 
@@ -9054,6 +9115,31 @@ BTC is currently around $65,000 based on latest tool output."#
         async fn health_check(&self) -> bool {
             true
         }
+
+        async fn store_with_agent(
+            &self,
+            _key: &str,
+            _content: &str,
+            _category: zeroclaw_memory::MemoryCategory,
+            _session_id: Option<&str>,
+            _namespace: Option<&str>,
+            _importance: Option<f64>,
+            _agent_id: Option<&str>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn recall_for_agents(
+            &self,
+            _allowed_agent_ids: &[&str],
+            query: &str,
+            limit: usize,
+            session_id: Option<&str>,
+            since: Option<&str>,
+            until: Option<&str>,
+        ) -> anyhow::Result<Vec<zeroclaw_memory::MemoryEntry>> {
+            self.recall(query, limit, session_id, since, until).await
+        }
     }
 
     #[tokio::test]
@@ -9070,7 +9156,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 delay: Duration::from_millis(250),
             }),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -9188,7 +9274,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: provider_impl.clone(),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -9325,7 +9411,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: provider_impl.clone(),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -9459,7 +9545,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 delay: Duration::from_millis(180),
             }),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -9571,7 +9657,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 delay: Duration::from_millis(20),
             }),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -9664,7 +9750,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::new(NoReplyModelProvider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -9757,7 +9843,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 delay: Duration::from_millis(5),
             }),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -10655,7 +10741,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: provider_impl.clone(),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -10805,7 +10891,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: provider_impl.clone(),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -10996,7 +11082,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: provider_impl.clone(),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(RecallMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -11120,7 +11206,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channels_by_name: Arc::new(channels_by_name),
             model_provider: provider_impl.clone(),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -11503,7 +11589,7 @@ This is an example JSON object for profile settings."#;
         // A channel is only collected when an enabled agent references it.
         config.agents.insert(
             "mattermost-default".to_string(),
-            zeroclaw_config::schema::DelegateAgentConfig {
+            zeroclaw_config::schema::AliasedAgentConfig {
                 channels: vec!["mattermost.default".into()],
                 ..Default::default()
             },
@@ -11759,7 +11845,7 @@ This is an example JSON object for profile settings."#;
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::new(DummyModelProvider),
             default_model_provider: Arc::new("dummy".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -11861,7 +11947,7 @@ This is an example JSON object for profile settings."#;
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::new(DummyModelProvider),
             default_model_provider: Arc::new("dummy".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -11997,7 +12083,7 @@ This is an example JSON object for profile settings."#;
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::new(FormatErrorModelProvider),
             default_model_provider: Arc::new("dummy".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -12180,7 +12266,7 @@ This is an example JSON object for profile settings."#;
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::clone(&default_model_provider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -12317,7 +12403,7 @@ This is an example JSON object for profile settings."#;
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::clone(&default_model_provider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -12446,7 +12532,7 @@ This is an example JSON object for profile settings."#;
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::clone(&default_model_provider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -12595,7 +12681,7 @@ This is an example JSON object for profile settings."#;
             channels_by_name: Arc::new(channels_by_name),
             model_provider: Arc::clone(&default_model_provider),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -12934,7 +13020,7 @@ This is an example JSON object for profile settings."#;
                 delay: Duration::from_millis(150),
             }),
             default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::DelegateAgentConfig::default()),
+            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
             observer: Arc::new(NoopObserver),
@@ -13178,7 +13264,7 @@ This is an example JSON object for profile settings."#;
 
     #[test]
     fn default_keep_tool_context_turns_is_two() {
-        let config = zeroclaw_config::schema::DelegateAgentConfig::default();
+        let config = zeroclaw_config::schema::AliasedAgentConfig::default();
         assert_eq!(config.keep_tool_context_turns, 2);
     }
 

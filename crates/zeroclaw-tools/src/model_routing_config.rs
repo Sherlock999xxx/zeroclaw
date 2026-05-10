@@ -267,7 +267,6 @@ impl ModelRoutingConfigTool {
                     "model_provider": agent.model_provider,
                     "risk_profile": agent.risk_profile,
                     "runtime_profile": agent.runtime_profile,
-                    "system_prompt": agent.system_prompt,
                     "max_delegation_depth": risk.map(|r| r.max_delegation_depth),
                     "agentic": runtime.map(|r| r.agentic),
                     "allowed_tools": runtime.map(|r| &r.allowed_tools),
@@ -729,7 +728,6 @@ impl ModelRoutingConfigTool {
         let model_provider = Self::parse_non_empty_string(args, "model_provider")?;
         let model = Self::parse_non_empty_string(args, "model")?;
 
-        let system_prompt_update = Self::parse_optional_string_update(args, "system_prompt")?;
         let api_key_update = Self::parse_optional_string_update(args, "api_key")?;
         let temperature_update = Self::parse_optional_f64_update(args, "temperature")?;
         let max_depth_update = Self::parse_optional_u32_update(args, "max_depth")?;
@@ -817,11 +815,6 @@ impl ModelRoutingConfigTool {
         next_agent.model_provider = agent_model_provider_ref.into();
         next_agent.risk_profile = name.clone();
         next_agent.runtime_profile = name.clone();
-        match system_prompt_update {
-            MaybeSet::Set(value) => next_agent.system_prompt = Some(value),
-            MaybeSet::Null => next_agent.system_prompt = None,
-            MaybeSet::Unset => {}
-        }
 
         cfg.save().await?;
 
@@ -841,7 +834,7 @@ impl ModelRoutingConfigTool {
 
         let mut cfg = self.load_config_without_env()?;
         if cfg.agents.remove(&name).is_none() {
-            anyhow::bail!("No delegate agent found with name '{name}'");
+            anyhow::bail!("No aliased agent found with name '{name}'");
         }
 
         cfg.save().await?;
@@ -849,7 +842,7 @@ impl ModelRoutingConfigTool {
         Ok(ToolResult {
             success: true,
             output: serde_json::to_string_pretty(&json!({
-                "message": "Delegate agent removed",
+                "message": "Aliased agent removed",
                 "name": name,
                 "config": Self::snapshot(&cfg),
             }))?,
@@ -865,7 +858,7 @@ impl Tool for ModelRoutingConfigTool {
     }
 
     fn description(&self) -> &str {
-        "Manage default model settings, scenario-based model_provider/model routes, classification rules, and delegate sub-agent profiles"
+        "Manage default model settings, scenario-based model_provider/model routes, classification rules, and aliased agent profiles"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -903,7 +896,7 @@ impl Tool for ModelRoutingConfigTool {
                 },
                 "api_key": {
                     "type": ["string", "null"],
-                    "description": "Optional API key override for scenario route or delegate agent"
+                    "description": "Optional API key override for scenario route or aliased agent"
                 },
                 "keywords": {
                     "description": "Classification keywords for upsert_scenario (string or string array)",
@@ -943,11 +936,7 @@ impl Tool for ModelRoutingConfigTool {
                 },
                 "name": {
                     "type": "string",
-                    "description": "Delegate sub-agent name for upsert_agent/remove_agent"
-                },
-                "system_prompt": {
-                    "type": ["string", "null"],
-                    "description": "Optional system prompt override for delegate agent"
+                    "description": "Aliased agent name for upsert_agent/remove_agent"
                 },
                 "max_depth": {
                     "type": ["integer", "null"],
@@ -956,7 +945,7 @@ impl Tool for ModelRoutingConfigTool {
                 },
                 "agentic": {
                     "type": "boolean",
-                    "description": "Enable tool-call loop mode for delegate agent"
+                    "description": "Enable tool-call loop mode for aliased agent"
                 },
                 "allowed_tools": {
                     "description": "Allowed tools for agentic delegate mode (string or string array)",

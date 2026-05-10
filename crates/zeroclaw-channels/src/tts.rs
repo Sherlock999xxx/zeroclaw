@@ -703,7 +703,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.agents.insert(
             "default".into(),
-            zeroclaw_config::schema::DelegateAgentConfig {
+            zeroclaw_config::schema::AliasedAgentConfig {
                 tts_provider: "edge.default".into(),
                 ..Default::default()
             },
@@ -724,7 +724,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.agents.insert(
             "default".into(),
-            zeroclaw_config::schema::DelegateAgentConfig {
+            zeroclaw_config::schema::AliasedAgentConfig {
                 tts_provider: "piper.default".into(),
                 ..Default::default()
             },
