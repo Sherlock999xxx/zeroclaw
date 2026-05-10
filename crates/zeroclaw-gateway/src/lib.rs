@@ -539,34 +539,20 @@ pub async fn run_gateway(
     // request. The shared SecurityPolicy / risk_profile / tools_registry
     // built here are vestiges driving the legacy single-agent
     // `/api/tools` listing and the `run_gateway_chat_with_tools` test
-    // mock; per-request agent dispatch is tracked as a follow-up. Pick
-    // the migration-synthesized "default" agent when present, else the
-    // first enabled agent — purely to seed AppState for those legacy
-    // surfaces; per-agent endpoints don't read from this state.
-    let agent_alias = config
+    // mock; per-request agent dispatch is tracked as a follow-up.
+    //
+    // Agent count is unconstrained at boot. Zero agents is a valid
+    // state — the gateway must come up so `/admin/reload` and
+    // `/onboard` can install one — and the legacy seed simply stays
+    // empty. With one or more enabled agents, any of them seeds the
+    // vestige; aliases are arbitrary so the iteration-order pick is
+    // load-bearing on nothing.
+    let canvas_store = canvas_store.unwrap_or_default();
+    let agent_alias_opt = config
         .agents
-        .keys()
-        .find(|k| k.as_str() == "default")
-        .or_else(|| {
-            config
-                .agents
-                .iter()
-                .find(|(_, a)| a.enabled)
-                .map(|(alias, _)| alias)
-        })
-        .ok_or_else(|| {
-            anyhow::anyhow!("gateway start requires at least one configured [agents.<alias>] entry")
-        })?
-        .clone();
-    let risk_profile = config
-        .risk_profile_for_agent(&agent_alias)
-        .with_context(|| {
-            format!(
-                "agents.{agent_alias}.risk_profile does not name a configured risk_profiles entry"
-            )
-        })?
-        .clone();
-    let security = Arc::new(SecurityPolicy::for_agent(&config, &agent_alias)?);
+        .iter()
+        .find(|(_, a)| a.enabled)
+        .map(|(alias, _)| alias.clone());
 
     let (composio_key, composio_entity_id) = if config.composio.enabled {
         (
@@ -577,41 +563,55 @@ pub async fn run_gateway(
         (None, None)
     };
 
-    // Reuse the daemon-supplied canvas store when present so channel-
-    // server agents (Telegram/Discord/Slack) push frames into the same
-    // store the gateway's WebSocket and REST endpoints serve (#5356).
-    // Standalone gateway invocations (no daemon supervisor) fall back
-    // to a fresh store.
-    let canvas_store = canvas_store.unwrap_or_default();
+    let (mut tools_registry_raw, delegate_handle_gw) = if let Some(ref agent_alias) =
+        agent_alias_opt
+    {
+        let risk_profile = config
+            .risk_profile_for_agent(agent_alias)
+            .with_context(|| {
+                format!(
+                    "agents.{agent_alias}.risk_profile does not name a configured risk_profiles entry"
+                )
+            })?
+            .clone();
+        let security = Arc::new(SecurityPolicy::for_agent(&config, agent_alias)?);
 
-    let (
-        mut tools_registry_raw,
-        delegate_handle_gw,
-        _reaction_handle_gw,
-        _channel_map_handle,
-        _ask_user_handle_gw,
-        _escalate_handle_gw,
-    ) = tools::all_tools_with_runtime(
-        Arc::new(config.clone()),
-        &security,
-        &risk_profile,
-        &agent_alias,
-        runtime,
-        Arc::clone(&mem),
-        composio_key,
-        composio_entity_id,
-        &config.browser,
-        &config.http_request,
-        &config.web_fetch,
-        &config.workspace_dir,
-        &config.agents,
-        config
-            .providers
-            .first_model_provider()
-            .and_then(|e| e.api_key.as_deref()),
-        &config,
-        Some(canvas_store.clone()),
-    );
+        let (
+            tools_registry_raw,
+            delegate_handle_gw,
+            _reaction_handle_gw,
+            _channel_map_handle,
+            _ask_user_handle_gw,
+            _escalate_handle_gw,
+        ) = tools::all_tools_with_runtime(
+            Arc::new(config.clone()),
+            &security,
+            &risk_profile,
+            agent_alias,
+            runtime,
+            Arc::clone(&mem),
+            composio_key,
+            composio_entity_id,
+            &config.browser,
+            &config.http_request,
+            &config.web_fetch,
+            &config.workspace_dir,
+            &config.agents,
+            config
+                .providers
+                .first_model_provider()
+                .and_then(|e| e.api_key.as_deref()),
+            &config,
+            Some(canvas_store.clone()),
+        );
+        (tools_registry_raw, delegate_handle_gw)
+    } else {
+        tracing::info!(
+            "Gateway: no [agents.<alias>] configured — booting with empty tools registry. \
+             Visit http://{display_addr}/onboard to add an agent."
+        );
+        (Vec::new(), None)
+    };
 
     // ── Wire MCP tools into the gateway tool registry (non-fatal) ───
     // Without this, the `/api/tools` endpoint misses MCP tools.
@@ -2806,6 +2806,61 @@ mod tests {
     fn app_state_is_clone() {
         fn assert_clone<T: Clone>() {}
         assert_clone::<AppState>();
+    }
+
+    /// Regression: the gateway must boot with zero configured agents so
+    /// a fresh install can reach `/admin/reload` and `/onboard` to add
+    /// one. Earlier the boot path returned
+    /// `gateway start requires at least one configured [agents.<alias>]
+    /// entry`, which crashed the daemon supervisor before the reload
+    /// channel could be exercised.
+    #[tokio::test]
+    async fn run_gateway_starts_with_zero_agents() {
+        // Default Config has no [agents.*] entries — the exact shape
+        // a fresh install presents on first daemon boot.
+        let config = Config::default();
+        assert!(
+            config.agents.is_empty(),
+            "regression assumes default Config has no agents",
+        );
+
+        // Bind to an ephemeral port on loopback. If the boot path
+        // erred on the agents-required check, the join would resolve
+        // immediately with that Err. We race a short delay against
+        // the spawn: a still-running task at the deadline means boot
+        // got far enough to start serving.
+        let handle =
+            tokio::spawn(
+                async move { run_gateway("127.0.0.1", 0, config, None, None, None).await },
+            );
+
+        match tokio::time::timeout(
+            std::time::Duration::from_millis(750),
+            &mut Box::pin(async {
+                // We cannot await `handle` directly because the gateway
+                // never returns under normal operation; instead, peek at
+                // whether it has finished by polling join with a tiny
+                // budget.
+                let _ = tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }),
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(_) => panic!("test setup timed out before checking gateway state"),
+        }
+
+        // If the boot path errored, the task is finished and join
+        // returns the error. If it's still running, abort and accept
+        // boot reached the serving stage.
+        if handle.is_finished() {
+            let result = handle.await.expect("task did not panic");
+            panic!(
+                "gateway exited during boot with zero agents — must stay up for reload/onboard: {:?}",
+                result
+            );
+        }
+        handle.abort();
     }
 
     #[tokio::test]
