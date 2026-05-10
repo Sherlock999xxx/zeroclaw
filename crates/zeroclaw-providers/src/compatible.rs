@@ -26,9 +26,6 @@ pub struct OpenAiCompatibleModelProvider {
     pub credential: Option<String>,
     pub auth_header: AuthStyle,
     supports_vision: bool,
-    /// When false, do not fall back to /v1/responses on chat completions 404.
-    /// GLM/Zhipu does not support the responses API.
-    supports_responses_fallback: bool,
     user_agent: Option<String>,
     /// When true, collect all `system` messages and prepend their content
     /// to the first `user` message, then drop the system messages.
@@ -152,9 +149,7 @@ impl OpenAiCompatibleModelProvider {
         credential: Option<&str>,
         auth_style: AuthStyle,
     ) -> Self {
-        Self::new_with_options(
-            name, base_url, credential, auth_style, false, true, None, false,
-        )
+        Self::new_with_options(name, base_url, credential, auth_style, false, None, false)
     }
 
     pub fn new_with_vision(
@@ -170,22 +165,8 @@ impl OpenAiCompatibleModelProvider {
             credential,
             auth_style,
             supports_vision,
-            true,
             None,
             false,
-        )
-    }
-
-    /// Same as `new` but skips the /v1/responses fallback on 404.
-    /// Use for model_providers (e.g. GLM) that only support chat completions.
-    pub fn new_no_responses_fallback(
-        name: &str,
-        base_url: &str,
-        credential: Option<&str>,
-        auth_style: AuthStyle,
-    ) -> Self {
-        Self::new_with_options(
-            name, base_url, credential, auth_style, false, false, None, false,
         )
     }
 
@@ -206,7 +187,6 @@ impl OpenAiCompatibleModelProvider {
             credential,
             auth_style,
             false,
-            true,
             Some(user_agent),
             false,
         )
@@ -226,7 +206,6 @@ impl OpenAiCompatibleModelProvider {
             credential,
             auth_style,
             supports_vision,
-            true,
             Some(user_agent),
             false,
         )
@@ -240,9 +219,7 @@ impl OpenAiCompatibleModelProvider {
         credential: Option<&str>,
         auth_style: AuthStyle,
     ) -> Self {
-        Self::new_with_options(
-            name, base_url, credential, auth_style, false, true, None, true,
-        )
+        Self::new_with_options(name, base_url, credential, auth_style, false, None, true)
     }
 
     fn new_with_options(
@@ -251,7 +228,6 @@ impl OpenAiCompatibleModelProvider {
         credential: Option<&str>,
         auth_style: AuthStyle,
         supports_vision: bool,
-        supports_responses_fallback: bool,
         user_agent: Option<&str>,
         merge_system_into_user: bool,
     ) -> Self {
@@ -261,7 +237,6 @@ impl OpenAiCompatibleModelProvider {
             credential: credential.map(ToString::to_string),
             auth_header: auth_style,
             supports_vision,
-            supports_responses_fallback,
             user_agent: user_agent.map(ToString::to_string),
             merge_system_into_user,
             native_tool_calling: !merge_system_into_user,
@@ -491,85 +466,6 @@ impl OpenAiCompatibleModelProvider {
         } else {
             format!("{}/chat/completions", self.base_url)
         }
-    }
-
-    fn path_ends_with(&self, suffix: &str) -> bool {
-        if let Ok(url) = reqwest::Url::parse(&self.base_url) {
-            return url.path().trim_end_matches('/').ends_with(suffix);
-        }
-
-        self.base_url.trim_end_matches('/').ends_with(suffix)
-    }
-
-    fn has_explicit_api_path(&self) -> bool {
-        let Ok(url) = reqwest::Url::parse(&self.base_url) else {
-            return false;
-        };
-
-        let path = url.path().trim_end_matches('/');
-        !path.is_empty() && path != "/"
-    }
-
-    /// Build the full URL for responses API, detecting if base_url already includes the path.
-    fn responses_url(&self) -> String {
-        if self.path_ends_with("/responses") {
-            return self.base_url.clone();
-        }
-
-        let normalized_base = self.base_url.trim_end_matches('/');
-
-        // If chat endpoint is explicitly configured, derive sibling responses endpoint.
-        if let Some(prefix) = normalized_base.strip_suffix("/chat/completions") {
-            return format!("{prefix}/responses");
-        }
-
-        // If an explicit API path already exists (e.g. /v1, /openai, /api/coding/v3),
-        // append responses directly to avoid duplicate /v1 segments.
-        if self.has_explicit_api_path() {
-            format!("{normalized_base}/responses")
-        } else {
-            format!("{normalized_base}/v1/responses")
-        }
-    }
-
-    async fn chat_via_responses(
-        &self,
-        credential: Option<&str>,
-        messages: &[ChatMessage],
-        model: &str,
-    ) -> anyhow::Result<String> {
-        let (instructions, input) = build_responses_prompt(messages);
-        if input.is_empty() {
-            anyhow::bail!(
-                "{} Responses API fallback requires at least one non-system message",
-                self.name
-            );
-        }
-
-        let request = ResponsesRequest {
-            model: model.to_string(),
-            input,
-            instructions,
-            stream: Some(false),
-        };
-
-        let url = self.responses_url();
-
-        let response = self
-            .apply_auth_header(self.http_client().post(&url).json(&request), credential)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let error = response.text().await?;
-            anyhow::bail!("{} Responses API error: {error}", self.name);
-        }
-
-        let body = response.text().await?;
-        let responses = parse_responses_response_body(&self.name, &body)?;
-
-        extract_responses_text(responses)
-            .ok_or_else(|| anyhow::anyhow!("No response from {} Responses API", self.name))
     }
 
     fn requires_tool_stream(&self) -> bool {
@@ -893,85 +789,6 @@ struct NativeMessage {
     /// that require it in assistant tool-call history messages.
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_content: Option<String>,
-}
-
-// ---------------------------------------------------------------
-// Responses API fallback (used when /chat/completions returns 404 on
-// providers that only expose /v1/responses, e.g. llama-server)
-// ---------------------------------------------------------------
-
-#[derive(Debug, Serialize)]
-struct ResponsesRequest {
-    model: String,
-    input: Vec<ResponsesInput>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    instructions: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stream: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-struct ResponsesInput {
-    role: String,
-    content: ResponsesInputContent,
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    kind: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(untagged)]
-enum ResponsesInputContent {
-    Text(String),
-    Parts(Vec<ResponsesInputPart>),
-}
-
-#[derive(Debug, Serialize)]
-struct ResponsesInputPart {
-    #[serde(rename = "type")]
-    kind: String,
-    text: String,
-}
-
-impl ResponsesInput {
-    fn user_text(content: String) -> Self {
-        Self {
-            role: "user".to_string(),
-            content: ResponsesInputContent::Text(content),
-            kind: None,
-        }
-    }
-
-    fn assistant_output_text(content: String) -> Self {
-        Self {
-            role: "assistant".to_string(),
-            content: ResponsesInputContent::Parts(vec![ResponsesInputPart {
-                kind: "output_text".to_string(),
-                text: content,
-            }]),
-            kind: Some("message".to_string()),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct ResponsesResponse {
-    #[serde(default)]
-    output: Vec<ResponsesOutput>,
-    #[serde(default)]
-    output_text: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ResponsesOutput {
-    #[serde(default)]
-    content: Vec<ResponsesContent>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ResponsesContent {
-    #[serde(rename = "type")]
-    kind: Option<String>,
-    text: Option<String>,
 }
 
 // ---------------------------------------------------------------
@@ -1550,87 +1367,6 @@ fn sse_bytes_to_events_for_contract(
     .boxed()
 }
 
-fn first_nonempty(text: Option<&str>) -> Option<String> {
-    text.and_then(|value| {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
-
-fn build_responses_prompt(messages: &[ChatMessage]) -> (Option<String>, Vec<ResponsesInput>) {
-    let mut instructions_parts = Vec::new();
-    let mut input = Vec::new();
-
-    for message in messages {
-        if message.content.trim().is_empty() {
-            continue;
-        }
-
-        if message.role == "system" {
-            instructions_parts.push(message.content.clone());
-            continue;
-        }
-
-        let input_item = match message.role.as_str() {
-            // llama.cpp Responses parser expects assistant history items in
-            // "output_message" shape (`type=message`, `output_text` parts).
-            "assistant" | "tool" => ResponsesInput::assistant_output_text(message.content.clone()),
-            _ => ResponsesInput::user_text(message.content.clone()),
-        };
-        input.push(input_item);
-    }
-
-    let instructions = if instructions_parts.is_empty() {
-        None
-    } else {
-        Some(instructions_parts.join("\n\n"))
-    };
-
-    (instructions, input)
-}
-
-fn extract_responses_text(response: ResponsesResponse) -> Option<String> {
-    if let Some(text) = first_nonempty(response.output_text.as_deref()) {
-        return Some(text);
-    }
-
-    for item in &response.output {
-        for content in &item.content {
-            if content.kind.as_deref() == Some("output_text")
-                && let Some(text) = first_nonempty(content.text.as_deref())
-            {
-                return Some(text);
-            }
-        }
-    }
-
-    for item in &response.output {
-        for content in &item.content {
-            if let Some(text) = first_nonempty(content.text.as_deref()) {
-                return Some(text);
-            }
-        }
-    }
-
-    None
-}
-
-fn parse_responses_response_body(
-    provider_name: &str,
-    body: &str,
-) -> anyhow::Result<ResponsesResponse> {
-    serde_json::from_str::<ResponsesResponse>(body).map_err(|error| {
-        let snippet = super::sanitize_api_error(body);
-        anyhow::anyhow!(
-            "{provider_name} Responses API returned an unexpected payload: {error}; body={snippet}"
-        )
-    })
-}
-
 fn parse_chat_response_body(name: &str, body: &str) -> anyhow::Result<ApiChatResponse> {
     serde_json::from_str(body).map_err(|_| {
         let sanitized = super::sanitize_api_error(body);
@@ -2164,21 +1900,6 @@ impl ModelProvider for OpenAiCompatibleModelProvider {
         };
 
         if !response.status().is_success() {
-            let status = response.status();
-
-            // Mirror chat_with_system: 404 may mean this model_provider uses the Responses API
-            if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
-                return self
-                    .chat_via_responses(credential, &effective_messages, model)
-                    .await
-                    .map_err(|responses_err| {
-                        anyhow::anyhow!(
-                            "{} API error (chat completions unavailable; responses fallback failed: {responses_err})",
-                            self.name
-                        )
-                    });
-            }
-
             return Err(super::api_error(&self.name, response).await);
         }
 
@@ -3060,113 +2781,6 @@ mod tests {
     }
 
     #[test]
-    fn responses_extracts_top_level_output_text() {
-        let json = r#"{"output_text":"Hello from top-level","output":[]}"#;
-        let response: ResponsesResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            extract_responses_text(response).as_deref(),
-            Some("Hello from top-level")
-        );
-    }
-
-    #[test]
-    fn responses_extracts_nested_output_text() {
-        let json =
-            r#"{"output":[{"content":[{"type":"output_text","text":"Hello from nested"}]}]}"#;
-        let response: ResponsesResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            extract_responses_text(response).as_deref(),
-            Some("Hello from nested")
-        );
-    }
-
-    #[test]
-    fn responses_extracts_any_text_as_fallback() {
-        let json = r#"{"output":[{"content":[{"type":"message","text":"Fallback text"}]}]}"#;
-        let response: ResponsesResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            extract_responses_text(response).as_deref(),
-            Some("Fallback text")
-        );
-    }
-
-    #[test]
-    fn build_responses_prompt_preserves_multi_turn_history() {
-        let messages = vec![
-            ChatMessage::system("policy"),
-            ChatMessage::user("step 1"),
-            ChatMessage::assistant("ack 1"),
-            ChatMessage::tool("{\"result\":\"ok\"}"),
-            ChatMessage::user("step 2"),
-        ];
-
-        let (instructions, input) = build_responses_prompt(&messages);
-
-        assert_eq!(instructions.as_deref(), Some("policy"));
-        assert_eq!(input.len(), 4);
-
-        let serialized: Vec<serde_json::Value> = input
-            .iter()
-            .map(|item| serde_json::to_value(item).expect("responses input item serializes"))
-            .collect();
-        assert_eq!(
-            serialized[0],
-            serde_json::json!({
-                "role": "user",
-                "content": "step 1"
-            })
-        );
-        assert_eq!(
-            serialized[1],
-            serde_json::json!({
-                "role": "assistant",
-                "type": "message",
-                "content": [{
-                    "type": "output_text",
-                    "text": "ack 1"
-                }]
-            })
-        );
-        assert_eq!(
-            serialized[2],
-            serde_json::json!({
-                "role": "assistant",
-                "type": "message",
-                "content": [{
-                    "type": "output_text",
-                    "text": "{\"result\":\"ok\"}"
-                }]
-            })
-        );
-        assert_eq!(
-            serialized[3],
-            serde_json::json!({
-                "role": "user",
-                "content": "step 2"
-            })
-        );
-    }
-
-    #[tokio::test]
-    async fn chat_via_responses_requires_non_system_message() {
-        let model_provider =
-            make_model_provider("custom", "https://api.example.com", Some("test-key"));
-        let err = model_provider
-            .chat_via_responses(
-                Some("test-key"),
-                &[ChatMessage::system("policy")],
-                "gpt-test",
-            )
-            .await
-            .expect_err("system-only fallback payload should fail");
-
-        assert!(
-            err.to_string()
-                .contains("requires at least one non-system message")
-        );
-    }
-
-    #[test]
     fn tool_call_function_name_falls_back_to_top_level_name() {
         let call: ToolCall = serde_json::from_value(serde_json::json!({
             "name": "memory_recall",
@@ -3272,68 +2886,6 @@ mod tests {
         assert_eq!(
             p.chat_completions_url(),
             "https://my-api.example.com/v2/llm/chat/completions-proxy/chat/completions"
-        );
-    }
-
-    #[test]
-    fn responses_url_standard() {
-        // Standard model_providers get /v1/responses appended
-        let p = make_model_provider("test", "https://api.example.com", None);
-        assert_eq!(p.responses_url(), "https://api.example.com/v1/responses");
-    }
-
-    #[test]
-    fn responses_url_custom_full_endpoint() {
-        // Custom model_provider with full responses endpoint
-        let p = make_model_provider(
-            "custom",
-            "https://my-api.example.com/api/v2/responses",
-            None,
-        );
-        assert_eq!(
-            p.responses_url(),
-            "https://my-api.example.com/api/v2/responses"
-        );
-    }
-
-    #[test]
-    fn responses_url_requires_exact_suffix_match() {
-        let p = make_model_provider(
-            "custom",
-            "https://my-api.example.com/api/v2/responses-proxy",
-            None,
-        );
-        assert_eq!(
-            p.responses_url(),
-            "https://my-api.example.com/api/v2/responses-proxy/responses"
-        );
-    }
-
-    #[test]
-    fn responses_url_derives_from_chat_endpoint() {
-        let p = make_model_provider(
-            "custom",
-            "https://my-api.example.com/api/v2/chat/completions",
-            None,
-        );
-        assert_eq!(
-            p.responses_url(),
-            "https://my-api.example.com/api/v2/responses"
-        );
-    }
-
-    #[test]
-    fn responses_url_base_with_v1_no_duplicate() {
-        let p = make_model_provider("test", "https://api.example.com/v1", None);
-        assert_eq!(p.responses_url(), "https://api.example.com/v1/responses");
-    }
-
-    #[test]
-    fn responses_url_non_v1_api_path_uses_raw_suffix() {
-        let p = make_model_provider("test", "https://api.example.com/api/coding/v3", None);
-        assert_eq!(
-            p.responses_url(),
-            "https://api.example.com/api/coding/v3/responses"
         );
     }
 
@@ -3982,20 +3534,6 @@ mod tests {
         assert!(caps.native_tool_calling);
         assert!(caps.vision);
         assert_eq!(p.user_agent.as_deref(), Some("zeroclaw-test/vision"));
-    }
-
-    #[test]
-    fn no_responses_fallback_constructor_keeps_native_tool_calling_enabled() {
-        let p = OpenAiCompatibleModelProvider::new_no_responses_fallback(
-            "FallbackProvider",
-            "https://example.com",
-            Some("k"),
-            AuthStyle::Bearer,
-        );
-        let caps = <OpenAiCompatibleModelProvider as ModelProvider>::capabilities(&p);
-        assert!(caps.native_tool_calling);
-        assert!(!caps.vision);
-        assert!(p.user_agent.is_none());
     }
 
     #[test]

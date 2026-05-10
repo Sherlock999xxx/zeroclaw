@@ -482,7 +482,7 @@ impl CompatFamilySpec for GlmModelProviderConfig {
         key: Option<&str>,
         api_url: Option<&str>,
     ) -> OpenAiCompatibleModelProvider {
-        OpenAiCompatibleModelProvider::new_no_responses_fallback(
+        OpenAiCompatibleModelProvider::new(
             Self::DISPLAY,
             api_url.unwrap_or(Self::DEFAULT_URL),
             key,
@@ -500,7 +500,7 @@ impl CompatFamilySpec for NvidiaModelProviderConfig {
         key: Option<&str>,
         api_url: Option<&str>,
     ) -> OpenAiCompatibleModelProvider {
-        OpenAiCompatibleModelProvider::new_no_responses_fallback(
+        OpenAiCompatibleModelProvider::new(
             Self::DISPLAY,
             api_url.unwrap_or(Self::DEFAULT_URL),
             key,
