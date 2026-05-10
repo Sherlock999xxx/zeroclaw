@@ -524,13 +524,25 @@ pub async fn run_gateway(
         },
     };
     let temperature = fallback.and_then(|e| e.temperature).unwrap_or(0.7);
-    let mem: Arc<dyn Memory> = Arc::from(zeroclaw_memory::create_memory_with_storage_and_routes(
-        &config.memory,
-        &config.providers.embedding_routes,
-        config.resolve_active_storage(),
-        &config.workspace_dir,
-        fallback.and_then(|e| e.api_key.as_deref()),
-    )?);
+    // Skip the install-wide memory backend init when zero agents are
+    // configured. Building a SQLite (or other) backend here would
+    // synthesize `<workspace_dir>/memory/brain.db` on a fresh install
+    // that has nothing to remember; per-agent memory factories under
+    // `agents/<alias>/workspace/memory/` are the only legitimate
+    // origin of memory state in v0.8.0. AppState gets a NoneMemory
+    // stub so endpoints that read `state.mem` keep working until an
+    // agent comes online.
+    let mem: Arc<dyn Memory> = if config.agents.is_empty() {
+        Arc::new(zeroclaw_memory::NoneMemory::new())
+    } else {
+        Arc::from(zeroclaw_memory::create_memory_with_storage_and_routes(
+            &config.memory,
+            &config.providers.embedding_routes,
+            config.resolve_active_storage(),
+            &config.workspace_dir,
+            fallback.and_then(|e| e.api_key.as_deref()),
+        )?)
+    };
     let runtime: Arc<dyn platform::RuntimeAdapter> =
         Arc::from(platform::create_runtime(&config.runtime)?);
     // Gateway is infrastructure — it doesn't run as an agent. Endpoints

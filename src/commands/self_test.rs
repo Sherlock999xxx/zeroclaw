@@ -153,10 +153,10 @@ fn check_sqlite(workspace_dir: &Path) -> CheckResult {
 fn check_model_provider_registry() -> CheckResult {
     let model_providers = crate::providers::list_model_providers();
     if model_providers.is_empty() {
-        CheckResult::fail("model_providers", "no model providers registered")
+        CheckResult::fail("providers", "no model providers registered")
     } else {
         CheckResult::pass(
-            "model_providers",
+            "providers",
             format!("{} model providers available", model_providers.len()),
         )
     }

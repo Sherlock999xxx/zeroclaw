@@ -72,7 +72,7 @@ impl Section {
     pub fn as_path_prefix(self) -> Option<&'static str> {
         match self {
             Self::All => None,
-            Self::Providers => Some("model_providers"),
+            Self::Providers => Some("providers"),
             Self::Channels => Some("channels"),
             Self::Memory => Some("memory"),
             Self::Hardware => Some("hardware"),
@@ -92,7 +92,7 @@ impl Section {
     pub fn from_path(path: &str) -> Option<Self> {
         let prefix = path.split('.').next()?;
         match prefix {
-            "model_providers" => Some(Self::Providers),
+            "providers" => Some(Self::Providers),
             "channels" => Some(Self::Channels),
             "memory" => Some(Self::Memory),
             "hardware" => Some(Self::Hardware),
@@ -520,7 +520,7 @@ async fn skip_if_configured(
 /// from `Config::default()`'s idle state).
 fn section_has_signal(cfg: &Config, section_key: &str) -> bool {
     match section_key {
-        "model_providers" => !cfg.providers.models.is_empty(),
+        "providers" => !cfg.providers.models.is_empty(),
         // `channels.cli: bool` is a default-true scalar that lives directly
         // under `channels.*`, so a bare `starts_with("channels.")` check
         // fires on every fresh install. Require a nested channel config
@@ -916,7 +916,7 @@ async fn model_providers(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags
         break;
     }
 
-    mark_completed(cfg, "model_providers").await?;
+    mark_completed(cfg, "providers").await?;
     Ok(Nav::Done)
 }
 
@@ -1793,12 +1793,12 @@ mod tests {
     async fn section_has_signal_providers_requires_models_entry() {
         let temp = TempDir::new().unwrap();
         let mut cfg = test_cfg(&temp);
-        assert!(!section_has_signal(&cfg, "model_providers"));
+        assert!(!section_has_signal(&cfg, "providers"));
         cfg.providers
             .models
             .ensure("anthropic", "default")
             .expect("anthropic typed slot");
-        assert!(section_has_signal(&cfg, "model_providers"));
+        assert!(section_has_signal(&cfg, "providers"));
     }
 
     #[tokio::test]
@@ -2097,7 +2097,7 @@ mod tests {
             cfg.onboard_state
                 .completed_sections
                 .iter()
-                .any(|s| s == "model_providers"),
+                .any(|s| s == "providers"),
             "model_providers section should mark completed"
         );
     }

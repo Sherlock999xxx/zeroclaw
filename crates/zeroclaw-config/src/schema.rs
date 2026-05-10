@@ -12561,28 +12561,30 @@ impl Config {
 
         let config_path = zeroclaw_dir.join("config.toml");
 
-        // V3 default-agent workspace anchor. Per-agent code paths
-        // (identity load, `SecurityPolicy::for_agent`, the memory
-        // factory) resolve via `Config::agent_workspace_dir(alias)`;
-        // legacy install-wide callers (`cost::CostTracker`,
-        // `plugins::PluginHost`, `sop`, `skills`, `memory CLI`) read
-        // `config.workspace_dir`, which now points at the migrated
-        // default-agent workspace so a freshly opened SQLite memory
-        // file lands in the same place the migration deposited the
-        // legacy DB.
-        let workspace_dir = zeroclaw_dir
-            .join("agents")
-            .join("default")
-            .join("workspace");
+        // The install dir is the only directory `load_or_init` creates
+        // unconditionally. Per-agent workspaces (`agents/<alias>/workspace/`)
+        // are seeded lazily at agent-loop entry by
+        // `Agent::from_config_with_session_cwd_and_mcp`, which runs
+        // `ensure_bootstrap_files` for the agent it is starting. There
+        // is no fresh-install "default" agent and therefore no
+        // `agents/default/workspace/` synthesized at boot; the only
+        // legitimate origin for that directory is the V1/V2→V3
+        // legacy-workspace migration above, which fires only when a
+        // pre-multi-agent install's `<install>/workspace/` is present
+        // and needs to be moved into the new layout.
+        //
+        // `config.workspace_dir` keeps the install dir as its bound
+        // value so legacy install-wide consumers (`cost::CostTracker`
+        // writes `<workspace_dir>/state/costs.jsonl`,
+        // `plugins::PluginHost`, etc.) write under the install root
+        // rather than under a synthesized agent slot. Per-agent paths
+        // resolve through `Config::agent_workspace_dir(alias)` and do
+        // not depend on this field.
+        let workspace_dir = zeroclaw_dir.clone();
 
         fs::create_dir_all(&zeroclaw_dir)
             .await
             .with_context(|| config_dir_creation_error(&zeroclaw_dir))?;
-        fs::create_dir_all(&workspace_dir)
-            .await
-            .context("Failed to create workspace directory")?;
-
-        ensure_bootstrap_files(&workspace_dir).await?;
 
         if config_path.exists() {
             // Warn if config file is world-readable (may contain API keys)
@@ -12647,21 +12649,27 @@ impl Config {
             }
 
             // Ensure the built-in default auto_approve entries are always
-            // present.  When a user specifies `auto_approve` in their TOML
-            // (e.g. to add a custom tool), serde replaces the default list
-            // instead of merging.  This caused default-safe tools like
-            // `weather` or `calculator` to lose their auto-approve status
-            // and get silently denied in non-interactive channel runs.
-            // See #4247.
+            // present on a `risk_profiles.default` entry that already
+            // exists (typically post-V1/V2→V3 migration). When a user
+            // specifies `auto_approve` in their TOML (e.g. to add a
+            // custom tool), serde replaces the default list instead of
+            // merging — this re-adds the framework defaults so safe
+            // tools like `weather` and `calculator` keep their
+            // auto-approve status. See #4247.
             //
             // Users who want to require approval for a default tool can
             // add it to `always_ask`, which takes precedence over
             // `auto_approve` in the approval decision (see approval/mod.rs).
-            config
-                .risk_profiles
-                .entry("default".to_string())
-                .or_default()
-                .ensure_default_auto_approve();
+            //
+            // Skipped when the loaded config has no `risk_profiles.default`
+            // entry: we will not synthesize a `default` alias here. Per
+            // v0.8.0 rules, `default` is a migration artifact (V1/V2→V3
+            // single-instance bridge); a config that arrives without it
+            // is a legitimate multi-aliased shape and must not have one
+            // injected at load time.
+            if let Some(default_profile) = config.risk_profiles.get_mut("default") {
+                default_profile.ensure_default_auto_approve();
+            }
 
             // Detect unknown top-level config keys by comparing the raw
             // TOML table keys against what Config actually deserializes.
@@ -17059,18 +17067,18 @@ model = "primary-model"
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
-        // V3: config.workspace_dir is the per-agent default workspace
-        // under the resolved install root, not the legacy
-        // <install>/workspace/.
-        assert_eq!(
-            config.workspace_dir,
-            workspace_dir
-                .join("agents")
-                .join("default")
-                .join("workspace")
-        );
+        // V3 fresh init: `config.workspace_dir` is the install root
+        // (the directory holding `config.toml`). No synthesized
+        // `agents/default/workspace/` is created at boot — `default`
+        // is migration-only, and per-agent workspaces are created
+        // lazily at agent-loop entry.
+        assert_eq!(config.workspace_dir, workspace_dir);
         assert_eq!(config.config_path, workspace_dir.join("config.toml"));
         assert!(workspace_dir.join("config.toml").exists());
+        assert!(
+            !workspace_dir.join("agents").exists(),
+            "fresh init must not create agents/ tree"
+        );
 
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::remove_var("ZEROCLAW_WORKSPACE") };
@@ -17101,19 +17109,14 @@ model = "primary-model"
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
-        // V3: config.workspace_dir is the default agent's per-agent
-        // workspace under the resolved config dir. The
-        // ZEROCLAW_WORKSPACE env var resolved the install root via
+        // V3: `config.workspace_dir` is the install root (the
+        // directory holding `config.toml`). The ZEROCLAW_WORKSPACE
+        // env var resolved the install root via
         // `resolve_config_dir_for_workspace`; the legacy
-        // <workspace_dir>/ path is the migration's input, not the
-        // post-load workspace anchor.
-        assert_eq!(
-            config.workspace_dir,
-            legacy_config_dir
-                .join("agents")
-                .join("default")
-                .join("workspace")
-        );
+        // `<workspace_dir>/` path is the legacy-layout migration's
+        // input, not the post-load workspace anchor, and no
+        // `agents/default/workspace/` is synthesized on a fresh boot.
+        assert_eq!(config.workspace_dir, legacy_config_dir);
         assert_eq!(config.config_path, legacy_config_path);
         assert!(config.config_path.exists());
 
@@ -17156,16 +17159,10 @@ default_model = "legacy-model"
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
-        // V3: config.workspace_dir resolves to the default agent's
-        // per-agent workspace under the legacy config dir, regardless
-        // of the ZEROCLAW_WORKSPACE override.
-        assert_eq!(
-            config.workspace_dir,
-            legacy_config_dir
-                .join("agents")
-                .join("default")
-                .join("workspace")
-        );
+        // V3: `config.workspace_dir` resolves to the install root
+        // (the directory holding the existing `config.toml`),
+        // regardless of the ZEROCLAW_WORKSPACE override.
+        assert_eq!(config.workspace_dir, legacy_config_dir);
         assert_eq!(config.config_path, legacy_config_path);
         assert_eq!(
             config
@@ -17283,14 +17280,9 @@ default_model = "persisted-profile"
         let logs = capture.captured();
 
         // V3: per-agent default-agent workspace under the resolved
-        // install root.
-        assert_eq!(
-            config.workspace_dir,
-            workspace_dir
-                .join("agents")
-                .join("default")
-                .join("workspace")
-        );
+        // V3: install root is the workspace anchor. No
+        // `agents/default/workspace/` synthesized on load.
+        assert_eq!(config.workspace_dir, workspace_dir);
         assert_eq!(config.config_path, config_path);
         assert_eq!(
             config

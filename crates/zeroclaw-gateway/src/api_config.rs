@@ -1891,7 +1891,7 @@ mod tests {
     fn list_entry_for_secret_omits_value_field() {
         let entry = ListEntry {
             path: "providers.models.ollama.api-key".into(),
-            category: "model_providers".into(),
+            category: "providers".into(),
             kind: "string",
             type_hint: "Option<String>",
             value: None,
@@ -1899,7 +1899,7 @@ mod tests {
             is_secret: true,
             is_env_overridden: false,
             enum_variants: vec![],
-            onboard_section: Some("model_providers"),
+            onboard_section: Some("providers"),
         };
         let json = serde_json::to_value(&entry).expect("serialize");
         let obj = json.as_object().expect("object");

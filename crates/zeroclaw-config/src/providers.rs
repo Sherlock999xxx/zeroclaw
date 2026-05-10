@@ -595,7 +595,7 @@ impl TranscriptionProviders {
 /// transcription provider profiles and routing rules.
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable, Default)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
-#[prefix = "model_providers"]
+#[prefix = "providers"]
 pub struct ProvidersConfig {
     /// Named model model_provider profiles: outer key = model_provider type, inner key = user alias.
     /// Shape: `[providers.models.<type>.<alias>]` e.g. `[providers.models.anthropic.default]`.

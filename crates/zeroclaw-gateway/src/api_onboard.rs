@@ -338,8 +338,7 @@ const HIDDEN_TOP_LEVEL: &[&str] = &["schema-version", "onboard-state"];
 /// Sections whose picker semantics are non-generic and live in the
 /// per-section dispatch in `handle_section_picker` (catalog of model_providers,
 /// memory backend list, tunnel-with-none, channel sub-table walk).
-const SECTIONS_WITH_PICKER: &[&str] =
-    &["model_providers", "channels", "memory", "tunnel", "agents"];
+const SECTIONS_WITH_PICKER: &[&str] = &["providers", "channels", "memory", "tunnel", "agents"];
 
 /// Humanize a section key for display (`google_workspace` → `Google workspace`).
 /// Keeps things simple and predictable; specific wording overrides go in
@@ -364,9 +363,7 @@ fn section_group(key: &str) -> &'static str {
         // The 5 foundation sections (TUI's `Section` enum) — every install
         // touches these. Named for the role they play, not for the wizard
         // that happens to walk them on first run.
-        "model_providers" | "channels" | "memory" | "hardware" | "tunnel" | "agents" => {
-            "Foundation"
-        }
+        "providers" | "channels" | "memory" | "hardware" | "tunnel" | "agents" => "Foundation",
         // Agent loop, scheduling, and orchestration.
         "agent"
         | "autonomy"
@@ -408,7 +405,7 @@ fn section_group(key: &str) -> &'static str {
 /// someone writes copy).
 fn section_help(key: &str) -> &'static str {
     match key {
-        "model_providers" => {
+        "providers" => {
             "Paste an API key (e.g. `sk-ant-...` for Anthropic, `sk-...` for OpenAI) when prompted. \
                         For OAuth-based model_providers run: zeroclaw auth login --model-provider <name>"
         }
@@ -488,9 +485,9 @@ pub async fn handle_section_picker(
     let cfg = state.config.lock().clone();
 
     let (items, help) = match section.as_str() {
-        "model_providers" => (
+        "providers" => (
             providers_picker(&cfg),
-            section_help("model_providers").to_string(),
+            section_help("providers").to_string(),
         ),
         "memory" => (memory_picker(&cfg), section_help("memory").to_string()),
         "channels" => (
@@ -723,7 +720,7 @@ pub async fn handle_section_select(
     let mut working = state.config.lock().clone();
 
     let (fields_prefix, created) = match section.as_str() {
-        "model_providers" => {
+        "providers" => {
             // Arm 1: create the outer type bucket if it doesn't exist yet.
             if let Err(msg) = working.create_map_key("providers.models", &key) {
                 return error_response(
@@ -880,13 +877,7 @@ mod tests {
             roots.remove(*hidden);
         }
         // The 5 onboarding sections must still be in the derived set.
-        for required in [
-            "model_providers",
-            "channels",
-            "memory",
-            "hardware",
-            "tunnel",
-        ] {
+        for required in ["providers", "channels", "memory", "hardware", "tunnel"] {
             assert!(
                 roots.contains(required),
                 "derived sections must include onboarding section `{required}`; got {roots:?}",
