@@ -378,6 +378,66 @@ async fn parse_token_response(response: reqwest::Response) -> Result<TokenSet> {
     })
 }
 
+/// Import an existing OpenAI Codex auth-profile JSON (the file
+/// `~/.codex/auth.json` produced by the upstream Codex CLI) into
+/// ZeroClaw's auth store. Replaces the `import_openai_codex_auth_profile`
+/// helper formerly in `src/main.rs`.
+pub async fn import_codex_auth_profile(
+    auth_service: &super::AuthService,
+    profile: &str,
+    import_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    #[derive(serde::Deserialize)]
+    struct CodexAuthTokens {
+        access_token: String,
+        #[serde(default)]
+        refresh_token: Option<String>,
+        #[serde(default)]
+        id_token: Option<String>,
+        #[serde(default)]
+        account_id: Option<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct CodexAuthFile {
+        tokens: CodexAuthTokens,
+    }
+
+    let raw = std::fs::read_to_string(import_path)
+        .with_context(|| format!("Failed to read import file {}", import_path.display()))?;
+    let imported: CodexAuthFile = serde_json::from_str(&raw)
+        .with_context(|| format!("Failed to parse import file {}", import_path.display()))?;
+    let expires_at = extract_expiry_from_jwt(&imported.tokens.access_token);
+
+    let token_set = crate::auth::profiles::TokenSet {
+        access_token: imported.tokens.access_token,
+        refresh_token: imported.tokens.refresh_token,
+        id_token: imported.tokens.id_token,
+        expires_at,
+        token_type: Some("Bearer".to_string()),
+        scope: None,
+    };
+
+    let account_id = imported
+        .tokens
+        .account_id
+        .or_else(|| extract_account_id_from_jwt(&token_set.access_token));
+    if account_id.is_none() {
+        tracing::warn!(
+            "Could not extract OpenAI account id from imported access token; \
+             requests may fail until re-authentication.",
+        );
+    }
+
+    auth_service
+        .store_openai_tokens(profile, token_set, account_id, true)
+        .await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

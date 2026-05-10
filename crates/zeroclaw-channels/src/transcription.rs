@@ -107,8 +107,9 @@ impl GroqProvider {
     /// Build from the existing `TranscriptionConfig` fields.
     ///
     /// Credential resolution order:
-    /// 1. `config.api_key`
-    /// 2. `GROQ_API_KEY` environment variable (backward compatibility)
+    /// Reads `config.api_key` (set via `[transcription].api_key` or the
+    /// schema-mirror env grammar `ZEROCLAW_transcription__api_key=...`).
+    /// The legacy `GROQ_API_KEY` env-var fallback was eradicated in V0.8.0.
     pub fn from_config(config: &TranscriptionConfig) -> Result<Self> {
         let api_key = config
             .api_key
@@ -116,14 +117,9 @@ impl GroqProvider {
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .map(ToOwned::to_owned)
-            .or_else(|| {
-                std::env::var("GROQ_API_KEY")
-                    .ok()
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty())
-            })
             .context(
-                "Missing transcription API key: set [transcription].api_key or GROQ_API_KEY environment variable",
+                "Missing transcription API key: set `[transcription].api_key` (or via the \
+                 schema-mirror grammar `ZEROCLAW_transcription__api_key=...`).",
             )?;
 
         Ok(Self {

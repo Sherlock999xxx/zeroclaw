@@ -83,19 +83,14 @@ pub const REQUEST_TIMEOUT_SECS: u64 = 30;
 pub const LONG_RUNNING_REQUEST_TIMEOUT_SECS: u64 = 600;
 
 /// Gateway request timeout (seconds) for routes other than the long-running
-/// cron-trigger endpoint. Reads from typed config; the legacy
-/// `ZEROCLAW_GATEWAY_TIMEOUT_SECS` env-var override was eradicated in V0.8.0.
-/// Operators set the value via the schema-mirror grammar
-/// (`ZEROCLAW_gateway_request_timeout_secs=...`) which lands on
-/// `GatewayConfig.request_timeout_secs` at config load.
+/// cron-trigger endpoint. Reads from typed config.
 pub fn gateway_request_timeout_secs(cfg: &zeroclaw_config::schema::GatewayConfig) -> u64 {
     cfg.request_timeout_secs
 }
 
 /// Manual cron-trigger request timeout (seconds), exempt from the
 /// gateway-wide [`gateway_request_timeout_secs`] limit so synchronous agent
-/// jobs can run to completion. Reads from typed config; legacy env-var
-/// override eradicated in V0.8.0.
+/// jobs can run to completion. Reads from typed config.
 pub fn gateway_long_running_request_timeout_secs(
     cfg: &zeroclaw_config::schema::GatewayConfig,
 ) -> u64 {
@@ -714,8 +709,6 @@ pub async fn run_gateway(
         });
 
     // WhatsApp app secret for webhook signature verification.
-    // V0.8.0: `ZEROCLAW_WHATSAPP_APP_SECRET` env-var override eradicated;
-    // operators set via `ZEROCLAW_channels_whatsapp_<alias>_app_secret=<value>`.
     let whatsapp_app_secret: Option<Arc<str>> = config
         .channels
         .whatsapp
@@ -740,8 +733,6 @@ pub async fn run_gateway(
     });
 
     // Linq signing secret for webhook signature verification.
-    // V0.8.0: `ZEROCLAW_LINQ_SIGNING_SECRET` env-var override eradicated;
-    // operators set via `ZEROCLAW_channels_linq_<alias>_signing_secret=<value>`.
     let linq_signing_secret: Option<Arc<str>> = config
         .channels
         .linq
@@ -782,9 +773,6 @@ pub async fn run_gateway(
         });
 
     // Nextcloud Talk webhook secret for signature verification.
-    // V0.8.0: `ZEROCLAW_NEXTCLOUD_TALK_WEBHOOK_SECRET` env-var override
-    // eradicated; operators set via
-    // `ZEROCLAW_channels_nextcloud_talk_<alias>_webhook_secret=<value>`.
     let nextcloud_talk_webhook_secret: Option<Arc<str>> = config
         .channels
         .nextcloud_talk

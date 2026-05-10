@@ -4856,13 +4856,18 @@ mod tests {
     ///
     /// Skipped automatically when `GROQ_API_KEY` is not set.
     /// Run: `GROQ_API_KEY=<key> cargo test --lib -- telegram::tests::e2e_live_voice_transcription_and_reply_cache --ignored`
+    ///
+    /// Production code no longer reads `GROQ_API_KEY` from env — this
+    /// test still uses the env var as a test-runner setup hook (the
+    /// canonical way to supply credentials to integration tests) and
+    /// plumbs the value into `TranscriptionConfig.api_key` directly.
     #[tokio::test]
     #[ignore = "requires GROQ_API_KEY environment variable"]
     async fn e2e_live_voice_transcription_and_reply_cache() {
-        if std::env::var("GROQ_API_KEY").is_err() {
+        let Ok(api_key) = std::env::var("GROQ_API_KEY") else {
             eprintln!("GROQ_API_KEY not set — skipping live voice transcription test");
             return;
-        }
+        };
 
         // 1. Load pre-recorded fixture (TTS-generated "hello", ~7 KB MP3)
         let fixture_path =
@@ -4878,6 +4883,7 @@ mod tests {
         // 2. Call TranscriptionManager.transcribe() — real Groq Whisper API
         let config = zeroclaw_config::schema::TranscriptionConfig {
             enabled: true,
+            api_key: Some(api_key),
             ..Default::default()
         };
         let manager = crate::transcription::TranscriptionManager::new(&config)

@@ -151,16 +151,19 @@ async fn provider_vision_support() -> Result<()> {
 async fn openai_codex_second_vision_support() -> Result<()> {
     println!("Creating OpenAI Codex model_provider with second profile...");
 
-    // Create model_provider with profile override
+    // Create model_provider with profile override. Codex routing now
+    // happens via the legacy "openai-codex" family-name escape hatch
+    // (the typed-alias `requires_openai_auth` flag flows through
+    // `OpenAIModelProviderConfig::create_provider` when called with
+    // full Config + alias context, which this live test does not use).
     let opts = ModelProviderRuntimeOptions {
         auth_profile_override: Some("second".to_string()),
         secrets_encrypt: false,
-        requires_openai_auth: true,
         ..Default::default()
     };
 
     let model_provider =
-        zeroclaw::providers::create_model_provider_with_options("openai", None, &opts)?;
+        zeroclaw::providers::create_model_provider_with_options("openai-codex", None, &opts)?;
     let provider_name = "openai.codex:second";
     let model = "gpt-5.3-codex";
 

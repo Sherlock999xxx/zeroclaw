@@ -21,6 +21,7 @@ pub mod azure_openai;
 pub mod bedrock;
 pub mod compatible;
 pub mod copilot;
+pub mod factory;
 pub mod gemini;
 pub mod gemini_cli;
 // glm.rs excluded — not compiled in upstream (dead code with known issues)
@@ -42,14 +43,16 @@ pub use traits::{
     ProviderCapabilityError, ToolCall, ToolResultMessage,
 };
 
-use crate::auth::AuthService;
-use compatible::{AuthStyle, OpenAiCompatibleModelProvider};
 use reliable::ReliableModelProvider;
 use serde::Deserialize;
 use std::path::PathBuf;
 
 const MAX_API_ERROR_CHARS: usize = 500;
 const MINIMAX_INTL_BASE_URL: &str = "https://api.minimax.io/v1";
+/// MiniMax-published OAuth client_id (same one their portal uses).
+/// Operators with a custom OAuth app override via
+/// `[providers.models.minimax.<alias>] oauth_client_id = "..."`.
+const MINIMAX_OAUTH_DEFAULT_CLIENT_ID: &str = "78257093-7e40-4613-99e0-527b14b39113";
 const GLM_GLOBAL_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
 const MOONSHOT_INTL_BASE_URL: &str = "https://api.moonshot.ai/v1";
 const QWEN_CN_BASE_URL: &str = "https://dashscope.aliyuncs.com/compatible-mode/v1";
@@ -173,15 +176,15 @@ pub fn is_doubao_alias(name: &str) -> bool {
 }
 
 #[derive(Clone, Deserialize, Default)]
-struct QwenOauthCredentials {
+pub(crate) struct QwenOauthCredentials {
     #[serde(default)]
-    access_token: Option<String>,
+    pub(crate) access_token: Option<String>,
     #[serde(default)]
-    refresh_token: Option<String>,
+    pub(crate) refresh_token: Option<String>,
     #[serde(default)]
-    resource_url: Option<String>,
+    pub(crate) resource_url: Option<String>,
     #[serde(default)]
-    expiry_date: Option<i64>,
+    pub(crate) expiry_date: Option<i64>,
 }
 
 impl std::fmt::Debug for QwenOauthCredentials {
@@ -210,9 +213,9 @@ struct QwenOauthTokenResponse {
 }
 
 #[derive(Clone, Default)]
-struct QwenOauthProviderContext {
-    credential: Option<String>,
-    base_url: Option<String>,
+pub(crate) struct QwenOauthProviderContext {
+    pub(crate) credential: Option<String>,
+    pub(crate) base_url: Option<String>,
 }
 
 impl std::fmt::Debug for QwenOauthProviderContext {
@@ -284,8 +287,10 @@ fn qwen_oauth_token_expired(credentials: &QwenOauthCredentials) -> bool {
     expiry_millis <= now_millis.saturating_add(30_000)
 }
 
-fn refresh_qwen_oauth_access_token(refresh_token: &str) -> anyhow::Result<QwenOauthCredentials> {
-    let client_id = qwen_oauth_client_id();
+pub(crate) fn refresh_qwen_oauth_access_token(
+    refresh_token: &str,
+    client_id: &str,
+) -> anyhow::Result<QwenOauthCredentials> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -299,7 +304,7 @@ fn refresh_qwen_oauth_access_token(refresh_token: &str) -> anyhow::Result<QwenOa
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
-            ("client_id", client_id.as_str()),
+            ("client_id", client_id),
         ])
         .send()
         .map_err(|error| anyhow::anyhow!("Qwen OAuth refresh request failed: {error}"))?;
@@ -369,6 +374,97 @@ fn refresh_qwen_oauth_access_token(refresh_token: &str) -> anyhow::Result<QwenOa
     })
 }
 
+// ── MiniMax OAuth refresh ──────────────────────────────────────────────
+//
+// Restored as a per-alias schema-mirror flow: the operator's
+// `oauth_refresh_token` is exchanged at MinimaxModelProvider construction
+// time for a short-lived access token, which becomes the API credential.
+// Region selection follows the existing `MinimaxEndpoint` enum on the
+// alias config — no `MINIMAX_OAUTH_REGION` env-var needed.
+
+#[derive(Debug, Deserialize)]
+struct MinimaxOauthRefreshResponse {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default)]
+    base_resp: Option<MinimaxOauthBaseResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MinimaxOauthBaseResponse {
+    #[serde(default)]
+    status_msg: Option<String>,
+}
+
+/// Exchange a long-lived MiniMax `oauth_refresh_token` for a short-lived
+/// access token. Synchronous (`reqwest::blocking`) by design — this runs
+/// during provider construction, before any async runtime is necessarily
+/// available; matches the pre-deletion behavior.
+pub(crate) fn refresh_minimax_oauth_access_token(
+    refresh_token: &str,
+    client_id: &str,
+    region: zeroclaw_config::schema::MinimaxEndpoint,
+) -> anyhow::Result<String> {
+    let endpoint = region.oauth_token_endpoint();
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_else(|_| reqwest::blocking::Client::new());
+
+    let response = client
+        .post(endpoint)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Accept", "application/json")
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_id", client_id),
+        ])
+        .send()
+        .map_err(|error| anyhow::anyhow!("MiniMax OAuth refresh request failed: {error}"))?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .unwrap_or_else(|_| "<failed to read MiniMax OAuth response body>".to_string());
+    let parsed = serde_json::from_str::<MinimaxOauthRefreshResponse>(&body).ok();
+
+    if !status.is_success() {
+        let detail = parsed
+            .as_ref()
+            .and_then(|payload| payload.base_resp.as_ref())
+            .and_then(|base| base.status_msg.as_deref())
+            .filter(|msg| !msg.trim().is_empty())
+            .unwrap_or(body.as_str());
+        anyhow::bail!("MiniMax OAuth refresh failed (HTTP {status}): {detail}");
+    }
+
+    if let Some(payload) = parsed {
+        if let Some(status_text) = payload.status.as_deref()
+            && !status_text.eq_ignore_ascii_case("success")
+        {
+            let detail = payload
+                .base_resp
+                .as_ref()
+                .and_then(|base| base.status_msg.as_deref())
+                .unwrap_or(status_text);
+            anyhow::bail!("MiniMax OAuth refresh failed: {detail}");
+        }
+        if let Some(token) = payload
+            .access_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+        {
+            return Ok(token.to_string());
+        }
+    }
+    anyhow::bail!("MiniMax OAuth refresh response missing access_token")
+}
+
 fn resolve_qwen_oauth_context(credential_override: Option<&str>) -> QwenOauthProviderContext {
     let override_value = credential_override
         .map(str::trim)
@@ -402,7 +498,7 @@ fn resolve_qwen_oauth_context(credential_override: Option<&str>) -> QwenOauthPro
             .as_ref()
             .and_then(|credentials| credentials.refresh_token.clone())
     {
-        match refresh_qwen_oauth_access_token(&refresh_token) {
+        match refresh_qwen_oauth_access_token(&refresh_token, &qwen_oauth_client_id()) {
             Ok(refreshed) => {
                 cached = Some(refreshed);
             }
@@ -464,15 +560,9 @@ pub struct ModelProviderRuntimeOptions {
     /// Extra JSON parameters merged into API request bodies at the top level.
     /// Propagated from `ModelProviderConfig::provider_extra`.
     pub provider_extra: Option<serde_json::Value>,
-    /// Family-specific extras extracted from typed alias configs by
-    /// `provider_runtime_options_for_agent`. Each factory branch reads only
-    /// the fields it cares about.
-    pub azure_resource: Option<String>,
-    pub azure_deployment: Option<String>,
-    pub azure_api_version: Option<String>,
-    pub requires_openai_auth: bool,
+    /// When set, the provider is asked to use its native tool-calling
+    /// schema instead of OpenAI-compat tool calls. Generic across families.
     pub native_tools: Option<bool>,
-    pub cli_binary_path: Option<String>,
 }
 
 impl Default for ModelProviderRuntimeOptions {
@@ -490,12 +580,7 @@ impl Default for ModelProviderRuntimeOptions {
             provider_max_tokens: None,
             merge_system_into_user: false,
             provider_extra: None,
-            azure_resource: None,
-            azure_deployment: None,
-            azure_api_version: None,
-            requires_openai_auth: false,
             native_tools: None,
-            cli_binary_path: None,
         }
     }
 }
@@ -552,13 +637,6 @@ pub fn model_provider_runtime_options_from_model_provider_entry(
         merge_system_into_user,
         provider_extra: entry.and_then(|e| e.provider_extra.clone()),
         native_tools: entry.and_then(|e| e.native_tools),
-        // Family-specific extras populated by `provider_runtime_options_for_agent`
-        // when the agent context is available.
-        azure_resource: None,
-        azure_deployment: None,
-        azure_api_version: None,
-        requires_openai_auth: entry.is_some_and(|e| e.requires_openai_auth),
-        cli_binary_path: None,
     }
 }
 
@@ -591,30 +669,11 @@ pub fn provider_runtime_options_for_agent(
         {
             options.provider_api_url = Some(uri.to_string());
         }
-
-        // Family-specific extras pulled from typed alias configs. The match
-        // arm is structural — each branch reads its own family's typed
-        // extras into the runtime options for the factory to consume.
-        match family {
-            "azure" => {
-                if let Some(cfg) = config.providers.models.azure.get(alias) {
-                    options.azure_resource = cfg.resource.clone();
-                    options.azure_deployment = cfg.deployment.clone();
-                    options.azure_api_version = cfg.api_version.clone();
-                }
-            }
-            "kilocli" => {
-                if let Some(cfg) = config.providers.models.kilocli.get(alias) {
-                    options.cli_binary_path = cfg.binary_path.clone();
-                }
-            }
-            "gemini_cli" => {
-                if let Some(cfg) = config.providers.models.gemini_cli.get(alias) {
-                    options.cli_binary_path = cfg.binary_path.clone();
-                }
-            }
-            _ => {}
-        }
+        // Family-specific typed extras (Azure resource, kilocli/gemini_cli
+        // binary_path, Gemini OAuth client credentials, OpenAI Codex
+        // auth-routing, etc.) are read directly by the factory branches
+        // from `config.providers.models.<family>.<alias>` — no flat
+        // dumping ground here.
     }
 
     options
@@ -776,48 +835,82 @@ fn check_api_key_prefix(model_provider_name: &str, key: &str) -> Option<&'static
 // `options.provider_api_url`; URL parsing/validation now happens at
 // schema validation time, not at runtime construction.
 
-/// Factory: create the right model_provider from config (without custom URL)
+/// Factory: create the right model_provider from config (without custom URL).
+///
+/// Legacy entry point — no per-alias typed extras visible. Calls the
+/// `_for_alias` variant with default per-family config; suitable for
+/// tests and programmatic callers using compat families that don't read
+/// from the typed alias config struct. Production callers with agent
+/// context should use [`create_model_provider_for_alias`].
 pub fn create_model_provider(
     name: &str,
     api_key: Option<&str>,
 ) -> anyhow::Result<Box<dyn ModelProvider>> {
-    create_model_provider_with_options(name, api_key, &ModelProviderRuntimeOptions::default())
+    create_model_provider_inner(
+        None,
+        name,
+        "default",
+        api_key,
+        None,
+        &ModelProviderRuntimeOptions::default(),
+    )
 }
 
-/// Factory: create model_provider with runtime options (auth profile override, state dir).
+/// Factory: create model_provider with runtime options.
 ///
-/// The codex variant of the OpenAI family is selected by
-/// `options.requires_openai_auth` (set from the typed alias config in
-/// `provider_runtime_options_for_agent`), not by family-name string.
-/// Migration normalizes legacy legacy spellings (`"openai-codex"`,
-/// `"openai_codex"`, `"codex"`) into `family = "openai"` + `alias = "codex"`
-/// with `requires_openai_auth = true`, so this dispatch is the only place
-/// codex is routed.
+/// Legacy entry point — see [`create_model_provider`].
 pub fn create_model_provider_with_options(
     name: &str,
     api_key: Option<&str>,
     options: &ModelProviderRuntimeOptions,
 ) -> anyhow::Result<Box<dyn ModelProvider>> {
-    if name == "openai" && options.requires_openai_auth {
-        return Ok(Box::new(openai_codex::OpenAiCodexModelProvider::new(
-            options, api_key,
-        )?));
-    }
-    create_model_provider_with_url_and_options(name, api_key, None, options)
+    create_model_provider_inner(None, name, "default", api_key, None, options)
 }
 
-/// Factory: create the right model_provider from config with optional custom base URL
+/// Factory: create model_provider with optional custom base URL.
+///
+/// Legacy entry point — see [`create_model_provider`].
 pub fn create_model_provider_with_url(
     name: &str,
     api_key: Option<&str>,
     api_url: Option<&str>,
 ) -> anyhow::Result<Box<dyn ModelProvider>> {
-    create_model_provider_with_url_and_options(
+    create_model_provider_inner(
+        None,
         name,
+        "default",
         api_key,
         api_url,
         &ModelProviderRuntimeOptions::default(),
     )
+}
+
+/// Factory: create model_provider with full alias context.
+///
+/// `(config, family, alias)` lets each family branch read its own typed
+/// alias config (`config.providers.models.<family>.get(alias)`) directly
+/// — no flat per-family extras dumping ground. Production callers with
+/// agent context (delegate, llm_task, model routing, gateway) use this.
+pub fn create_model_provider_for_alias(
+    config: &zeroclaw_config::schema::Config,
+    family: &str,
+    alias: &str,
+    api_key: Option<&str>,
+    options: &ModelProviderRuntimeOptions,
+) -> anyhow::Result<Box<dyn ModelProvider>> {
+    create_model_provider_inner(Some(config), family, alias, api_key, None, options)
+}
+
+/// Factory: create model_provider with alias context AND custom base URL.
+pub fn create_model_provider_for_alias_with_url(
+    config: &zeroclaw_config::schema::Config,
+    family: &str,
+    alias: &str,
+    api_key: Option<&str>,
+    api_url: Option<&str>,
+    options: &ModelProviderRuntimeOptions,
+) -> anyhow::Result<Box<dyn ModelProvider>> {
+    create_model_provider_inner(Some(config), family, alias, api_key, api_url, options)
 }
 
 /// Map a V2 model-provider family name (synonyms, regional variants, OAuth
@@ -929,8 +1022,10 @@ fn split_v2_colon_url(name: &str) -> (&str, Option<&str>) {
 
 /// Factory: create model_provider with optional base URL and runtime options.
 #[allow(clippy::too_many_lines)]
-fn create_model_provider_with_url_and_options(
+fn create_model_provider_inner(
+    config: Option<&zeroclaw_config::schema::Config>,
     raw_name: &str,
+    alias: &str,
     api_key: Option<&str>,
     api_url: Option<&str>,
     options: &ModelProviderRuntimeOptions,
@@ -965,46 +1060,13 @@ fn create_model_provider_with_url_and_options(
             options, api_key,
         )?));
     }
-    // Closure to optionally apply the configured model_provider timeout and extra
-    // headers to OpenAI-compatible model_providers before boxing them as trait objects.
-    let compat = {
-        let timeout = options.provider_timeout_secs;
-        let reasoning_effort = options.reasoning_effort.clone();
-        let extra_headers = options.extra_headers.clone();
-        let api_path = options.api_path.clone();
-        let max_tokens = options.provider_max_tokens;
-        move |p: OpenAiCompatibleModelProvider| -> Box<dyn ModelProvider> {
-            let mut p = p;
-            if let Some(t) = timeout {
-                p = p.with_timeout_secs(t);
-            }
-            if let Some(ref effort) = reasoning_effort {
-                p = p.with_reasoning_effort(Some(effort.clone()));
-            }
-            if !extra_headers.is_empty() {
-                p = p.with_extra_headers(extra_headers.clone());
-            }
-            if api_path.is_some() {
-                p = p.with_api_path(api_path.clone());
-            }
-            if let Some(mt) = max_tokens {
-                p = p.with_max_tokens(Some(mt));
-            }
-            Box::new(p)
-        }
-    };
-
-    let qwen_oauth_context = is_qwen_oauth_alias(name).then(|| resolve_qwen_oauth_context(api_key));
-
     // Resolve credential and break static-analysis taint chain from the
     // `api_key` parameter so that downstream model_provider storage of the value
-    // is not linked to the original sensitive-named source.
-    let resolved_credential = if let Some(context) = qwen_oauth_context.as_ref() {
-        context.credential.clone()
-    } else {
-        resolve_model_provider_credential(name, api_key)
-    }
-    .map(|v| String::from_utf8(v.into_bytes()).unwrap_or_default());
+    // is not linked to the original sensitive-named source. Qwen OAuth
+    // alias detection moved into `QwenModelProviderConfig::create_provider`
+    // — the per-family impl owns its own credential-resolution logic.
+    let resolved_credential = resolve_model_provider_credential(name, api_key)
+        .map(|v| String::from_utf8(v.into_bytes()).unwrap_or_default());
     #[allow(clippy::option_as_ref_deref)]
     let key = resolved_credential.as_ref().map(String::as_str);
 
@@ -1053,537 +1115,7 @@ fn create_model_provider_with_url_and_options(
                     .filter(|v| !v.is_empty())
             });
 
-    match name {
-        // ── Primary model_providers (custom implementations) ───────
-        "openrouter" => {
-            let mut p =
-                openrouter::OpenRouterModelProvider::new(key, options.provider_timeout_secs)
-                    .with_max_tokens(options.provider_max_tokens);
-            if let Some(extra) = options.provider_extra.clone() {
-                p = p.with_extra_body(extra);
-            }
-            Ok(Box::new(p))
-        }
-        "anthropic" => {
-            let mut p = anthropic::AnthropicModelProvider::with_base_url(key, resolved_url);
-            if let Some(mt) = options.provider_max_tokens {
-                p = p.with_max_tokens(mt);
-            }
-            Ok(Box::new(p))
-        }
-        "openai" => {
-            let mut p = openai::OpenAiModelProvider::with_base_url(resolved_url, key);
-            if let Some(mt) = options.provider_max_tokens {
-                p = p.with_max_tokens(Some(mt));
-            }
-            Ok(Box::new(p))
-        }
-        // Ollama: base URL flows through `provider_api_url` (typed alias's `uri`).
-        "ollama" => Ok(Box::new(ollama::OllamaModelProvider::new_with_reasoning(
-            resolved_url,
-            key,
-            options.reasoning_enabled,
-        ))),
-        "gemini" => {
-            let state_dir = options.zeroclaw_dir.clone().unwrap_or_else(|| {
-                directories::UserDirs::new().map_or_else(
-                    || PathBuf::from(".zeroclaw"),
-                    |dirs| dirs.home_dir().join(".zeroclaw"),
-                )
-            });
-            let auth_service = AuthService::new(&state_dir, options.secrets_encrypt);
-            Ok(Box::new(gemini::GeminiModelProvider::new_with_auth(
-                key,
-                auth_service,
-                options.auth_profile_override.clone(),
-            )))
-        }
-        "telnyx" => Ok(Box::new(telnyx::TelnyxModelProvider::new(key))),
-
-        // ── OpenAI-compatible model_providers ──────────────────────
-        "venice" => Ok(compat(
-            OpenAiCompatibleModelProvider::new(
-                "Venice",
-                "https://api.venice.ai",
-                key,
-                AuthStyle::Bearer,
-            )
-            .without_native_tools(),
-        )),
-        "vercel" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Vercel AI Gateway",
-            VERCEL_AI_GATEWAY_BASE_URL,
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "cloudflare" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Cloudflare AI Gateway",
-            "https://gateway.ai.cloudflare.com/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        // Multi-endpoint family: URL pre-resolved into resolved_url from the
-        // typed MoonshotEndpoint by provider_runtime_options_for_agent.
-        "moonshot" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Moonshot",
-            resolved_url.unwrap_or(MOONSHOT_INTL_BASE_URL),
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "synthetic" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Synthetic",
-            "https://api.synthetic.new/openai/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "opencode" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "OpenCode Zen",
-            "https://opencode.ai/zen/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        // Multi-endpoint family: URL pre-resolved from typed ZaiEndpoint.
-        "zai" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Z.AI",
-            resolved_url.unwrap_or(ZAI_GLOBAL_BASE_URL),
-            key,
-            AuthStyle::ZhipuJwt,
-        ))),
-        // Multi-endpoint family: URL pre-resolved from typed GlmEndpoint.
-        "glm" => Ok(compat(
-            OpenAiCompatibleModelProvider::new_no_responses_fallback(
-                "GLM",
-                resolved_url.unwrap_or(GLM_GLOBAL_BASE_URL),
-                key,
-                AuthStyle::ZhipuJwt,
-            ),
-        )),
-        // Multi-endpoint family: URL pre-resolved from typed MinimaxEndpoint.
-        "minimax" => Ok(compat(
-            OpenAiCompatibleModelProvider::new(
-                "MiniMax",
-                resolved_url.unwrap_or(MINIMAX_INTL_BASE_URL),
-                key,
-                AuthStyle::Bearer,
-            )
-            .with_merge_system_into_user(),
-        )),
-        "azure" => {
-            // Azure runtime config flows from the typed AzureModelProviderConfig
-            // through ModelProviderRuntimeOptions. Env-var fallback is GONE — the
-            // operator must set [providers.models.azure.<alias>] resource and
-            // deployment in TOML. Migration normalizes legacy AZURE_OPENAI_*
-            // env-var setups by writing the typed fields into the config.
-            let resource = options.azure_resource.as_deref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Azure model model_provider requires `resource`: set \
-                     `[providers.models.azure.<alias>] resource = \"...\"` in config.toml. \
-                     The AZURE_OPENAI_RESOURCE env-var fallback was removed in #6273."
-                )
-            })?;
-            let deployment = options.azure_deployment.as_deref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Azure model model_provider requires `deployment`: set \
-                     `[providers.models.azure.<alias>] deployment = \"...\"` in config.toml. \
-                     The AZURE_OPENAI_DEPLOYMENT env-var fallback was removed in #6273."
-                )
-            })?;
-            let api_version = options.azure_api_version.as_deref();
-            Ok(Box::new(azure_openai::AzureOpenAiModelProvider::new(
-                key,
-                resource,
-                deployment,
-                api_version,
-            )))
-        }
-        "bedrock" => {
-            let mut p = if let Some(api_key) = key {
-                bedrock::BedrockModelProvider::with_bearer_token(api_key)
-            } else {
-                bedrock::BedrockModelProvider::new()
-            };
-            if let Some(mt) = options.provider_max_tokens {
-                p = p.with_max_tokens(mt);
-            }
-            Ok(Box::new(p))
-        }
-        "qianfan" => {
-            let base_url = qianfan_base_url(resolved_url);
-            Ok(compat(OpenAiCompatibleModelProvider::new(
-                "Qianfan",
-                &base_url,
-                key,
-                AuthStyle::Bearer,
-            )))
-        }
-        "doubao" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Doubao",
-            "https://ark.cn-beijing.volces.com/api/v3",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        // Multi-endpoint family: URL pre-resolved from typed QwenEndpoint.
-        // The qwen-oauth context is preserved on resolved_url for the
-        // OAuth alias; non-oauth Qwen aliases fall through to the same arm.
-        "qwen" => {
-            let base_url = resolved_url
-                .map(ToString::to_string)
-                .or_else(|| {
-                    qwen_oauth_context
-                        .as_ref()
-                        .and_then(|context| context.base_url.clone())
-                })
-                .unwrap_or_else(|| QWEN_OAUTH_BASE_FALLBACK_URL.to_string());
-            // Qwen Code OAuth has a distinct user-agent + vision flag;
-            // detect via the qwen_oauth_context being populated.
-            if qwen_oauth_context.is_some() {
-                return Ok(compat(
-                    OpenAiCompatibleModelProvider::new_with_user_agent_and_vision(
-                        "Qwen Code",
-                        &base_url,
-                        key,
-                        AuthStyle::Bearer,
-                        "QwenCode/1.0",
-                        true,
-                    ),
-                ));
-            }
-            Ok(compat(OpenAiCompatibleModelProvider::new_with_vision(
-                "Qwen",
-                &base_url,
-                key,
-                AuthStyle::Bearer,
-                true,
-            )))
-        }
-
-        // ── Extended ecosystem (community favorites) ─────────
-        "groq" => {
-            let mut model_provider = OpenAiCompatibleModelProvider::new(
-                "Groq",
-                "https://api.groq.com/openai/v1",
-                key,
-                AuthStyle::Bearer,
-            );
-            // Default to text-fallback because Groq's llama-family models
-            // reject native tool calls with HTTP 400. Operators can override
-            // per-profile via `[providers.models.groq.<alias>] native_tools = true`
-            // to enable native tool calling for Groq models that support it.
-            if options.native_tools != Some(true) {
-                model_provider = model_provider.without_native_tools();
-            }
-            Ok(compat(model_provider))
-        }
-        "mistral" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Mistral",
-            "https://api.mistral.ai/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "xai" => Ok(compat(
-            OpenAiCompatibleModelProvider::new(
-                "xAI",
-                "https://api.x.ai/v1",
-                key,
-                AuthStyle::Bearer,
-            )
-            .with_models_dev_key("xai"),
-        )),
-        "deepseek" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "DeepSeek",
-            "https://api.deepseek.com",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "together" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Together AI",
-            "https://api.together.xyz",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "fireworks" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Fireworks AI",
-            "https://api.fireworks.ai/inference/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "novita" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Novita AI",
-            "https://api.novita.ai/openai",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "perplexity" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Perplexity",
-            "https://api.perplexity.ai",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "cohere" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Cohere",
-            "https://api.cohere.com/compatibility",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "copilot" => Ok(Box::new(copilot::CopilotModelProvider::new(key))),
-        "gemini_cli" => Ok(Box::new(gemini_cli::GeminiCliModelProvider::new(
-            options.cli_binary_path.as_deref(),
-        ))),
-        "kilocli" => Ok(Box::new(kilocli::KiloCliModelProvider::new(
-            options.cli_binary_path.as_deref(),
-        ))),
-        "lmstudio" => {
-            let lm_studio_key = key
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("lm-studio");
-            Ok(compat(OpenAiCompatibleModelProvider::new(
-                "LM Studio",
-                resolved_url.unwrap_or("http://localhost:1234/v1"),
-                Some(lm_studio_key),
-                AuthStyle::Bearer,
-            )))
-        }
-        "llamacpp" => {
-            let base_url = resolved_url.unwrap_or("http://localhost:8080/v1");
-            let llama_cpp_key = key
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("llama.cpp");
-            let model_provider = OpenAiCompatibleModelProvider::new_with_vision(
-                "llama.cpp",
-                base_url,
-                Some(llama_cpp_key),
-                AuthStyle::Bearer,
-                true,
-            );
-            let model_provider = if options.merge_system_into_user {
-                model_provider.with_merge_system_into_user()
-            } else {
-                model_provider
-            };
-            Ok(compat(model_provider))
-        }
-        "sglang" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "SGLang",
-            resolved_url.unwrap_or("http://localhost:30000/v1"),
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "vllm" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "vLLM",
-            resolved_url.unwrap_or("http://localhost:8000/v1"),
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "osaurus" => {
-            let osaurus_key = key
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("osaurus");
-            Ok(compat(OpenAiCompatibleModelProvider::new(
-                "Osaurus",
-                resolved_url.unwrap_or("http://localhost:1337/v1"),
-                Some(osaurus_key),
-                AuthStyle::Bearer,
-            )))
-        }
-        "nvidia" => Ok(compat(
-            OpenAiCompatibleModelProvider::new_no_responses_fallback(
-                "NVIDIA NIM",
-                "https://integrate.api.nvidia.com/v1",
-                key,
-                AuthStyle::Bearer,
-            ),
-        )),
-
-        // ── AI inference routers ─────────────────────────────
-        "astrai" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Astrai",
-            "https://as-trai.com/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "siliconflow" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "SiliconFlow",
-            "https://api.siliconflow.cn/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "aihubmix" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "AiHubMix",
-            "https://aihubmix.com/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "litellm" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "LiteLLM",
-            resolved_url.unwrap_or("http://localhost:4000/v1"),
-            key,
-            AuthStyle::Bearer,
-        ))),
-
-        // ── Fast inference model_providers ──────────────────────────
-        "cerebras" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Cerebras",
-            "https://api.cerebras.ai/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "sambanova" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "SambaNova",
-            "https://api.sambanova.ai/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "hyperbolic" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Hyperbolic",
-            "https://api.hyperbolic.xyz/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-
-        // ── Model hosting platforms ──────────────────────────
-        "deepinfra" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "DeepInfra",
-            "https://api.deepinfra.com/v1/openai",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "huggingface" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Hugging Face",
-            "https://router.huggingface.co/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "ai21" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "AI21 Labs",
-            "https://api.ai21.com/studio/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "reka" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Reka",
-            "https://api.reka.ai/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "baseten" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Baseten",
-            "https://inference.baseten.co/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "nscale" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Nscale",
-            "https://inference.api.nscale.com/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "anyscale" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Anyscale",
-            "https://api.endpoints.anyscale.com/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "nebius" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Nebius AI Studio",
-            "https://api.studio.nebius.ai/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "friendli" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Friendli AI",
-            "https://api.friendli.ai/serverless/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "lepton" | "lepton-ai" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Lepton AI",
-            resolved_url.unwrap_or("https://llama3-1-405b.lepton.run/api/v1"),
-            key,
-            AuthStyle::Bearer,
-        ))),
-
-        // ── Chinese AI model_providers ─────────────────────────────
-        "stepfun" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Stepfun",
-            resolved_url.unwrap_or("https://api.stepfun.com/v1"),
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "baichuan" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Baichuan",
-            "https://api.baichuan-ai.com/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "yi" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "01.AI (Yi)",
-            "https://api.lingyiwanwu.com/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "hunyuan" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Tencent Hunyuan",
-            "https://api.hunyuan.cloud.tencent.com/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "avian" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "Avian",
-            "https://api.avian.io/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-        "deepmyst" => Ok(compat(OpenAiCompatibleModelProvider::new(
-            "DeepMyst",
-            "https://api.deepmyst.com/v1",
-            key,
-            AuthStyle::Bearer,
-        ))),
-
-        // ── Cloud AI endpoints ───────────────────────────────
-        "ovh" => Ok(Box::new(openai::OpenAiModelProvider::with_base_url(
-            Some("https://oai.endpoints.kepler.ai.cloud.ovh.net/v1"),
-            key,
-        ))),
-
-        // ── Bring Your Own ModelProvider (custom URL) ───────────
-        // The `custom` family carries the URL on `base.uri`; migration writes
-        // legacy `[providers.models.custom:URL.default]` colon-URL form into
-        // `[providers.models.custom.<alias>] uri = "URL"`. Operator must
-        // set `uri` for the entry; pre-resolved into `resolved_url`.
-        "custom" => {
-            let base_url = resolved_url.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Custom model model_provider requires `uri`: set \
-                     `[providers.models.custom.<alias>] uri = \"https://your-api.com\"` \
-                     in config.toml."
-                )
-            })?;
-            let model_provider = OpenAiCompatibleModelProvider::new_with_vision(
-                "Custom",
-                base_url,
-                key,
-                AuthStyle::Bearer,
-                true,
-            );
-            let model_provider = if options.merge_system_into_user {
-                model_provider.with_merge_system_into_user()
-            } else {
-                model_provider
-            };
-            Ok(compat(model_provider))
-        }
-
-        _ => anyhow::bail!(
-            "Unknown model_provider family: {name}. After the V2 to typed-family migration, \
-             only canonical family names are valid. Run `zeroclaw onboard` to reconfigure, \
-             or set `[providers.models.custom.<alias>] uri = \"https://your-api.com\"` for \
-             OpenAI-compatible custom endpoints."
-        ),
-    }
+    factory::dispatch_family_factory(config, name, alias, key, resolved_url, options)
 }
 
 /// Wrap the primary model_provider in a retry/backoff harness.
@@ -1603,6 +1135,12 @@ pub fn create_resilient_model_provider(
 }
 
 /// Wrap the primary model_provider in a retry/backoff harness, threading auth runtime options.
+///
+/// Legacy entry point — no per-alias typed extras. Codex routing now
+/// happens inside `OpenAIModelProviderConfig::create_provider` driven by
+/// the alias's `base.requires_openai_auth` flag. Production callers that
+/// have agent context should use [`create_resilient_model_provider_for_alias`]
+/// to surface family-specific config like Azure resource/deployment.
 pub fn create_resilient_model_provider_with_options(
     primary_name: &str,
     api_key: Option<&str>,
@@ -1610,17 +1148,37 @@ pub fn create_resilient_model_provider_with_options(
     reliability: &zeroclaw_config::schema::ReliabilityConfig,
     options: &ModelProviderRuntimeOptions,
 ) -> anyhow::Result<Box<dyn ModelProvider>> {
-    // Codex variant is selected by `options.requires_openai_auth` inside
-    // `create_model_provider_with_options`; the family name is always canonical
-    // (`"openai"`) post-migration.
-    let primary_model_provider = if primary_name == "openai" && options.requires_openai_auth {
-        create_model_provider_with_options(primary_name, api_key, options)?
-    } else {
-        create_model_provider_with_url_and_options(primary_name, api_key, api_url, options)?
-    };
+    let primary_model_provider =
+        create_model_provider_inner(None, primary_name, "default", api_key, api_url, options)?;
 
     let reliable = ReliableModelProvider::new(
         vec![(primary_name.to_string(), primary_model_provider)],
+        reliability.provider_retries,
+        reliability.provider_backoff_ms,
+    )
+    .with_api_keys(reliability.api_keys.clone());
+
+    Ok(Box::new(reliable))
+}
+
+/// Wrap the primary model_provider in a retry/backoff harness with full
+/// alias context. Production callers (gateway, orchestrator) use this so
+/// the dispatch sees the typed alias config and routes Azure/Codex/Gemini
+/// extras correctly.
+pub fn create_resilient_model_provider_for_alias(
+    config: &zeroclaw_config::schema::Config,
+    family: &str,
+    alias: &str,
+    api_key: Option<&str>,
+    api_url: Option<&str>,
+    reliability: &zeroclaw_config::schema::ReliabilityConfig,
+    options: &ModelProviderRuntimeOptions,
+) -> anyhow::Result<Box<dyn ModelProvider>> {
+    let primary_model_provider =
+        create_model_provider_inner(Some(config), family, alias, api_key, api_url, options)?;
+
+    let reliable = ReliableModelProvider::new(
+        vec![(family.to_string(), primary_model_provider)],
         reliability.provider_retries,
         reliability.provider_backoff_ms,
     )
@@ -2228,16 +1786,14 @@ mod tests {
 
     #[test]
     fn factory_openai_codex() {
-        // Codex is now selected via the typed `requires_openai_auth` flag on
-        // an `[providers.models.openai.codex]` alias entry, not via family
-        // name. Migration normalizes the legacy spellings ("openai-codex",
-        // "openai_codex", "codex") into family = "openai" + alias = "codex"
-        // with `requires_openai_auth = true`.
-        let options = ModelProviderRuntimeOptions {
-            requires_openai_auth: true,
-            ..ModelProviderRuntimeOptions::default()
-        };
-        assert!(create_model_provider_with_options("openai", None, &options).is_ok());
+        // Codex is now selected by the typed `base.requires_openai_auth`
+        // flag on an `[providers.models.openai.codex]` alias entry — the
+        // factory's legacy escape hatch for the bare "openai-codex" /
+        // "openai_codex" / "codex" family names still routes through
+        // `OpenAiCodexModelProvider::new` when a real Config + alias is
+        // not in scope.
+        let options = ModelProviderRuntimeOptions::default();
+        assert!(create_model_provider_with_options("openai-codex", None, &options).is_ok());
     }
 
     #[test]
@@ -2397,22 +1953,19 @@ mod tests {
 
     #[test]
     fn factory_osaurus_uses_default_key_when_none() {
-        // Verify that create_model_provider_with_url_and_options succeeds even
-        // without an API key — the match arm provides a default placeholder.
-        let options = ModelProviderRuntimeOptions::default();
-        let p = create_model_provider_with_url_and_options("osaurus", None, None, &options);
+        // Verify that osaurus construction succeeds even without an API
+        // key — the impl provides a default placeholder.
+        let p = create_model_provider_with_url("osaurus", None, None);
         assert!(p.is_ok());
     }
 
     #[test]
     fn factory_osaurus_custom_url() {
         // Verify that a custom api_url overrides the default localhost endpoint.
-        let options = ModelProviderRuntimeOptions::default();
-        let p = create_model_provider_with_url_and_options(
+        let p = create_model_provider_with_url(
             "osaurus",
             Some("key"),
             Some("http://192.168.1.100:1337/v1"),
-            &options,
         );
         assert!(p.is_ok());
     }
@@ -2441,15 +1994,13 @@ mod tests {
 
     #[test]
     fn factory_codex_dispatches_via_requires_openai_auth_flag() {
-        // Migration normalizes the legacy codex spellings ("codex", "openai-codex",
-        // "openai_codex") into family = "openai" + alias = "codex" with
-        // `requires_openai_auth = true`; the runtime selects the codex
-        // implementation by inspecting the flag, not by family name.
-        let options = ModelProviderRuntimeOptions {
-            requires_openai_auth: true,
-            ..ModelProviderRuntimeOptions::default()
-        };
-        assert!(create_model_provider_with_options("openai", None, &options).is_ok());
+        // Codex selection: the typed alias's `base.requires_openai_auth`
+        // routes through `OpenAIModelProviderConfig::create_provider`. The
+        // legacy escape hatch on the bare "openai-codex" / "openai_codex" /
+        // "codex" family names remains for callers without Config context
+        // (this test).
+        let options = ModelProviderRuntimeOptions::default();
+        assert!(create_model_provider_with_options("openai-codex", None, &options).is_ok());
     }
 
     // ── Extended ecosystem ───────────────────────────────────
@@ -2985,13 +2536,8 @@ mod tests {
         // V0.8.0: `ZEROCLAW_PROVIDER_URL` env-var override eradicated. Ollama
         // base URL flows through the typed alias's `api_url`/`uri` field which
         // pre-populates `provider_api_url` on `ModelProviderRuntimeOptions`.
-        let options = ModelProviderRuntimeOptions::default();
-        let model_provider = create_model_provider_with_url_and_options(
-            "ollama",
-            Some("http://config-ollama:11434"),
-            None,
-            &options,
-        );
+        let model_provider =
+            create_model_provider_with_url("ollama", None, Some("http://config-ollama:11434"));
         assert!(model_provider.is_ok());
     }
 

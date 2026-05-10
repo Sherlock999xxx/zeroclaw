@@ -58,6 +58,10 @@ pub struct WhatsAppWebChannel {
     pair_phone: Option<String>,
     /// Custom pair code (optional)
     pair_code: Option<String>,
+    /// Override WebSocket URL (test / proxy setups). Sourced from
+    /// `[whatsapp.ws_url]` — replaces the legacy `WHATSAPP_WS_URL` env-var
+    /// read.
+    ws_url: Option<String>,
     /// Allowed phone numbers (E.164 format) or "*" for all
     allowed_numbers: Vec<String>,
     /// When true, only respond to messages that @-mention the bot in groups
@@ -118,6 +122,7 @@ impl WhatsAppWebChannel {
         session_path: String,
         pair_phone: Option<String>,
         pair_code: Option<String>,
+        ws_url: Option<String>,
         allowed_numbers: Vec<String>,
         mention_only: bool,
         mode: zeroclaw_config::schema::WhatsAppWebMode,
@@ -143,6 +148,7 @@ impl WhatsAppWebChannel {
             session_path,
             pair_phone,
             pair_code,
+            ws_url,
             allowed_numbers,
             mention_only,
             bot_phone: Arc::new(Mutex::new(bot_phone)),
@@ -1134,10 +1140,11 @@ impl Channel for WhatsAppWebChannel {
                 );
             };
 
-            // Create transport factory
+            // Create transport factory. WebSocket URL override comes from
+            // `[whatsapp.ws_url]`; legacy `WHATSAPP_WS_URL` env var is gone.
             let mut transport_factory = TokioWebSocketTransportFactory::new();
-            if let Ok(ws_url) = std::env::var("WHATSAPP_WS_URL") {
-                transport_factory = transport_factory.with_url(ws_url);
+            if let Some(ref ws_url) = self.ws_url {
+                transport_factory = transport_factory.with_url(ws_url.clone());
             }
 
             // Create HTTP client for media operations
@@ -1803,6 +1810,7 @@ mod tests {
             "/tmp/test-whatsapp.db".into(),
             None,
             None,
+            None,
             vec!["+1234567890".into()],
             false,
             zeroclaw_config::schema::WhatsAppWebMode::default(),
@@ -1834,6 +1842,7 @@ mod tests {
             "/tmp/test.db".into(),
             None,
             None,
+            None,
             vec!["*".into()],
             false,
             zeroclaw_config::schema::WhatsAppWebMode::default(),
@@ -1850,6 +1859,7 @@ mod tests {
     fn whatsapp_web_number_denied_empty() {
         let ch = WhatsAppWebChannel::new(
             "/tmp/test.db".into(),
+            None,
             None,
             None,
             vec![],
@@ -2265,6 +2275,7 @@ mod tests {
             "/tmp/test.db".into(),
             Some("919211916069".into()),
             None,
+            None,
             vec!["*".into()],
             true,
             zeroclaw_config::schema::WhatsAppWebMode::default(),
@@ -2280,6 +2291,7 @@ mod tests {
     fn constructor_no_pair_phone_leaves_bot_phone_none() {
         let ch = WhatsAppWebChannel::new(
             "/tmp/test.db".into(),
+            None,
             None,
             None,
             vec!["*".into()],

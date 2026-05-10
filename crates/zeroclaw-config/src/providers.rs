@@ -159,6 +159,12 @@ define_provider_ref!(ChannelRef, "channels");
 /// Each row is `(field_ident, provider_type_str, FamilyConfigType)`. The
 /// `provider_type_str` is the canonical TOML outer key, identical to the
 /// field name with hyphens forbidden (the schema uses underscores).
+///
+/// Exported so that downstream crates (notably `zeroclaw-providers`) can
+/// drive their own dispatch from the same single source of truth — adding
+/// a family is one row here and one trait impl in providers; missing the
+/// impl fails to compile when downstream macro consumers expand.
+#[macro_export]
 macro_rules! for_each_model_provider_slot {
     ($mac:ident) => {
         $mac! {

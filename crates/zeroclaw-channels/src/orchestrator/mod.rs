@@ -4336,6 +4336,7 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                     wa.session_path.clone().unwrap_or_default(),
                     wa.pair_phone.clone(),
                     wa.pair_code.clone(),
+                    wa.ws_url.clone(),
                     wa.allowed_numbers.clone(),
                     wa.mention_only,
                     wa.mode.clone(),
@@ -4871,6 +4872,7 @@ fn collect_configured_channels(
                                 wa.session_path.clone().unwrap_or_default(),
                                 wa.pair_phone.clone(),
                                 wa.pair_code.clone(),
+                                wa.ws_url.clone(),
                                 wa.allowed_numbers.clone(),
                                 wa.mention_only,
                                 wa.mode.clone(),
@@ -5194,14 +5196,11 @@ fn collect_configured_channels(
 
     // Notion database poller channel
     if config.notion.enabled && !config.notion.database_id.trim().is_empty() {
-        let notion_api_key = if config.notion.api_key.trim().is_empty() {
-            std::env::var("NOTION_API_KEY").unwrap_or_default()
-        } else {
-            config.notion.api_key.trim().to_string()
-        };
-        if notion_api_key.trim().is_empty() {
+        let notion_api_key = config.notion.api_key.trim().to_string();
+        if notion_api_key.is_empty() {
             tracing::warn!(
-                "Notion channel enabled but no API key found (set notion.api_key or NOTION_API_KEY env var)"
+                "Notion channel enabled but `notion.api_key` is unset. Set it via the schema-mirror grammar: \
+                 `ZEROCLAW_notion__api_key=...`."
             );
         } else {
             channels.push(ConfiguredChannel {

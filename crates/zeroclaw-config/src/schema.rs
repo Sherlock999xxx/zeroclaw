@@ -88,6 +88,13 @@ pub struct Config {
     /// dashboard, onboarding).
     #[serde(skip)]
     pub env_overridden_paths: std::collections::HashSet<String>,
+    /// Per-path snapshot of pre-override raw values, captured at apply time
+    /// from the post-`decrypt_secrets` in-memory state (so secret entries
+    /// hold plaintext, not the display mask). `save()` restores from this
+    /// map so env-injected values never reach disk and the operator's
+    /// original on-disk credentials survive any save cycle.
+    #[serde(skip)]
+    pub pre_override_snapshots: std::collections::HashMap<String, String>,
     /// Config file schema version.
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
@@ -923,6 +930,24 @@ pub struct QwenModelProviderConfig {
     /// OAuth-cache integration instead of the `api_key` field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_mode: Option<AuthMode>,
+    /// Long-lived Qwen OAuth refresh token. When set, the runtime
+    /// exchanges it for a short-lived access token at provider
+    /// construction time. Operators relying on the upstream `qwen login`
+    /// tool (which writes `~/.qwen/oauth_creds.json`) leave this unset —
+    /// the file-cache integration takes over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[secret(category = "model_provider")]
+    pub oauth_refresh_token: Option<String>,
+    /// Override of Qwen's published OAuth client_id. Most operators
+    /// should leave this unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_client_id: Option<String>,
+    /// Operator override of the resource URL the refreshed access token
+    /// is paired with. When unset, the runtime falls back to the
+    /// `endpoint`-derived URL (or the cached `resource_url` when reading
+    /// from `~/.qwen/oauth_creds.json`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_resource_url: Option<String>,
 }
 
 impl FamilyEndpoint for QwenModelProviderConfig {
@@ -1926,6 +1951,19 @@ impl ModelEndpoint for MinimaxEndpoint {
         }
     }
 }
+
+impl MinimaxEndpoint {
+    /// OAuth `/oauth/token` endpoint for this region. Used by
+    /// `refresh_minimax_oauth_access_token` to mint short-lived access
+    /// tokens from the operator-supplied `oauth_refresh_token`.
+    pub fn oauth_token_endpoint(self) -> &'static str {
+        match self {
+            Self::Cn => "https://api.minimaxi.com/oauth/token",
+            Self::Intl => "https://api.minimax.io/oauth/token",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "providers.models.minimax"]
@@ -1937,6 +1975,19 @@ pub struct MinimaxModelProviderConfig {
     pub endpoint: MinimaxEndpoint,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_mode: Option<AuthMode>,
+    /// Long-lived OAuth refresh token issued by MiniMax. When set, the
+    /// runtime exchanges it for a short-lived access token at provider
+    /// construction time and uses that as the API credential. Operators
+    /// who prefer dashboard-generated long-lived API keys can leave this
+    /// unset and populate `api_key` directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[secret(category = "model_provider")]
+    pub oauth_refresh_token: Option<String>,
+    /// Override of MiniMax's published OAuth client_id. Most operators
+    /// should leave this unset — the runtime defaults to the
+    /// vendor-published client_id (same one MiniMax's own portal uses).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_client_id: Option<String>,
 }
 
 impl FamilyEndpoint for MinimaxModelProviderConfig {
@@ -2132,6 +2183,24 @@ pub struct GeminiModelProviderConfig {
     /// OAuth-cache integration instead of the `api_key` field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_mode: Option<AuthMode>,
+    /// Google OAuth app `client_id`, used when this alias drives ZeroClaw's
+    /// own browser/device-code login flow (`zeroclaw auth login
+    /// --model-provider gemini --profile <alias>`). Operators relying on
+    /// the upstream `gemini login` tool don't need this — that tool writes
+    /// its own client_id / client_secret into `~/.gemini/oauth_creds.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[secret(category = "model_provider")]
+    pub oauth_client_id: Option<String>,
+    /// Google OAuth app `client_secret`. Set alongside `oauth_client_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[secret(category = "model_provider")]
+    pub oauth_client_secret: Option<String>,
+    /// Pin a specific GCP project ID for the OAuth `loadCodeAssist`
+    /// discovery call. When unset, the discovery probes for an
+    /// already-onboarded project on the credential's account. Replaces
+    /// `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_PROJECT_ID` env vars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_project: Option<String>,
 }
 
 // ── Gemini CLI (subprocess wrapper) ──
@@ -4597,19 +4666,12 @@ pub struct GatewayConfig {
 
     /// HTTP request timeout (seconds) for gateway routes other than the
     /// long-running cron-trigger endpoint. Default: 30s.
-    ///
-    /// V0.8.0: replaces the legacy `ZEROCLAW_GATEWAY_TIMEOUT_SECS` env-var
-    /// override. Operators set this via the schema-mirror grammar:
-    /// `ZEROCLAW_gateway_request_timeout_secs=120`.
     #[serde(default = "default_gateway_request_timeout_secs")]
     pub request_timeout_secs: u64,
 
     /// HTTP request timeout (seconds) for `POST /api/cron/{id}/run`, which
     /// runs jobs synchronously and routinely exceeds the 30s default.
     /// Default: 600s (10 minutes).
-    ///
-    /// V0.8.0: replaces the legacy `ZEROCLAW_GATEWAY_LONG_RUNNING_REQUEST_TIMEOUT_SECS`
-    /// env-var override.
     #[serde(default = "default_gateway_long_running_request_timeout_secs")]
     pub long_running_request_timeout_secs: u64,
 }
@@ -10129,6 +10191,11 @@ pub struct WhatsAppConfig {
     /// Leave empty to let WhatsApp generate one
     #[serde(default)]
     pub pair_code: Option<String>,
+    /// Override the WhatsApp Web WebSocket URL (Web mode, optional). Used
+    /// by integration tests and proxy setups; leave unset to use the
+    /// default endpoint that ships with `wa-rs`.
+    #[serde(default)]
+    pub ws_url: Option<String>,
     /// Allowed phone numbers (E.164 format: +1234567890) or "*" for all
     #[serde(default)]
     pub allowed_numbers: Vec<String>,
@@ -12050,6 +12117,7 @@ impl Default for Config {
             workspace_dir: zeroclaw_dir.join("workspace"),
             config_path: zeroclaw_dir.join("config.toml"),
             env_overridden_paths: std::collections::HashSet::new(),
+            pre_override_snapshots: std::collections::HashMap::new(),
             schema_version: crate::migration::CURRENT_SCHEMA_VERSION,
             providers: crate::providers::ProvidersConfig::default(),
             observability: ObservabilityConfig::default(),
@@ -12668,7 +12736,10 @@ impl Config {
             if let Some(from_version) = stale_version {
                 tracing::warn!(
                     "Config at {} is schema_version {from_version}; auto-migrated to {} in memory. \
-                     Run `zeroclaw config migrate` to commit the migration to disk.",
+                     Run `zeroclaw config migrate` to commit the migration to disk. \
+                     V0.8.0 also replaced the env-var override grammar; see \
+                     https://github.com/zeroclaw-labs/zeroclaw/blob/master/docs/book/src/reference/env-vars.md \
+                     for the migration recipes.",
                     config_path.display(),
                     crate::migration::CURRENT_SCHEMA_VERSION,
                 );
@@ -12709,8 +12780,11 @@ impl Config {
 
             // Apply ZEROCLAW_<lowercase_path> env-var overrides. Hard-errors
             // on any unresolvable path — no silent ignores. Tracks overridden
-            // paths so save() can mask them back to disk-or-default.
-            config.env_overridden_paths = crate::env_overrides::apply_env_overrides(&mut config)?;
+            // paths and per-path pre-override snapshots so save() can mask
+            // env-injected values back to the original on-disk state.
+            let applied = crate::env_overrides::apply_env_overrides(&mut config)?;
+            config.env_overridden_paths = applied.paths;
+            config.pre_override_snapshots = applied.snapshots;
 
             config.validate()?;
             tracing::info!(
@@ -12739,7 +12813,9 @@ impl Config {
                 let _ = fs::set_permissions(&config_path, Permissions::from_mode(0o600)).await;
             }
 
-            config.env_overridden_paths = crate::env_overrides::apply_env_overrides(&mut config)?;
+            let applied = crate::env_overrides::apply_env_overrides(&mut config)?;
+            config.env_overridden_paths = applied.paths;
+            config.pre_override_snapshots = applied.snapshots;
 
             config.validate()?;
             tracing::info!(
@@ -13124,7 +13200,7 @@ impl Config {
             }
             if !has_ollama_cloud_credential(entry.api_key.as_deref()) {
                 anyhow::bail!(
-                    "default_model uses ':cloud' with model_provider 'ollama', but no API key is configured. Set api_key on [providers.models.ollama.<alias>] (or via the schema-mirror grammar: ZEROCLAW_providers_models_ollama_<alias>_api_key=<value>)."
+                    "default_model uses ':cloud' with model_provider 'ollama', but no API key is configured. Set api_key on [providers.models.ollama.<alias>] (or via the schema-mirror grammar: ZEROCLAW_providers__models__ollama__<alias>__api_key=<value>)."
                 );
             }
         }
@@ -13728,21 +13804,16 @@ impl Config {
             .context("Config path must have a parent directory")?;
         let store = crate::secrets::SecretStore::new(zeroclaw_dir, self.secrets.encrypt);
 
-        // Mask env-injected values back to disk-or-default before encryption,
-        // so values supplied via `ZEROCLAW_*` env vars never reach disk.
-        if !self.env_overridden_paths.is_empty() {
-            let disk_config: Option<Config> = if config_path.exists()
-                && let Ok(contents) = fs::read_to_string(&config_path).await
-                && let Ok(parsed) = crate::migration::migrate_to_current(&contents)
-            {
-                Some(parsed)
-            } else {
-                None
-            };
+        // Restore env-overridden paths to their pre-override snapshots before
+        // encryption, so values supplied via `ZEROCLAW_*` env vars never reach
+        // disk. Snapshots were captured at apply time from the post-decrypt
+        // in-memory state, so secrets carry the original plaintext that
+        // `encrypt_secrets()` will re-encrypt to fresh ciphertext that
+        // decrypts back to the same value.
+        if !self.pre_override_snapshots.is_empty() {
             crate::env_overrides::mask_env_overrides_for_save(
                 &mut config_to_save,
-                disk_config.as_ref(),
-                &self.env_overridden_paths,
+                &self.pre_override_snapshots,
             )?;
         }
 
@@ -14089,7 +14160,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex as StdMutex};
     use tempfile::TempDir;
-    use tokio::sync::{Mutex, MutexGuard};
+    use tokio::sync::MutexGuard;
     use tokio::test;
 
     // ── Tilde expansion ───────────────────────────────────────
@@ -14725,6 +14796,7 @@ auto_save = true
             shell_tool: ShellToolConfig::default(),
             escalation: EscalationConfig::default(),
             env_overridden_paths: std::collections::HashSet::new(),
+            pre_override_snapshots: std::collections::HashMap::new(),
         };
         // ModelProvider fields are now resolved directly — no cache needed.
 
@@ -15232,6 +15304,7 @@ default_temperature = 0.7
             shell_tool: ShellToolConfig::default(),
             escalation: EscalationConfig::default(),
             env_overridden_paths: std::collections::HashSet::new(),
+            pre_override_snapshots: std::collections::HashMap::new(),
         };
 
         // ModelProvider fields are now resolved directly — no cache needed.
@@ -16010,6 +16083,7 @@ bot_token = "xoxb-tok"
             session_path: None,
             pair_phone: None,
             pair_code: None,
+            ws_url: None,
             allowed_numbers: vec!["+1234567890".into(), "+9876543210".into()],
             mention_only: false,
             mode: WhatsAppWebMode::default(),
@@ -16040,6 +16114,7 @@ bot_token = "xoxb-tok"
             session_path: None,
             pair_phone: None,
             pair_code: None,
+            ws_url: None,
             allowed_numbers: vec!["+1".into()],
             mention_only: false,
             mode: WhatsAppWebMode::default(),
@@ -16075,6 +16150,7 @@ bot_token = "xoxb-tok"
             session_path: None,
             pair_phone: None,
             pair_code: None,
+            ws_url: None,
             allowed_numbers: vec!["*".into()],
             mention_only: false,
             mode: WhatsAppWebMode::default(),
@@ -16102,6 +16178,7 @@ bot_token = "xoxb-tok"
             session_path: Some("~/.zeroclaw/state/whatsapp-web/session.db".into()),
             pair_phone: None,
             pair_code: None,
+            ws_url: None,
             allowed_numbers: vec!["+1".into()],
             mention_only: false,
             mode: WhatsAppWebMode::default(),
@@ -16128,6 +16205,7 @@ bot_token = "xoxb-tok"
             session_path: Some("~/.zeroclaw/state/whatsapp-web/session.db".into()),
             pair_phone: None,
             pair_code: None,
+            ws_url: None,
             allowed_numbers: vec![],
             mention_only: false,
             mode: WhatsAppWebMode::default(),
@@ -16166,6 +16244,7 @@ bot_token = "xoxb-tok"
                     session_path: None,
                     pair_phone: None,
                     pair_code: None,
+                    ws_url: None,
                     allowed_numbers: vec!["+1".into()],
                     mention_only: false,
                     mode: WhatsAppWebMode::default(),
@@ -16536,8 +16615,10 @@ default_temperature = 0.7
     }
 
     async fn env_override_lock() -> MutexGuard<'static, ()> {
-        static ENV_OVERRIDE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
-        ENV_OVERRIDE_TEST_LOCK.lock().await
+        // Delegate to the crate-shared lock so env-mutating tests in this
+        // module serialize against `env_overrides::tests` too. Without
+        // this, tests across the two modules race on `ZEROCLAW_*` vars.
+        crate::env_overrides::env_test_lock().await
     }
 
     #[test]
@@ -19646,6 +19727,111 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
         );
         assert_eq!(loaded_provider.model.as_deref(), Some("local-large"));
         assert_eq!(loaded_provider.temperature, Some(0.2));
+    }
+
+    #[test]
+    async fn env_override_save_cycle_preserves_on_disk_secret() {
+        // Regression bar for the data-loss bug identified in PR #6523
+        // review: an operator with a real on-disk credential who sets a
+        // `ZEROCLAW_*` env override for the same path and triggers any
+        // save (dashboard auto-save, CLI `config set` for an unrelated
+        // field, onboarding finalizer) must NOT corrupt the disk file.
+        //
+        // Pre-fix behavior: `mask_env_overrides_for_save` read disk via
+        // `get_prop`, which returns `"**** (encrypted)"` for secret-typed
+        // fields regardless of underlying state. That mask string then got
+        // re-encrypted as plaintext and written to disk, destroying the
+        // operator's real credential on the next reload.
+        //
+        // Post-fix: `apply_env_overrides` snapshots the post-decrypt
+        // plaintext at apply time; `mask_env_overrides_for_save` restores
+        // from that snapshot before `encrypt_secrets()` runs. The disk
+        // secret survives the cycle.
+        let dir = TempDir::new().unwrap();
+        let mut config = Config {
+            config_path: dir.path().join("config.toml"),
+            workspace_dir: dir.path().join("workspace"),
+            ..Default::default()
+        };
+        let original_secret = "sk-ant-real-on-disk-credential";
+        let api_key_path = "providers.models.anthropic.default.api-key";
+        config
+            .providers
+            .models
+            .ensure("anthropic", "default")
+            .expect("typed slot");
+        config.set_prop(api_key_path, original_secret).unwrap();
+
+        // First save: encrypts the original plaintext, writes to disk.
+        config.save().await.unwrap();
+
+        // Reload from disk to confirm the original landed correctly.
+        let raw = tokio::fs::read_to_string(&config.config_path)
+            .await
+            .unwrap();
+        let mut reloaded: Config = crate::migration::migrate_to_current(&raw).unwrap();
+        reloaded.config_path = config.config_path.clone();
+        reloaded.workspace_dir = config.workspace_dir.clone();
+        let store = crate::secrets::SecretStore::new(dir.path(), reloaded.secrets.encrypt);
+        reloaded.decrypt_secrets(&store).unwrap();
+        assert_eq!(
+            reloaded
+                .providers
+                .models
+                .anthropic
+                .get("default")
+                .and_then(|c| c.base.api_key.as_deref()),
+            Some(original_secret),
+            "baseline: original secret round-trips through one save/reload cycle",
+        );
+
+        // Simulate `apply_env_overrides` having injected a different value
+        // for the same path — this is the state `Config::load_or_init`
+        // leaves the in-memory config in when an operator boots with
+        // `ZEROCLAW_providers__models__anthropic__default__api_key=...`
+        // set in the environment.
+        let env_value = "sk-ant-from-env-DIFFERENT";
+        reloaded.env_overridden_paths = std::collections::HashSet::from([api_key_path.to_string()]);
+        reloaded.pre_override_snapshots = std::collections::HashMap::from([(
+            api_key_path.to_string(),
+            original_secret.to_string(),
+        )]);
+        reloaded.set_prop(api_key_path, env_value).unwrap();
+
+        // Save again. With the pre-fix code path, this is the moment the
+        // disk file got corrupted with the encrypted display mask.
+        reloaded.save().await.unwrap();
+
+        // Reload, decrypt, and confirm the original secret survived
+        // (and the env value did NOT leak to disk, and the literal mask
+        // string was NOT persisted).
+        let raw_after = tokio::fs::read_to_string(&reloaded.config_path)
+            .await
+            .unwrap();
+        assert!(
+            !raw_after.contains(env_value),
+            "env-injected value must never reach disk: {raw_after}",
+        );
+        assert!(
+            !raw_after.contains("**** (encrypted)"),
+            "display mask must never be persisted as a secret value: {raw_after}",
+        );
+
+        let mut after: Config = crate::migration::migrate_to_current(&raw_after).unwrap();
+        after.config_path = reloaded.config_path.clone();
+        after.workspace_dir = reloaded.workspace_dir.clone();
+        let store2 = crate::secrets::SecretStore::new(dir.path(), after.secrets.encrypt);
+        after.decrypt_secrets(&store2).unwrap();
+        assert_eq!(
+            after
+                .providers
+                .models
+                .anthropic
+                .get("default")
+                .and_then(|c| c.base.api_key.as_deref()),
+            Some(original_secret),
+            "original on-disk secret must survive an env-override + save cycle",
+        );
     }
 
     #[test]

@@ -18,12 +18,25 @@ use std::sync::Arc;
 pub struct GeminiModelProvider {
     auth: Option<GeminiAuth>,
     oauth_project: Arc<tokio::sync::Mutex<Option<String>>>,
+    /// Per-alias seed for the GCP project ID resolved against the
+    /// loadCodeAssist endpoint. Set from
+    /// `GeminiModelProviderConfig.oauth_project`. The seed primes the
+    /// `loadCodeAssist` request body when no project has been resolved
+    /// yet — operators with a fixed project pin avoid the discovery
+    /// round-trip.
+    oauth_project_seed: Option<String>,
     oauth_cred_paths: Vec<PathBuf>,
     oauth_index: Arc<tokio::sync::Mutex<usize>>,
     /// AuthService for managed profiles (auth-profiles.json).
     auth_service: Option<AuthService>,
     /// Override profile name for managed auth.
     auth_profile_override: Option<String>,
+    /// Per-alias OAuth app credentials carried at construction time so
+    /// runtime token refreshes via `AuthService::get_valid_gemini_access_token`
+    /// can mint new access tokens without dipping back into Config. Set
+    /// from `GeminiModelProviderConfig.oauth_client_id` / `oauth_client_secret`.
+    oauth_client_id: Option<String>,
+    oauth_client_secret: Option<String>,
 }
 
 /// Mutable OAuth token state — supports runtime refresh for long-lived processes.
@@ -41,10 +54,6 @@ struct OAuthTokenState {
 enum GeminiAuth {
     /// Explicit API key from config: sent as `?key=` query parameter.
     ExplicitKey(String),
-    /// API key from `GEMINI_API_KEY` env var: sent as `?key=`.
-    EnvGeminiKey(String),
-    /// API key from `GOOGLE_API_KEY` env var: sent as `?key=`.
-    EnvGoogleKey(String),
     /// OAuth access token from Gemini CLI: sent as `Authorization: Bearer`.
     /// Wrapped in a Mutex to allow runtime token refresh.
     OAuthToken(Arc<tokio::sync::Mutex<OAuthTokenState>>),
@@ -56,10 +65,7 @@ enum GeminiAuth {
 impl GeminiAuth {
     /// Whether this credential is an API key (sent as `?key=` query param).
     fn is_api_key(&self) -> bool {
-        matches!(
-            self,
-            GeminiAuth::ExplicitKey(_) | GeminiAuth::EnvGeminiKey(_) | GeminiAuth::EnvGoogleKey(_)
-        )
+        matches!(self, GeminiAuth::ExplicitKey(_))
     }
 
     /// Whether this credential is an OAuth token (CLI or managed).
@@ -70,9 +76,7 @@ impl GeminiAuth {
     /// The raw credential string (for API key variants only).
     fn api_key_credential(&self) -> &str {
         match self {
-            GeminiAuth::ExplicitKey(s)
-            | GeminiAuth::EnvGeminiKey(s)
-            | GeminiAuth::EnvGoogleKey(s) => s,
+            GeminiAuth::ExplicitKey(s) => s,
             GeminiAuth::OAuthToken(_) | GeminiAuth::ManagedOAuth => "",
         }
     }
@@ -473,17 +477,14 @@ impl GeminiModelProvider {
     /// Create a new Gemini model_provider.
     ///
     /// Authentication priority:
-    /// 1. Explicit API key passed in
-    /// 2. `GEMINI_API_KEY` environment variable
-    /// 3. `GOOGLE_API_KEY` environment variable
-    /// 4. Gemini CLI OAuth tokens (`~/.gemini/oauth_creds.json`)
+    /// 1. Explicit API key passed in (from `[providers.models.gemini.<alias>]
+    ///    api_key`, reachable via the schema-mirror env grammar)
+    /// 2. Gemini CLI OAuth tokens (`~/.gemini/oauth_creds.json`)
     pub fn new(api_key: Option<&str>) -> Self {
         let oauth_cred_paths = Self::discover_oauth_cred_paths();
         let resolved_auth = api_key
             .and_then(Self::normalize_non_empty)
             .map(GeminiAuth::ExplicitKey)
-            .or_else(|| Self::load_non_empty_env("GEMINI_API_KEY").map(GeminiAuth::EnvGeminiKey))
-            .or_else(|| Self::load_non_empty_env("GOOGLE_API_KEY").map(GeminiAuth::EnvGoogleKey))
             .or_else(|| {
                 Self::try_load_gemini_cli_token(oauth_cred_paths.first())
                     .map(|state| GeminiAuth::OAuthToken(Arc::new(tokio::sync::Mutex::new(state))))
@@ -492,34 +493,36 @@ impl GeminiModelProvider {
         Self {
             auth: resolved_auth,
             oauth_project: Arc::new(tokio::sync::Mutex::new(None)),
+            oauth_project_seed: None,
             oauth_cred_paths,
             oauth_index: Arc::new(tokio::sync::Mutex::new(0)),
             auth_service: None,
             auth_profile_override: None,
+            oauth_client_id: None,
+            oauth_client_secret: None,
         }
     }
 
     /// Create a new Gemini model_provider with managed OAuth from auth-profiles.json.
     ///
     /// Authentication priority:
-    /// 1. Explicit API key passed in
-    /// 2. `GEMINI_API_KEY` environment variable
-    /// 3. `GOOGLE_API_KEY` environment variable
-    /// 4. Managed OAuth from auth-profiles.json (if auth_service provided)
-    /// 5. Gemini CLI OAuth tokens (`~/.gemini/oauth_creds.json`)
+    /// 1. Explicit API key passed in (from `[providers.models.gemini.<alias>]`)
+    /// 2. Managed OAuth from auth-profiles.json (if auth_service provided)
+    /// 3. Gemini CLI OAuth tokens (`~/.gemini/oauth_creds.json`)
     pub fn new_with_auth(
         api_key: Option<&str>,
         auth_service: AuthService,
         profile_override: Option<String>,
+        oauth_project_seed: Option<String>,
+        oauth_client_id: Option<String>,
+        oauth_client_secret: Option<String>,
     ) -> Self {
         let oauth_cred_paths = Self::discover_oauth_cred_paths();
 
         // First check API keys
         let resolved_auth = api_key
             .and_then(Self::normalize_non_empty)
-            .map(GeminiAuth::ExplicitKey)
-            .or_else(|| Self::load_non_empty_env("GEMINI_API_KEY").map(GeminiAuth::EnvGeminiKey))
-            .or_else(|| Self::load_non_empty_env("GOOGLE_API_KEY").map(GeminiAuth::EnvGoogleKey));
+            .map(GeminiAuth::ExplicitKey);
 
         // If no API key, we'll use managed OAuth (checked at runtime)
         // or fall back to CLI OAuth
@@ -561,6 +564,7 @@ impl GeminiModelProvider {
         Self {
             auth,
             oauth_project: Arc::new(tokio::sync::Mutex::new(None)),
+            oauth_project_seed,
             oauth_cred_paths,
             oauth_index: Arc::new(tokio::sync::Mutex::new(0)),
             auth_service: if use_managed {
@@ -569,6 +573,8 @@ impl GeminiModelProvider {
                 None
             },
             auth_profile_override: profile_override,
+            oauth_client_id,
+            oauth_client_secret,
         }
     }
 
@@ -579,12 +585,6 @@ impl GeminiModelProvider {
         } else {
             Some(trimmed.to_string())
         }
-    }
-
-    fn load_non_empty_env(name: &str) -> Option<String> {
-        std::env::var(name)
-            .ok()
-            .and_then(|value| Self::normalize_non_empty(&value))
     }
 
     fn load_gemini_cli_creds(creds_path: &PathBuf) -> Option<GeminiCliOAuthCreds> {
@@ -697,11 +697,12 @@ impl GeminiModelProvider {
         })
     }
 
-    /// Check if any Gemini authentication is available
+    /// Check if any Gemini authentication is available via the Gemini CLI
+    /// OAuth credential cache. Per-alias config-supplied keys are tracked
+    /// separately on the constructed provider, so this helper no longer
+    /// reads process env.
     pub fn has_any_auth() -> bool {
-        Self::load_non_empty_env("GEMINI_API_KEY").is_some()
-            || Self::load_non_empty_env("GOOGLE_API_KEY").is_some()
-            || Self::has_cli_credentials()
+        Self::has_cli_credentials()
     }
 
     /// Get authentication source description for diagnostics.
@@ -709,8 +710,6 @@ impl GeminiModelProvider {
     pub fn auth_source(&self) -> &'static str {
         match self.auth.as_ref() {
             Some(GeminiAuth::ExplicitKey(_)) => "config",
-            Some(GeminiAuth::EnvGeminiKey(_)) => "GEMINI_API_KEY env var",
-            Some(GeminiAuth::EnvGoogleKey(_)) => "GOOGLE_API_KEY env var",
             Some(GeminiAuth::OAuthToken(_)) => "Gemini CLI OAuth",
             Some(GeminiAuth::ManagedOAuth) => "auth-profiles",
             None => "none",
@@ -849,8 +848,7 @@ impl GeminiModelProvider {
     /// Resolve the GCP project ID for OAuth by calling the loadCodeAssist endpoint.
     /// Caches the result for subsequent calls.
     async fn resolve_oauth_project(&self, token: &str) -> anyhow::Result<String> {
-        let project_seed = Self::load_non_empty_env("GOOGLE_CLOUD_PROJECT")
-            .or_else(|| Self::load_non_empty_env("GOOGLE_CLOUD_PROJECT_ID"));
+        let project_seed = self.oauth_project_seed.clone();
         let project_seed_for_request = project_seed.clone();
         let duet_project_for_request = project_seed.clone();
 
@@ -884,7 +882,7 @@ impl GeminiModelProvider {
             let body = response.text().await.unwrap_or_default();
             if let Some(seed) = project_seed {
                 tracing::warn!(
-                    "loadCodeAssist failed (HTTP {status}); using GOOGLE_CLOUD_PROJECT fallback"
+                    "loadCodeAssist failed (HTTP {status}); using oauth_project seed fallback"
                 );
                 return Ok(seed);
             }
@@ -1014,7 +1012,11 @@ impl GeminiModelProvider {
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("ManagedOAuth requires auth_service"))?;
                 let token = auth_service
-                    .get_valid_gemini_access_token(self.auth_profile_override.as_deref())
+                    .get_valid_gemini_access_token(
+                        self.auth_profile_override.as_deref(),
+                        self.oauth_client_id.as_deref().unwrap_or(""),
+                        self.oauth_client_secret.as_deref().unwrap_or(""),
+                    )
                     .await?
                     .ok_or_else(|| {
                         anyhow::anyhow!(
@@ -1083,6 +1085,8 @@ impl GeminiModelProvider {
                             let token = auth_service
                                 .get_valid_gemini_access_token(
                                     self.auth_profile_override.as_deref(),
+                                    self.oauth_client_id.as_deref().unwrap_or(""),
+                                    self.oauth_client_secret.as_deref().unwrap_or(""),
                                 )
                                 .await?
                                 .ok_or_else(|| anyhow::anyhow!("Gemini auth profile not found"))?;
@@ -1287,7 +1291,11 @@ impl ModelProvider for GeminiModelProvider {
                         .ok_or_else(|| anyhow::anyhow!("ManagedOAuth requires auth_service"))?;
 
                     let _token = auth_service
-                        .get_valid_gemini_access_token(self.auth_profile_override.as_deref())
+                        .get_valid_gemini_access_token(
+                            self.auth_profile_override.as_deref(),
+                            self.oauth_client_id.as_deref().unwrap_or(""),
+                            self.oauth_client_secret.as_deref().unwrap_or(""),
+                        )
                         .await?
                         .ok_or_else(|| {
                             anyhow::anyhow!(
@@ -1352,10 +1360,13 @@ mod tests {
         GeminiModelProvider {
             auth,
             oauth_project: Arc::new(tokio::sync::Mutex::new(None)),
+            oauth_project_seed: None,
             oauth_cred_paths: Vec::new(),
             oauth_index: Arc::new(tokio::sync::Mutex::new(0)),
             auth_service: None,
             auth_profile_override: None,
+            oauth_client_id: None,
+            oauth_client_secret: None,
         }
     }
 
@@ -2113,10 +2124,13 @@ mod tests {
         let model_provider = GeminiModelProvider {
             auth: Some(GeminiAuth::ManagedOAuth),
             oauth_project: Arc::new(tokio::sync::Mutex::new(None)),
+            oauth_project_seed: None,
             oauth_cred_paths: Vec::new(),
             oauth_index: Arc::new(tokio::sync::Mutex::new(0)),
             auth_service: None, // Missing auth_service
             auth_profile_override: None,
+            oauth_client_id: None,
+            oauth_client_secret: None,
         };
 
         let result = model_provider.warmup().await;

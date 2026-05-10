@@ -48,8 +48,10 @@ pub struct OpenAiTtsProvider {
 }
 
 impl OpenAiTtsProvider {
-    /// Create a new OpenAI TTS model_provider from config, resolving the API key
-    /// from config or `OPENAI_API_KEY` env var.
+    /// Create a new OpenAI TTS model_provider from config. Reads
+    /// `[providers.tts.openai.<alias>].api_key` (or via the schema-mirror
+    /// env grammar). Legacy `OPENAI_API_KEY` env-var fallback eradicated
+    /// in V0.8.0.
     pub fn new(config: &TtsProviderConfig) -> Result<Self> {
         let api_key = config
             .api_key
@@ -57,14 +59,9 @@ impl OpenAiTtsProvider {
             .map(str::trim)
             .filter(|k| !k.is_empty())
             .map(ToOwned::to_owned)
-            .or_else(|| {
-                std::env::var("OPENAI_API_KEY")
-                    .ok()
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty())
-            })
             .context(
-                "Missing OpenAI TTS API key: set [providers.tts.openai.<alias>].api_key or OPENAI_API_KEY",
+                "Missing OpenAI TTS API key: set `[providers.tts.openai.<alias>].api_key` (or via \
+                 `ZEROCLAW_providers__tts__openai__<alias>__api_key=...`).",
             )?;
 
         Ok(Self {
@@ -153,8 +150,9 @@ pub struct ElevenLabsTtsProvider {
 }
 
 impl ElevenLabsTtsProvider {
-    /// Create a new ElevenLabs TTS model_provider from config, resolving the API key
-    /// from config or `ELEVENLABS_API_KEY` env var.
+    /// Create a new ElevenLabs TTS model_provider from config. Reads
+    /// `[providers.tts.elevenlabs.<alias>].api_key`. Legacy
+    /// `ELEVENLABS_API_KEY` env-var fallback eradicated in V0.8.0.
     pub fn new(config: &TtsProviderConfig) -> Result<Self> {
         let api_key = config
             .api_key
@@ -162,14 +160,9 @@ impl ElevenLabsTtsProvider {
             .map(str::trim)
             .filter(|k| !k.is_empty())
             .map(ToOwned::to_owned)
-            .or_else(|| {
-                std::env::var("ELEVENLABS_API_KEY")
-                    .ok()
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty())
-            })
             .context(
-                "Missing ElevenLabs API key: set [providers.tts.elevenlabs.<alias>].api_key or ELEVENLABS_API_KEY",
+                "Missing ElevenLabs API key: set `[providers.tts.elevenlabs.<alias>].api_key` (or \
+                 via `ZEROCLAW_providers__tts__elevenlabs__<alias>__api_key=...`).",
             )?;
 
         Ok(Self {
@@ -265,7 +258,8 @@ pub struct GoogleTtsProvider {
 
 impl GoogleTtsProvider {
     /// Create a new Google Cloud TTS model_provider from config, resolving the API key
-    /// from config or `GOOGLE_TTS_API_KEY` env var.
+    /// from `[providers.tts.google.<alias>].api_key`. Legacy
+    /// `GOOGLE_TTS_API_KEY` env-var fallback eradicated in V0.8.0.
     pub fn new(config: &TtsProviderConfig) -> Result<Self> {
         let api_key = config
             .api_key
@@ -273,14 +267,9 @@ impl GoogleTtsProvider {
             .map(str::trim)
             .filter(|k| !k.is_empty())
             .map(ToOwned::to_owned)
-            .or_else(|| {
-                std::env::var("GOOGLE_TTS_API_KEY")
-                    .ok()
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty())
-            })
             .context(
-                "Missing Google TTS API key: set [providers.tts.google.<alias>].api_key or GOOGLE_TTS_API_KEY",
+                "Missing Google TTS API key: set `[providers.tts.google.<alias>].api_key` (or via \
+                 `ZEROCLAW_providers__tts__google__<alias>__api_key=...`).",
             )?;
 
         Ok(Self {

@@ -71,7 +71,7 @@ Aliases (the `<alias>` segments above — e.g. `default`, `prod_v2`, `mymatrixal
 
 ## Errors
 
-Unresolvable `ZEROCLAW_<lowercase_*>` names (typos, paths that don't match any prop in the schema) abort startup with a hard error naming the offending env var. Pre-V0.8.0 env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.) have no `ZEROCLAW_` prefix, so the override layer never sees them — they're silently ignored at runtime. Operators must migrate to the new grammar.
+Unresolvable `ZEROCLAW_<lowercase_*>` names (typos, paths that don't match any prop in the schema) abort startup with a hard error naming the offending env var. Pre-V0.8.0 env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.) have no `ZEROCLAW_` prefix, so the override layer never sees them — they're silently ignored at runtime. See the [Migration recipes](#migration-recipes-one-line-shell-expansions) for the one-line shell expansions that bridge ecosystem-default names into the new grammar.
 
 ## Visibility
 
@@ -105,13 +105,46 @@ A representative sample of legacy → new mappings:
 
 For every `<UPPER_FAMILY>_API_KEY` that previously worked (Bedrock, Mistral, Groq, DeepSeek, xAI, Together, Fireworks, Novita, Perplexity, Cohere, Moonshot, GLM, Z.AI, Qianfan, Doubao, Qwen/Dashscope, NVIDIA, Synthetic, OpenCode, Vercel, Cloudflare, OVH, Astrai, Avian, DeepMyst, LlamaCPP, SGLang, vLLM, Aihubmix, SiliconFlow, Osaurus, Telnyx, Azure): apply the same three rules to the typed-family alias path (`providers.models.<family>.<alias>.api_key`).
 
-Special cases:
+### Migration recipes (one-line shell expansions)
+
+The grammar is mechanical, so the migration is too. For each ecosystem-default name your shell already exports, add one line that points the schema-mirror name at the existing value:
+
+```sh
+# POSIX (bash, zsh, sh) — drop into ~/.bashrc / ~/.zshrc / .env / Dockerfile
+export ZEROCLAW_providers__models__anthropic__default__api_key="$ANTHROPIC_API_KEY"
+export ZEROCLAW_providers__models__openai__default__api_key="$OPENAI_API_KEY"
+export ZEROCLAW_providers__models__openrouter__default__api_key="$OPENROUTER_API_KEY"
+export ZEROCLAW_providers__models__groq__default__api_key="$GROQ_API_KEY"
+export ZEROCLAW_storage__qdrant__default__url="$QDRANT_URL"
+export ZEROCLAW_storage__qdrant__default__api_key="$QDRANT_API_KEY"
+export ZEROCLAW_gateway__request_timeout_secs="$ZEROCLAW_GATEWAY_TIMEOUT_SECS"
+```
+
+```powershell
+# PowerShell — drop into $PROFILE
+$env:ZEROCLAW_providers__models__anthropic__default__api_key = $env:ANTHROPIC_API_KEY
+$env:ZEROCLAW_providers__models__openai__default__api_key    = $env:OPENAI_API_KEY
+$env:ZEROCLAW_storage__qdrant__default__url                  = $env:QDRANT_URL
+```
+
+The pattern generalizes: every typed model family's default alias takes the same shape (`ZEROCLAW_providers__models__<family>__default__api_key`), and every other field is one mechanical translation away from its dotted TOML path. For non-default aliases (multiple Anthropic configs, named Qdrant slots, etc.), substitute the alias name in place of `default` — there is no shortcut here because the mapping is genuinely operator-defined.
+
+### Special cases
 
 - `ZEROCLAW_API_KEY` / `API_KEY` (generic credential fallbacks): no longer read; pick a typed-family alias path.
-- `MINIMAX_OAUTH_*` (auto-refresh flow): the in-process refresh flow was deleted. Obtain access tokens externally and inject via `ZEROCLAW_providers__models__minimax__<alias>__api_key=<access_token>`.
-- `QWEN_OAUTH_*` (env-var fallback): the Qwen OAuth file cache at `~/.qwen/oauth_creds.json` (populated by `qwen login`) survives; or set api_key directly via the schema-mirror grammar.
-- `GEMINI_OAUTH_CLIENT_ID/SECRET`: read from the cached credentials file populated by `gemini login`. Direct env-var injection was removed.
+- `MINIMAX_OAUTH_*` (auto-refresh flow): in-process refresh restored as a per-alias schema-mirror flow. Set `oauth_refresh_token` on `[providers.models.minimax.<alias>]` (or via `ZEROCLAW_providers__models__minimax__<alias>__oauth_refresh_token=...`); region selection is the existing typed `endpoint` enum (`cn` / `intl`); the runtime exchanges the refresh token for a short-lived access token at provider construction time. Operators preferring long-lived dashboard API keys leave `oauth_refresh_token` unset and set `api_key` directly. `MINIMAX_OAUTH_CLIENT_ID` override → `oauth_client_id`. `MINIMAX_OAUTH_REGION` → the typed `endpoint = "cn"` / `"intl"` enum.
+- `QWEN_OAUTH_*`: the upstream `qwen login` file cache at `~/.qwen/oauth_creds.json` is the default source; no operator config needed for that path. Operator-supplied refresh tokens land on `[providers.models.qwen.<alias>] oauth_refresh_token` (with optional `oauth_client_id` and `oauth_resource_url` overrides), reachable via `ZEROCLAW_providers__models__qwen__<alias>__oauth_refresh_token=...` etc.
+- `GEMINI_OAUTH_CLIENT_ID` / `GEMINI_OAUTH_CLIENT_SECRET`: per-alias schema fields on `[providers.models.gemini.<alias>]` — `oauth_client_id` and `oauth_client_secret`. Reachable via the schema-mirror grammar; the auth flow looks them up by profile name, which doubles as the alias key. Optional `oauth_project` pins a Code Assist GCP project ID.
 - `KILO_CLI_PATH` / `GEMINI_CLI_PATH`: replaced by the typed `binary_path` field on `[providers.models.kilocli.<alias>]` and `[providers.models.gemini_cli.<alias>]`. Inject via `ZEROCLAW_providers__models__{kilocli,gemini_cli}__<alias>__binary_path=/path/to/bin`.
 - `ZEROCLAW_LUCID_*` (memory backend tunables): defaults only; re-introduce as schema fields if operator demand surfaces.
 - `ZEROCLAW_CODEX_*` (URL / reasoning effort overrides): URL flows through the typed alias's `uri`; reasoning effort through `runtime.reasoning_effort`.
-- `ZEROCLAW_PROVIDER` / `PROVIDER` / `ZEROCLAW_MODEL` (V1/V2 dispatchers): gone since PR #6266; pick a typed-family alias.
+- `ZEROCLAW_PROVIDER` / `PROVIDER` / `ZEROCLAW_MODEL` (V1/V2 dispatchers): gone; pick a typed-family alias.
+
+### Channel + transcription + TTS
+
+- `GROQ_API_KEY` (transcription Whisper): set `[transcription].api_key` (or `ZEROCLAW_transcription__api_key=...`).
+- `OPENAI_API_KEY` (TTS only — model providers were already migrated): set `[providers.tts.openai.<alias>].api_key`.
+- `ELEVENLABS_API_KEY`: set `[providers.tts.elevenlabs.<alias>].api_key`.
+- `GOOGLE_TTS_API_KEY`: set `[providers.tts.google.<alias>].api_key`.
+- `NOTION_API_KEY`: set `[notion].api_key` (or `ZEROCLAW_notion__api_key=...`).
+- `WHATSAPP_WS_URL` (test/proxy WebSocket override): set `[whatsapp].ws_url` (or `ZEROCLAW_channels__whatsapp__ws_url=...`).

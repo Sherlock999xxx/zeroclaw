@@ -750,14 +750,6 @@ mod tests {
         );
     }
 
-    // V0.8.0: per-provider env-var fallbacks (`OPENAI_API_KEY`,
-    // `COHERE_API_KEY`, `OPENROUTER_API_KEY`) eradicated. The cross-provider
-    // leak this test guarded against (#3083) is now prevented by operators
-    // setting embedding-route credentials directly in the schema:
-    //   ZEROCLAW_memory_embedding_routes_<hint>_api_key=<value>
-    //
-    // The simplified `resolve_embedding_config` falls through caller-supplied
-    // `api_key` only when no embedding-route override is configured.
     #[test]
     fn resolve_embedding_config_uses_caller_api_key_when_no_route_override() {
         let cfg = MemoryConfig {
