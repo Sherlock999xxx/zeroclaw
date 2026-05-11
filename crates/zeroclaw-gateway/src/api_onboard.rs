@@ -386,7 +386,14 @@ pub async fn handle_sections(State(state): State<AppState>, headers: HeaderMap) 
 
 /// Top-level fields that exist on `Config` but are never user-editable
 /// from the dashboard (schema bookkeeping, resolved at runtime).
-const HIDDEN_TOP_LEVEL: &[&str] = &["schema-version", "onboard-state"];
+const HIDDEN_TOP_LEVEL: &[&str] = &[
+    "schema_version",
+    "onboard_state",
+    "config_path",
+    "workspace_dir",
+    "env_overridden_paths",
+    "pre_override_snapshots",
+];
 
 /// Humanize a section key for display (`google_workspace` → `Google workspace`).
 /// Keeps things simple and predictable; specific wording overrides go in
@@ -416,7 +423,6 @@ fn section_group(key: &str) -> &'static str {
         }
         // Agent loop, scheduling, and orchestration.
         "agent"
-        | "autonomy"
         | "cron"
         | "heartbeat"
         | "hooks"
