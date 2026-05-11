@@ -181,7 +181,7 @@ pub async fn handle_index(
     }
 
     let workspace_dir = {
-        let cfg = state.config.lock();
+        let cfg = state.config.read();
         cfg.workspace_dir.clone()
     };
 
@@ -231,7 +231,7 @@ pub async fn handle_get(
     };
 
     let workspace_dir = {
-        let cfg = state.config.lock();
+        let cfg = state.config.read();
         cfg.workspace_dir.clone()
     };
     let path = personality_path(&workspace_dir, q.agent.as_deref(), allowed);
@@ -298,7 +298,7 @@ pub async fn handle_put(
     }
 
     let workspace_dir = {
-        let cfg = state.config.lock();
+        let cfg = state.config.read();
         cfg.workspace_dir.clone()
     };
     let path = personality_path(&workspace_dir, q.agent.as_deref(), allowed);
@@ -375,7 +375,7 @@ pub async fn handle_templates(
     }
 
     let memory_default_enabled = {
-        let cfg = state.config.lock();
+        let cfg = state.config.read();
         cfg.memory.backend.as_str() != "none"
     };
 

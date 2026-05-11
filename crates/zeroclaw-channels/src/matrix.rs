@@ -1250,6 +1250,9 @@ mod inbound {
     #[derive(Clone)]
     pub(super) struct HandlerCtx {
         pub config: Arc<MatrixConfig>,
+        /// Resolves inbound external peers from canonical state at message-time.
+        /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+        pub peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
         pub transcription: Option<Arc<TranscriptionConfig>>,
         pub workspace_dir: Option<Arc<std::path::PathBuf>>,
         pub tx: mpsc::Sender<ChannelMessage>,
@@ -1374,7 +1377,8 @@ mod inbound {
             }
         }
 
-        if !allowlist::user_allowed(&ctx.config.allowed_users, sender) {
+        let allowed_peers = (ctx.peer_resolver)();
+        if !allowlist::user_allowed(&allowed_peers, sender) {
             debug!("matrix: drop message from non-allowed sender {sender}");
             return Ok(());
         }
@@ -2575,6 +2579,12 @@ mod outbound {
 /// Matrix channel.
 pub struct MatrixChannel {
     config: Arc<MatrixConfig>,
+    /// The alias key under `[channels.matrix.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     state_dir: PathBuf,
     workspace_dir: Option<Arc<PathBuf>>,
     transcription: Option<Arc<TranscriptionConfig>>,
@@ -2592,7 +2602,12 @@ pub struct MatrixChannel {
 impl MatrixChannel {
     /// Validate config and prepare the channel. The SDK Client is built lazily
     /// on first `listen()` or `send()` call.
-    pub fn new(config: MatrixConfig, state_dir: PathBuf) -> Result<Self> {
+    pub fn new(
+        config: MatrixConfig,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+        state_dir: PathBuf,
+    ) -> Result<Self> {
         if config.homeserver.trim().is_empty() {
             bail!("matrix: `homeserver` is required");
         }
@@ -2609,6 +2624,8 @@ impl MatrixChannel {
         }
         Ok(Self {
             config: Arc::new(config),
+            alias: alias.into(),
+            peer_resolver,
             state_dir,
             workspace_dir: None,
             transcription: None,
@@ -2622,6 +2639,12 @@ impl MatrixChannel {
             initial_sync_done: Arc::new(AtomicBool::new(false)),
             undecryptable_seen: Arc::new(TokioMutex::new(HashSet::new())),
         })
+    }
+
+    /// Return the alias under `[channels.matrix.<alias>]` that this
+    /// channel handle is bound to.
+    pub fn alias(&self) -> &str {
+        &self.alias
     }
 
     pub fn with_transcription(mut self, transcription: TranscriptionConfig) -> Self {
@@ -2750,6 +2773,7 @@ impl Channel for MatrixChannel {
             .to_owned();
         let ctx = inbound::HandlerCtx {
             config: self.config.clone(),
+            peer_resolver: self.peer_resolver.clone(),
             transcription: self.transcription.clone(),
             workspace_dir: self.workspace_dir.clone(),
             tx,
@@ -3578,7 +3602,6 @@ mod tests {
                 access_token: None,
                 user_id: user_id.map(String::from),
                 device_id: None,
-                allowed_users: vec![],
                 allowed_rooms: vec![],
                 interrupt_on_new_message: false,
                 stream_mode: Default::default(),

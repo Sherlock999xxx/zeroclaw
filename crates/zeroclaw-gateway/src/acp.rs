@@ -59,7 +59,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let (input_tx, input_rx) = mpsc::channel::<String>(256);
     let (output_tx, mut output_rx) = mpsc::channel::<String>(256);
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     let server = Arc::new(AcpServer::new_with_writer(
         config,
         AcpServerConfig::default(),

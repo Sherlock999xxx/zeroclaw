@@ -94,7 +94,6 @@ mod tests {
     fn reexported_channel_configs_are_constructible() {
         let telegram = TelegramConfig {
             bot_token: "token".into(),
-            allowed_users: vec!["alice".into()],
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
             interrupt_on_new_message: false,
@@ -110,7 +109,6 @@ mod tests {
             guild_ids: vec!["123".into()],
             channel_ids: vec![],
             archive: false,
-            allowed_users: vec![],
             listen_to_bots: false,
             interrupt_on_new_message: false,
             mention_only: false,
@@ -128,7 +126,6 @@ mod tests {
             app_secret: "app-secret".into(),
             encrypt_key: None,
             verification_token: None,
-            allowed_users: vec![],
             mention_only: false,
             use_feishu: false,
             receive_mode: crate::config::schema::LarkReceiveMode::Websocket,
@@ -141,7 +138,6 @@ mod tests {
             app_secret: "app-secret".into(),
             encrypt_key: None,
             verification_token: None,
-            allowed_users: vec![],
             mention_only: false,
             receive_mode: crate::config::schema::LarkReceiveMode::Websocket,
             port: None,
@@ -153,7 +149,6 @@ mod tests {
             base_url: "https://cloud.example.com".into(),
             app_token: "app-token".into(),
             webhook_secret: None,
-            allowed_users: vec!["*".into()],
             proxy_url: None,
             bot_name: None,
             excluded_tools: vec![],
@@ -161,7 +156,7 @@ mod tests {
             draft_update_interval_ms: 1000,
         };
 
-        assert_eq!(telegram.allowed_users.len(), 1);
+        assert_eq!(telegram.bot_token, "token");
         assert_eq!(discord.guild_ids, vec!["123".to_string()]);
         assert_eq!(lark.app_id, "app-id");
         assert_eq!(feishu.app_id, "app-id");

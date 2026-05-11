@@ -32,7 +32,12 @@ pub struct SignalChannel {
     group_ids: Vec<String>,
     /// When true, accept only DMs and reject all group traffic.
     dm_only: bool,
-    allowed_from: Vec<String>,
+    /// The alias key under `[channels.signal.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     ignore_attachments: bool,
     ignore_stories: bool,
     /// Per-channel proxy URL override.
@@ -89,7 +94,8 @@ impl SignalChannel {
         account: String,
         group_ids: Vec<String>,
         dm_only: bool,
-        allowed_from: Vec<String>,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
         ignore_attachments: bool,
         ignore_stories: bool,
     ) -> Self {
@@ -99,13 +105,20 @@ impl SignalChannel {
             account,
             group_ids,
             dm_only,
-            allowed_from,
+            alias: alias.into(),
+            peer_resolver,
             ignore_attachments,
             ignore_stories,
             proxy_url: None,
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
             approval_timeout_secs: 300,
         }
+    }
+
+    /// Return the alias under `[channels.signal.<alias>]` that this
+    /// channel handle is bound to.
+    pub fn alias(&self) -> &str {
+        &self.alias
     }
 
     /// Set a per-channel proxy URL that overrides the global proxy config.
@@ -139,10 +152,8 @@ impl SignalChannel {
     }
 
     fn is_sender_allowed(&self, sender: &str) -> bool {
-        if self.allowed_from.iter().any(|u| u == "*") {
-            return true;
-        }
-        self.allowed_from.iter().any(|u| u == sender)
+        let peers = (self.peer_resolver)();
+        crate::allowlist::is_user_allowed(&peers, sender, crate::allowlist::Match::Sensitive)
     }
 
     fn is_e164(recipient: &str) -> bool {
@@ -548,35 +559,6 @@ impl Channel for SignalChannel {
 mod tests {
     use super::*;
 
-    fn make_channel() -> SignalChannel {
-        SignalChannel::new(
-            "http://127.0.0.1:8686".to_string(),
-            "+1234567890".to_string(),
-            Vec::new(),
-            false,
-            vec!["+1111111111".to_string()],
-            false,
-            false,
-        )
-    }
-
-    fn make_channel_with_group(group_id: &str) -> SignalChannel {
-        let (group_ids, dm_only) = if group_id == "dm" {
-            (Vec::new(), true)
-        } else {
-            (vec![group_id.to_string()], false)
-        };
-        SignalChannel::new(
-            "http://127.0.0.1:8686".to_string(),
-            "+1234567890".to_string(),
-            group_ids,
-            dm_only,
-            vec!["*".to_string()],
-            true,
-            true,
-        )
-    }
-
     fn make_envelope(source_number: Option<&str>, message: Option<&str>) -> Envelope {
         Envelope {
             source: source_number.map(String::from),
@@ -594,71 +576,151 @@ mod tests {
 
     #[test]
     fn creates_with_correct_fields() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         assert_eq!(ch.http_url, "http://127.0.0.1:8686");
         assert_eq!(ch.account, "+1234567890");
         assert!(ch.group_ids.is_empty());
         assert!(!ch.dm_only);
-        assert_eq!(ch.allowed_from.len(), 1);
+        assert!(ch.is_sender_allowed("+1111111111"));
         assert!(!ch.ignore_attachments);
         assert!(!ch.ignore_stories);
     }
 
     #[test]
     fn strips_trailing_slash() {
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
         let ch = SignalChannel::new(
             "http://127.0.0.1:8686/".to_string(),
             "+1234567890".to_string(),
             Vec::new(),
-            false,
-            vec![],
-            false,
-            false,
+            dm_only,
+            "signal_test_alias",
+            Arc::new(Vec::new),
+            ignore_attachments,
+            ignore_stories,
         );
         assert_eq!(ch.http_url, "http://127.0.0.1:8686");
     }
 
     #[test]
     fn wildcard_allows_anyone() {
-        let ch = make_channel_with_group("dm");
+        let dm_only = true;
+        let ignore_attachments = true;
+        let ignore_stories = true;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         assert!(ch.is_sender_allowed("+9999999999"));
     }
 
     #[test]
     fn specific_sender_allowed() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         assert!(ch.is_sender_allowed("+1111111111"));
     }
 
     #[test]
     fn unknown_sender_denied() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         assert!(!ch.is_sender_allowed("+9999999999"));
     }
 
     #[test]
     fn empty_allowlist_denies_all() {
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
         let ch = SignalChannel::new(
             "http://127.0.0.1:8686".to_string(),
             "+1234567890".to_string(),
             Vec::new(),
-            false,
-            vec![],
-            false,
-            false,
+            dm_only,
+            "signal_test_alias",
+            Arc::new(Vec::new),
+            ignore_attachments,
+            ignore_stories,
         );
         assert!(!ch.is_sender_allowed("+1111111111"));
     }
 
     #[test]
     fn name_returns_signal() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         assert_eq!(ch.name(), "signal");
     }
 
     #[test]
     fn matches_group_no_group_id_accepts_all() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let dm = DataMessage {
             message: Some("hi".to_string()),
             timestamp: Some(1000),
@@ -680,7 +742,19 @@ mod tests {
 
     #[test]
     fn matches_group_filters_group() {
-        let ch = make_channel_with_group("group123");
+        let dm_only = false;
+        let ignore_attachments = true;
+        let ignore_stories = true;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            vec!["group123".to_string()],
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let matching = DataMessage {
             message: Some("hi".to_string()),
             timestamp: Some(1000),
@@ -704,7 +778,19 @@ mod tests {
 
     #[test]
     fn matches_group_dm_keyword() {
-        let ch = make_channel_with_group("dm");
+        let dm_only = true;
+        let ignore_attachments = true;
+        let ignore_stories = true;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let dm = DataMessage {
             message: Some("hi".to_string()),
             timestamp: Some(1000),
@@ -726,7 +812,19 @@ mod tests {
 
     #[test]
     fn reply_target_dm() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let dm = DataMessage {
             message: Some("hi".to_string()),
             timestamp: Some(1000),
@@ -738,7 +836,19 @@ mod tests {
 
     #[test]
     fn reply_target_group() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let group = DataMessage {
             message: Some("hi".to_string()),
             timestamp: Some(1000),
@@ -828,14 +938,18 @@ mod tests {
     #[test]
     fn process_envelope_uuid_sender_dm() {
         let uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
         let ch = SignalChannel::new(
             "http://127.0.0.1:8686".to_string(),
             "+1234567890".to_string(),
             Vec::new(),
-            false,
-            vec!["*".to_string()],
-            false,
-            false,
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            ignore_attachments,
+            ignore_stories,
         );
         let env = Envelope {
             source: Some(uuid.to_string()),
@@ -862,14 +976,18 @@ mod tests {
     #[test]
     fn process_envelope_uuid_sender_in_group() {
         let uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
         let ch = SignalChannel::new(
             "http://127.0.0.1:8686".to_string(),
             "+1234567890".to_string(),
             vec!["testgroup".to_string()],
-            false,
-            vec!["*".to_string()],
-            false,
-            false,
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            ignore_attachments,
+            ignore_stories,
         );
         let env = Envelope {
             source: Some(uuid.to_string()),
@@ -908,7 +1026,19 @@ mod tests {
 
     #[test]
     fn process_envelope_valid_dm() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let env = make_envelope(Some("+1111111111"), Some("Hello!"));
         let msg = ch.process_envelope(&env).unwrap();
         assert_eq!(msg.content, "Hello!");
@@ -918,28 +1048,76 @@ mod tests {
 
     #[test]
     fn process_envelope_denied_sender() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let env = make_envelope(Some("+9999999999"), Some("Hello!"));
         assert!(ch.process_envelope(&env).is_none());
     }
 
     #[test]
     fn process_envelope_empty_message() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let env = make_envelope(Some("+1111111111"), Some(""));
         assert!(ch.process_envelope(&env).is_none());
     }
 
     #[test]
     fn process_envelope_no_data_message() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let env = make_envelope(Some("+1111111111"), None);
         assert!(ch.process_envelope(&env).is_none());
     }
 
     #[test]
     fn process_envelope_skips_stories() {
-        let ch = make_channel_with_group("dm");
+        let dm_only = true;
+        let ignore_attachments = true;
+        let ignore_stories = true;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let mut env = make_envelope(Some("+1111111111"), Some("story text"));
         env.story_message = Some(serde_json::json!({}));
         assert!(ch.process_envelope(&env).is_none());
@@ -947,7 +1125,19 @@ mod tests {
 
     #[test]
     fn process_envelope_skips_attachment_only() {
-        let ch = make_channel_with_group("dm");
+        let dm_only = true;
+        let ignore_attachments = true;
+        let ignore_stories = true;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let env = Envelope {
             source: Some("+1111111111".to_string()),
             source_number: Some("+1111111111".to_string()),
@@ -1018,14 +1208,38 @@ mod tests {
 
     #[test]
     fn pending_approvals_map_is_initially_empty() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let map = ch.pending_approvals.try_lock().unwrap();
         assert!(map.is_empty());
     }
 
     #[test]
     fn approval_timeout_defaults_to_300_and_is_overridable() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         assert_eq!(ch.approval_timeout_secs, 300);
         let ch = ch.with_approval_timeout_secs(60);
         assert_eq!(ch.approval_timeout_secs, 60);
@@ -1033,7 +1247,19 @@ mod tests {
 
     #[tokio::test]
     async fn pending_approval_oneshot_delivers_response() {
-        let ch = make_channel();
+        let dm_only = false;
+        let ignore_attachments = false;
+        let ignore_stories = false;
+        let ch = SignalChannel::new(
+            "http://127.0.0.1:8686".to_string(),
+            "+1234567890".to_string(),
+            Vec::new(),
+            dm_only,
+            "signal_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
+            ignore_attachments,
+            ignore_stories,
+        );
         let (tx, rx) = tokio::sync::oneshot::channel();
         ch.pending_approvals
             .lock()

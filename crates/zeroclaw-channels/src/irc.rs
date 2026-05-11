@@ -26,7 +26,12 @@ pub struct IrcChannel {
     nickname: String,
     username: String,
     channels: Vec<String>,
-    allowed_users: Vec<String>,
+    /// The alias key under `[channels.irc.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     server_password: Option<String>,
     nickserv_password: Option<String>,
     sasl_password: Option<String>,
@@ -229,7 +234,12 @@ pub struct IrcChannelConfig {
     pub nickname: String,
     pub username: Option<String>,
     pub channels: Vec<String>,
-    pub allowed_users: Vec<String>,
+    /// The alias key under `[channels.irc.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    pub alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    pub peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     pub server_password: Option<String>,
     pub nickserv_password: Option<String>,
     pub sasl_password: Option<String>,
@@ -246,7 +256,8 @@ impl IrcChannel {
             nickname: cfg.nickname,
             username,
             channels: cfg.channels,
-            allowed_users: cfg.allowed_users,
+            alias: cfg.alias,
+            peer_resolver: cfg.peer_resolver,
             server_password: cfg.server_password,
             nickserv_password: cfg.nickserv_password,
             sasl_password: cfg.sasl_password,
@@ -256,12 +267,15 @@ impl IrcChannel {
         }
     }
 
+    /// Return the alias under `[channels.irc.<alias>]` that this
+    /// channel handle is bound to.
+    pub fn alias(&self) -> &str {
+        &self.alias
+    }
+
     fn is_user_allowed(&self, nick: &str) -> bool {
-        crate::allowlist::is_user_allowed(
-            &self.allowed_users,
-            nick,
-            crate::allowlist::Match::CaseInsensitive,
-        )
+        let peers = (self.peer_resolver)();
+        crate::allowlist::is_user_allowed(&peers, nick, crate::allowlist::Match::CaseInsensitive)
     }
 
     fn is_mentioned(my_nick: &str, text: &str) -> bool {
@@ -824,26 +838,43 @@ mod tests {
 
     #[test]
     fn wildcard_allows_anyone() {
-        let ch = make_channel();
-        // Default make_channel has wildcard
+        let verify_tls = true;
+        let mention_only = false;
+        let ch = IrcChannel::new(IrcChannelConfig {
+            server: "irc.example.com".into(),
+            port: 6697,
+            nickname: "zcbot".into(),
+            username: None,
+            channels: vec!["#zeroclaw".into()],
+            alias: "irc_test_alias".into(),
+            peer_resolver: Arc::new(|| vec!["*".into()]),
+            server_password: None,
+            nickserv_password: None,
+            sasl_password: None,
+            verify_tls,
+            mention_only,
+        });
         assert!(ch.is_user_allowed("anyone"));
         assert!(ch.is_user_allowed("stranger"));
     }
 
     #[test]
     fn specific_user_allowed() {
+        let verify_tls = true;
+        let mention_only = false;
         let ch = IrcChannel::new(IrcChannelConfig {
             server: "irc.test".into(),
             port: 6697,
             nickname: "bot".into(),
             username: None,
             channels: vec![],
-            allowed_users: vec!["alice".into(), "bob".into()],
+            alias: "irc_test_alias".into(),
+            peer_resolver: Arc::new(|| vec!["alice".into(), "bob".into()]),
             server_password: None,
             nickserv_password: None,
             sasl_password: None,
-            verify_tls: true,
-            mention_only: false,
+            verify_tls,
+            mention_only,
         });
         assert!(ch.is_user_allowed("alice"));
         assert!(ch.is_user_allowed("bob"));
@@ -852,18 +883,21 @@ mod tests {
 
     #[test]
     fn allowlist_case_insensitive() {
+        let verify_tls = true;
+        let mention_only = false;
         let ch = IrcChannel::new(IrcChannelConfig {
             server: "irc.test".into(),
             port: 6697,
             nickname: "bot".into(),
             username: None,
             channels: vec![],
-            allowed_users: vec!["Alice".into()],
+            alias: "irc_test_alias".into(),
+            peer_resolver: Arc::new(|| vec!["Alice".into()]),
             server_password: None,
             nickserv_password: None,
             sasl_password: None,
-            verify_tls: true,
-            mention_only: false,
+            verify_tls,
+            mention_only,
         });
         assert!(ch.is_user_allowed("alice"));
         assert!(ch.is_user_allowed("ALICE"));
@@ -872,18 +906,21 @@ mod tests {
 
     #[test]
     fn empty_allowlist_denies_all() {
+        let verify_tls = true;
+        let mention_only = false;
         let ch = IrcChannel::new(IrcChannelConfig {
             server: "irc.test".into(),
             port: 6697,
             nickname: "bot".into(),
             username: None,
             channels: vec![],
-            allowed_users: vec![],
+            alias: "irc_test_alias".into(),
+            peer_resolver: Arc::new(Vec::new),
             server_password: None,
             nickserv_password: None,
             sasl_password: None,
-            verify_tls: true,
-            mention_only: false,
+            verify_tls,
+            mention_only,
         });
         assert!(!ch.is_user_allowed("anyone"));
     }
@@ -927,36 +964,42 @@ mod tests {
 
     #[test]
     fn new_defaults_username_to_nickname() {
+        let verify_tls = true;
+        let mention_only = false;
         let ch = IrcChannel::new(IrcChannelConfig {
             server: "irc.test".into(),
             port: 6697,
             nickname: "mybot".into(),
             username: None,
             channels: vec![],
-            allowed_users: vec![],
+            alias: "irc_test_alias".into(),
+            peer_resolver: Arc::new(Vec::new),
             server_password: None,
             nickserv_password: None,
             sasl_password: None,
-            verify_tls: true,
-            mention_only: false,
+            verify_tls,
+            mention_only,
         });
         assert_eq!(ch.username, "mybot");
     }
 
     #[test]
     fn new_uses_explicit_username() {
+        let verify_tls = true;
+        let mention_only = false;
         let ch = IrcChannel::new(IrcChannelConfig {
             server: "irc.test".into(),
             port: 6697,
             nickname: "mybot".into(),
             username: Some("customuser".into()),
             channels: vec![],
-            allowed_users: vec![],
+            alias: "irc_test_alias".into(),
+            peer_resolver: Arc::new(Vec::new),
             server_password: None,
             nickserv_password: None,
             sasl_password: None,
-            verify_tls: true,
-            mention_only: false,
+            verify_tls,
+            mention_only,
         });
         assert_eq!(ch.username, "customuser");
         assert_eq!(ch.nickname, "mybot");
@@ -964,31 +1007,50 @@ mod tests {
 
     #[test]
     fn name_returns_irc() {
-        let ch = make_channel();
+        let verify_tls = true;
+        let mention_only = false;
+        let ch = IrcChannel::new(IrcChannelConfig {
+            server: "irc.example.com".into(),
+            port: 6697,
+            nickname: "zcbot".into(),
+            username: None,
+            channels: vec!["#zeroclaw".into()],
+            alias: "irc_test_alias".into(),
+            peer_resolver: Arc::new(|| vec!["*".into()]),
+            server_password: None,
+            nickserv_password: None,
+            sasl_password: None,
+            verify_tls,
+            mention_only,
+        });
         assert_eq!(ch.name(), "irc");
     }
 
     #[test]
     fn new_stores_all_fields() {
+        let verify_tls = false;
+        let mention_only = false;
         let ch = IrcChannel::new(IrcChannelConfig {
             server: "irc.example.com".into(),
             port: 6697,
             nickname: "zcbot".into(),
             username: Some("zeroclaw".into()),
             channels: vec!["#test".into()],
-            allowed_users: vec!["alice".into()],
+            alias: "irc_test_alias".into(),
+            peer_resolver: Arc::new(|| vec!["alice".into()]),
             server_password: Some("serverpass".into()),
             nickserv_password: Some("nspass".into()),
             sasl_password: Some("saslpass".into()),
-            verify_tls: false,
-            mention_only: false,
+            verify_tls,
+            mention_only,
         });
         assert_eq!(ch.server, "irc.example.com");
         assert_eq!(ch.port, 6697);
         assert_eq!(ch.nickname, "zcbot");
         assert_eq!(ch.username, "zeroclaw");
         assert_eq!(ch.channels, vec!["#test"]);
-        assert_eq!(ch.allowed_users, vec!["alice"]);
+        assert!(ch.is_user_allowed("alice"));
+        assert!(!ch.is_user_allowed("eve"));
         assert_eq!(ch.server_password.as_deref(), Some("serverpass"));
         assert_eq!(ch.nickserv_password.as_deref(), Some("nspass"));
         assert_eq!(ch.sasl_password.as_deref(), Some("saslpass"));
@@ -1008,7 +1070,6 @@ mod tests {
             nickname: "zcbot".into(),
             username: Some("zeroclaw".into()),
             channels: vec!["#test".into(), "#dev".into()],
-            allowed_users: vec!["alice".into()],
             server_password: None,
             nickserv_password: Some("secret".into()),
             sasl_password: None,
@@ -1024,7 +1085,6 @@ mod tests {
         assert_eq!(parsed.nickname, "zcbot");
         assert_eq!(parsed.username.as_deref(), Some("zeroclaw"));
         assert_eq!(parsed.channels, vec!["#test", "#dev"]);
-        assert_eq!(parsed.allowed_users, vec!["alice"]);
         assert!(parsed.server_password.is_none());
         assert_eq!(parsed.nickserv_password.as_deref(), Some("secret"));
         assert!(parsed.sasl_password.is_none());
@@ -1046,7 +1106,6 @@ nickname = "bot"
         assert_eq!(parsed.nickname, "bot");
         assert!(parsed.username.is_none());
         assert!(parsed.channels.is_empty());
-        assert!(parsed.allowed_users.is_empty());
         assert!(parsed.server_password.is_none());
         assert!(parsed.nickserv_password.is_none());
         assert!(parsed.sasl_password.is_none());
@@ -1061,23 +1120,5 @@ nickname = "bot"
         let json = r#"{"server":"irc.test","nickname":"bot"}"#;
         let parsed: IrcConfig = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.port, 6697);
-    }
-
-    // ── Helpers ─────────────────────────────────────────────
-
-    fn make_channel() -> IrcChannel {
-        IrcChannel::new(IrcChannelConfig {
-            server: "irc.example.com".into(),
-            port: 6697,
-            nickname: "zcbot".into(),
-            username: None,
-            channels: vec!["#zeroclaw".into()],
-            allowed_users: vec!["*".into()],
-            server_password: None,
-            nickserv_password: None,
-            sasl_password: None,
-            verify_tls: true,
-            mention_only: false,
-        })
     }
 }

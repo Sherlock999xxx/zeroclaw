@@ -14,7 +14,12 @@ const DINGTALK_BOT_CALLBACK_TOPIC: &str = "/v1.0/im/bot/messages/get";
 pub struct DingTalkChannel {
     client_id: String,
     client_secret: String,
-    allowed_users: Vec<String>,
+    /// The alias key under `[channels.dingtalk.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     /// Per-chat session webhooks for sending replies (chatID -> webhook URL).
     /// DingTalk provides a unique webhook URL with each incoming message.
     session_webhooks: Arc<RwLock<HashMap<String, String>>>,
@@ -30,14 +35,26 @@ struct GatewayResponse {
 }
 
 impl DingTalkChannel {
-    pub fn new(client_id: String, client_secret: String, allowed_users: Vec<String>) -> Self {
+    pub fn new(
+        client_id: String,
+        client_secret: String,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    ) -> Self {
         Self {
             client_id,
             client_secret,
-            allowed_users,
+            alias: alias.into(),
+            peer_resolver,
             session_webhooks: Arc::new(RwLock::new(HashMap::new())),
             proxy_url: None,
         }
+    }
+
+    /// Return the alias under `[channels.dingtalk.<alias>]` that this
+    /// channel handle is bound to.
+    pub fn alias(&self) -> &str {
+        &self.alias
     }
 
     /// Set a per-channel proxy URL that overrides the global proxy config.
@@ -54,11 +71,8 @@ impl DingTalkChannel {
     }
 
     fn is_user_allowed(&self, user_id: &str) -> bool {
-        crate::allowlist::is_user_allowed(
-            &self.allowed_users,
-            user_id,
-            crate::allowlist::Match::Sensitive,
-        )
+        let peers = (self.peer_resolver)();
+        crate::allowlist::is_user_allowed(&peers, user_id, crate::allowlist::Match::Sensitive)
     }
 
     fn parse_stream_data(frame: &serde_json::Value) -> Option<serde_json::Value> {
@@ -323,50 +337,105 @@ mod tests {
 
     #[test]
     fn test_name() {
-        let ch = DingTalkChannel::new("id".into(), "secret".into(), vec![]);
+        let ch = DingTalkChannel::new(
+            "id".into(),
+            "secret".into(),
+            "dingtalk_test_alias",
+            Arc::new(Vec::new),
+        );
         assert_eq!(ch.name(), "dingtalk");
     }
 
     #[test]
     fn test_user_allowed_wildcard() {
-        let ch = DingTalkChannel::new("id".into(), "secret".into(), vec!["*".into()]);
+        let ch = DingTalkChannel::new(
+            "id".into(),
+            "secret".into(),
+            "dingtalk_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         assert!(ch.is_user_allowed("anyone"));
     }
 
     #[test]
     fn test_user_allowed_specific() {
-        let ch = DingTalkChannel::new("id".into(), "secret".into(), vec!["user123".into()]);
+        let ch = DingTalkChannel::new(
+            "id".into(),
+            "secret".into(),
+            "dingtalk_test_alias",
+            Arc::new(|| vec!["user123".into()]),
+        );
         assert!(ch.is_user_allowed("user123"));
         assert!(!ch.is_user_allowed("other"));
     }
 
     #[test]
     fn test_user_denied_empty() {
-        let ch = DingTalkChannel::new("id".into(), "secret".into(), vec![]);
+        let ch = DingTalkChannel::new(
+            "id".into(),
+            "secret".into(),
+            "dingtalk_test_alias",
+            Arc::new(Vec::new),
+        );
         assert!(!ch.is_user_allowed("anyone"));
     }
 
     #[test]
-    fn test_config_serde() {
-        let toml_str = r#"
+    fn v2_allowed_users_fold_into_peer_groups() {
+        // V2 `[channels.dingtalk].allowed_users` migrates into a synthesized
+        // `[peer_groups.dingtalk_default]` block in V3. The wildcard sentinel
+        // is filtered out during synthesis so only concrete usernames survive
+        // as external peers.
+        let v2_toml = r#"
+schema_version = 2
+
+[channels.dingtalk]
+enabled = true
 client_id = "app_id_123"
 client_secret = "secret_456"
 allowed_users = ["user1", "*"]
 "#;
-        let config: zeroclaw_config::schema::DingTalkConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.client_id, "app_id_123");
-        assert_eq!(config.client_secret, "secret_456");
-        assert_eq!(config.allowed_users, vec!["user1", "*"]);
+        let cfg = zeroclaw_config::migration::migrate_to_current(v2_toml)
+            .expect("V2 dingtalk config migrates to V3");
+        let dingtalk = cfg
+            .channels
+            .dingtalk
+            .get("default")
+            .expect("V2 dingtalk folds under alias `default`");
+        assert_eq!(dingtalk.client_id, "app_id_123");
+        assert_eq!(dingtalk.client_secret, "secret_456");
+
+        let group = cfg
+            .peer_groups
+            .get("dingtalk_default")
+            .expect("dingtalk allow-list synthesizes [peer_groups.dingtalk_default]");
+        assert_eq!(group.channel.as_str(), "dingtalk.default");
+        let peers: Vec<&str> = group
+            .external_peers
+            .iter()
+            .map(|p| p.username.as_str())
+            .collect();
+        assert_eq!(peers, vec!["user1"]);
     }
 
     #[test]
-    fn test_config_serde_defaults() {
-        let toml_str = r#"
+    fn v2_no_allowed_users_synthesizes_no_peer_group() {
+        // V2 dingtalk without `allowed_users` must not synthesize a peer group;
+        // V3 leaves `peer_groups` empty rather than emitting an empty block.
+        let v2_toml = r#"
+schema_version = 2
+
+[channels.dingtalk]
+enabled = true
 client_id = "id"
 client_secret = "secret"
 "#;
-        let config: zeroclaw_config::schema::DingTalkConfig = toml::from_str(toml_str).unwrap();
-        assert!(config.allowed_users.is_empty());
+        let cfg = zeroclaw_config::migration::migrate_to_current(v2_toml)
+            .expect("V2 dingtalk config without allowed_users migrates");
+        assert!(
+            !cfg.peer_groups.contains_key("dingtalk_default"),
+            "no peer group synthesized when allowed_users is absent"
+        );
     }
 
     #[test]

@@ -310,7 +310,7 @@ async fn persist_and_swap(
         ));
     }
 
-    *state.config.lock() = new_config;
+    *state.config.write() = new_config;
     Ok(())
 }
 
@@ -420,7 +420,7 @@ pub async fn handle_prop_get(
         return e.into_response();
     }
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     let info = match lookup_prop_field(&config, &q.path) {
         Some(info) => info,
         None => return error_response(ConfigApiError::path_not_found(&q.path)),
@@ -467,7 +467,7 @@ pub async fn handle_prop_put(
         return e.into_response();
     }
 
-    let mut new_config = state.config.lock().clone();
+    let mut new_config = state.config.read().clone();
     let info = match lookup_prop_field(&new_config, &body.path) {
         Some(info) => info,
         None => return error_response(ConfigApiError::path_not_found(&body.path)),
@@ -537,7 +537,7 @@ pub async fn handle_prop_delete(
         return e.into_response();
     }
 
-    let mut new_config = state.config.lock().clone();
+    let mut new_config = state.config.read().clone();
     let info = match lookup_prop_field(&new_config, &q.path) {
         Some(info) => info,
         None => return error_response(ConfigApiError::path_not_found(&q.path)),
@@ -586,7 +586,7 @@ pub async fn handle_list(
         return e.into_response();
     }
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     let prefix = q.prefix.as_deref();
 
     // Drop fields that don't apply to the current shape of the config —
@@ -644,7 +644,7 @@ pub async fn handle_drift(State(state): State<AppState>, headers: HeaderMap) -> 
     if let Err(e) = require_auth(&state, &headers) {
         return e.into_response();
     }
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     let drifted = compute_drift(&config).await;
     axum::Json(DriftResponse { drifted }).into_response()
 }
@@ -728,7 +728,7 @@ pub async fn handle_get_map_keys(
     if let Err(e) = require_auth(&state, &headers) {
         return e.into_response();
     }
-    let cfg = state.config.lock().clone();
+    let cfg = state.config.read().clone();
     match cfg.get_map_keys(&q.path) {
         Some(keys) => {
             axum::Json(serde_json::json!({ "path": q.path, "keys": keys })).into_response()
@@ -753,7 +753,7 @@ pub async fn handle_delete_map_key(
     if let Err(e) = require_auth(&state, &headers) {
         return e.into_response();
     }
-    let mut working = state.config.lock().clone();
+    let mut working = state.config.read().clone();
     let removed = match working.delete_map_key(&q.path, &q.key) {
         Ok(b) => b,
         Err(msg) => {
@@ -792,7 +792,7 @@ pub async fn handle_map_key(
         return e.into_response();
     }
 
-    let mut working = state.config.lock().clone();
+    let mut working = state.config.read().clone();
     let path = q.path.clone();
     let key = q.key.clone();
 
@@ -843,7 +843,7 @@ pub async fn handle_rename_map_key(
         return e.into_response();
     }
 
-    let mut working = state.config.lock().clone();
+    let mut working = state.config.read().clone();
 
     let renamed = match working.rename_map_key(&body.path, &body.from, &body.to) {
         Ok(b) => b,
@@ -888,7 +888,7 @@ pub async fn handle_patch(
         return e.into_response();
     }
 
-    let working = state.config.lock().clone();
+    let working = state.config.read().clone();
 
     // Drift guard: if the on-disk file diverges from in-memory state on any
     // path the PATCH would touch, refuse with 409 ConfigChangedExternally
@@ -1151,7 +1151,7 @@ pub async fn handle_init(
         return e.into_response();
     }
 
-    let mut working = state.config.lock().clone();
+    let mut working = state.config.read().clone();
     let initialized: Vec<String> = working
         .init_defaults(q.section.as_deref())
         .into_iter()
@@ -1193,7 +1193,7 @@ pub async fn handle_migrate(State(state): State<AppState>, headers: HeaderMap) -
         return e.into_response();
     }
 
-    let config_path = state.config.lock().config_path.clone();
+    let config_path = state.config.read().config_path.clone();
 
     let raw = match tokio::fs::read_to_string(&config_path).await {
         Ok(s) => s,
@@ -1312,7 +1312,7 @@ pub async fn handle_migrate(State(state): State<AppState>, headers: HeaderMap) -
                     ));
                 }
             };
-            *state.config.lock() = new_cfg;
+            *state.config.write() = new_cfg;
 
             axum::Json(MigrateResponse {
                 migrated: true,
@@ -1388,7 +1388,7 @@ pub async fn handle_options_prop(
 
     // Resolve the path against the in-memory config; 404 if it doesn't
     // exist. (No auth required for shape discovery — same as OPTIONS /api/config.)
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     let info = match lookup_prop_field(&config, &q.path) {
         Some(info) => info,
         None => return error_response(ConfigApiError::path_not_found(&q.path)),

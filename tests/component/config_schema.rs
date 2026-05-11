@@ -562,7 +562,6 @@ allowed_numbers = ["*"]
         wa.session_path.as_deref(),
         Some("~/.zeroclaw/state/whatsapp-web/session.db")
     );
-    assert_eq!(wa.allowed_numbers, vec!["*".to_string()]);
 }
 
 #[test]

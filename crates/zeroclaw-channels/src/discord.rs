@@ -27,7 +27,12 @@ pub struct DiscordChannel {
     /// archived to a sidecar SQLite memory backend (`discord.db`). The
     /// `discord_search` tool reads from this when registered.
     archive_memory: Option<std::sync::Arc<dyn zeroclaw_memory::Memory>>,
-    allowed_users: Vec<String>,
+    /// The alias key under `[channels.discord.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     listen_to_bots: bool,
     mention_only: bool,
     typing_handles: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
@@ -63,7 +68,8 @@ impl DiscordChannel {
     pub fn new(
         bot_token: String,
         guild_ids: Vec<String>,
-        allowed_users: Vec<String>,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
         listen_to_bots: bool,
         mention_only: bool,
     ) -> Self {
@@ -72,7 +78,8 @@ impl DiscordChannel {
             guild_ids,
             channel_ids: vec![],
             archive_memory: None,
-            allowed_users,
+            alias: alias.into(),
+            peer_resolver,
             listen_to_bots,
             mention_only,
             typing_handles: Mutex::new(HashMap::new()),
@@ -171,11 +178,8 @@ impl DiscordChannel {
     /// Empty list means deny everyone until explicitly configured.
     /// `"*"` means allow everyone.
     fn is_user_allowed(&self, user_id: &str) -> bool {
-        crate::allowlist::is_user_allowed(
-            &self.allowed_users,
-            user_id,
-            crate::allowlist::Match::Sensitive,
-        )
+        let peers = (self.peer_resolver)();
+        crate::allowlist::is_user_allowed(&peers, user_id, crate::allowlist::Match::Sensitive)
     }
 
     fn bot_user_id_from_token(token: &str) -> Option<String> {
@@ -1367,7 +1371,8 @@ impl Channel for DiscordChannel {
                         let reaction_channel = DiscordChannel::new(
                             self.bot_token.clone(),
                             self.guild_ids.clone(),
-                            self.allowed_users.clone(),
+                            self.alias.clone(),
+                            Arc::clone(&self.peer_resolver),
                             self.listen_to_bots,
                             self.mention_only,
                         );
@@ -1875,7 +1880,16 @@ mod tests {
 
     #[test]
     fn discord_channel_name() {
-        let ch = DiscordChannel::new("fake".into(), vec![], vec![], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        );
         assert_eq!(ch.name(), "discord");
     }
 
@@ -1896,26 +1910,47 @@ mod tests {
 
     #[test]
     fn empty_allowlist_denies_everyone() {
-        let ch = DiscordChannel::new("fake".into(), vec![], vec![], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        );
         assert!(!ch.is_user_allowed("12345"));
         assert!(!ch.is_user_allowed("anyone"));
     }
 
     #[test]
     fn wildcard_allows_everyone() {
-        let ch = DiscordChannel::new("fake".into(), vec![], vec!["*".into()], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            listen_to_bots,
+            mention_only,
+        );
         assert!(ch.is_user_allowed("12345"));
         assert!(ch.is_user_allowed("anyone"));
     }
 
     #[test]
     fn specific_allowlist_filters() {
+        let listen_to_bots = false;
+        let mention_only = false;
         let ch = DiscordChannel::new(
             "fake".into(),
             vec![],
-            vec!["111".into(), "222".into()],
-            false,
-            false,
+            "discord_test_alias",
+            Arc::new(|| vec!["111".into(), "222".into()]),
+            listen_to_bots,
+            mention_only,
         );
         assert!(ch.is_user_allowed("111"));
         assert!(ch.is_user_allowed("222"));
@@ -1925,7 +1960,16 @@ mod tests {
 
     #[test]
     fn allowlist_is_exact_match_not_substring() {
-        let ch = DiscordChannel::new("fake".into(), vec![], vec!["111".into()], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(|| vec!["111".into()]),
+            listen_to_bots,
+            mention_only,
+        );
         assert!(!ch.is_user_allowed("1111"));
         assert!(!ch.is_user_allowed("11"));
         assert!(!ch.is_user_allowed("0111"));
@@ -1933,18 +1977,30 @@ mod tests {
 
     #[test]
     fn allowlist_empty_string_user_id() {
-        let ch = DiscordChannel::new("fake".into(), vec![], vec!["111".into()], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(|| vec!["111".into()]),
+            listen_to_bots,
+            mention_only,
+        );
         assert!(!ch.is_user_allowed(""));
     }
 
     #[test]
     fn allowlist_with_wildcard_and_specific() {
+        let listen_to_bots = false;
+        let mention_only = false;
         let ch = DiscordChannel::new(
             "fake".into(),
             vec![],
-            vec!["111".into(), "*".into()],
-            false,
-            false,
+            "discord_test_alias",
+            Arc::new(|| vec!["111".into(), "*".into()]),
+            listen_to_bots,
+            mention_only,
         );
         assert!(ch.is_user_allowed("111"));
         assert!(ch.is_user_allowed("anyone_else"));
@@ -1952,7 +2008,16 @@ mod tests {
 
     #[test]
     fn allowlist_case_sensitive() {
-        let ch = DiscordChannel::new("fake".into(), vec![], vec!["ABC".into()], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(|| vec!["ABC".into()]),
+            listen_to_bots,
+            mention_only,
+        );
         assert!(ch.is_user_allowed("ABC"));
         assert!(!ch.is_user_allowed("abc"));
         assert!(!ch.is_user_allowed("Abc"));
@@ -2191,14 +2256,32 @@ mod tests {
 
     #[test]
     fn typing_handles_start_empty() {
-        let ch = DiscordChannel::new("fake".into(), vec![], vec![], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        );
         let guard = ch.typing_handles.lock();
         assert!(guard.is_empty());
     }
 
     #[tokio::test]
     async fn start_typing_sets_handle() {
-        let ch = DiscordChannel::new("fake".into(), vec![], vec![], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        );
         let _ = ch.start_typing("123456").await;
         let guard = ch.typing_handles.lock();
         assert!(guard.contains_key("123456"));
@@ -2206,7 +2289,16 @@ mod tests {
 
     #[tokio::test]
     async fn stop_typing_clears_handle() {
-        let ch = DiscordChannel::new("fake".into(), vec![], vec![], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        );
         let _ = ch.start_typing("123456").await;
         let _ = ch.stop_typing("123456").await;
         let guard = ch.typing_handles.lock();
@@ -2215,14 +2307,32 @@ mod tests {
 
     #[tokio::test]
     async fn stop_typing_is_idempotent() {
-        let ch = DiscordChannel::new("fake".into(), vec![], vec![], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        );
         assert!(ch.stop_typing("123456").await.is_ok());
         assert!(ch.stop_typing("123456").await.is_ok());
     }
 
     #[tokio::test]
     async fn concurrent_typing_handles_are_independent() {
-        let ch = DiscordChannel::new("fake".into(), vec![], vec![], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        );
         let _ = ch.start_typing("111").await;
         let _ = ch.start_typing("222").await;
         {
@@ -2552,22 +2662,39 @@ mod tests {
     fn supports_draft_updates_respects_stream_mode() {
         use zeroclaw_config::schema::StreamMode;
 
-        let off = DiscordChannel::new("t".into(), vec![], vec![], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let off = DiscordChannel::new(
+            "t".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        );
         assert!(!off.supports_draft_updates());
 
-        let partial = DiscordChannel::new("t".into(), vec![], vec![], false, false).with_streaming(
-            StreamMode::Partial,
-            750,
-            800,
-        );
+        let partial = DiscordChannel::new(
+            "t".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        )
+        .with_streaming(StreamMode::Partial, 750, 800);
         assert!(partial.supports_draft_updates());
         assert_eq!(partial.draft_update_interval_ms, 750);
 
-        let multi = DiscordChannel::new("t".into(), vec![], vec![], false, false).with_streaming(
-            StreamMode::MultiMessage,
-            1000,
-            600,
-        );
+        let multi = DiscordChannel::new(
+            "t".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        )
+        .with_streaming(StreamMode::MultiMessage, 1000, 600);
         assert!(multi.supports_draft_updates());
         assert_eq!(multi.multi_message_delay_ms, 600);
     }
@@ -2577,15 +2704,28 @@ mod tests {
         use zeroclaw_api::channel::SendMessage;
         use zeroclaw_config::schema::StreamMode;
 
-        let off = DiscordChannel::new("t".into(), vec![], vec![], false, false);
+        let listen_to_bots = false;
+        let mention_only = false;
+        let off = DiscordChannel::new(
+            "t".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        );
         let msg = SendMessage::new("hello", "123");
         assert!(off.send_draft(&msg).await.unwrap().is_none());
 
-        let multi = DiscordChannel::new("t".into(), vec![], vec![], false, false).with_streaming(
-            StreamMode::MultiMessage,
-            1000,
-            800,
-        );
+        let multi = DiscordChannel::new(
+            "t".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        )
+        .with_streaming(StreamMode::MultiMessage, 1000, 800);
         // MultiMessage returns a synthetic ID so the draft_updater task runs.
         assert_eq!(
             multi.send_draft(&msg).await.unwrap().as_deref(),
@@ -2597,11 +2737,17 @@ mod tests {
     async fn update_draft_rate_limit_short_circuits() {
         use zeroclaw_config::schema::StreamMode;
 
-        let ch = DiscordChannel::new("t".into(), vec![], vec![], false, false).with_streaming(
-            StreamMode::Partial,
-            60_000,
-            800,
-        );
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "t".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        )
+        .with_streaming(StreamMode::Partial, 60_000, 800);
 
         // Seed a recent edit time.
         ch.last_draft_edit
@@ -2617,11 +2763,17 @@ mod tests {
     async fn cancel_draft_cleans_up_tracking() {
         use zeroclaw_config::schema::StreamMode;
 
-        let ch = DiscordChannel::new("t".into(), vec![], vec![], false, false).with_streaming(
-            StreamMode::Partial,
-            1000,
-            800,
-        );
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "t".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        )
+        .with_streaming(StreamMode::Partial, 1000, 800);
 
         ch.last_draft_edit
             .lock()
@@ -2688,20 +2840,34 @@ mod tests {
         assert!(chunks.is_empty());
     }
 
-    fn make_discord_channel() -> DiscordChannel {
-        DiscordChannel::new("token".into(), vec![], vec![], false, false)
-    }
-
     #[test]
     fn pending_approvals_map_is_initially_empty() {
-        let ch = make_discord_channel();
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "token".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        );
         let map = ch.pending_approvals.try_lock().unwrap();
         assert!(map.is_empty());
     }
 
     #[test]
     fn approval_timeout_defaults_to_300_and_is_overridable() {
-        let ch = make_discord_channel();
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "token".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        );
         assert_eq!(ch.approval_timeout_secs, 300);
         let ch = ch.with_approval_timeout_secs(60);
         assert_eq!(ch.approval_timeout_secs, 60);
@@ -2709,7 +2875,16 @@ mod tests {
 
     #[tokio::test]
     async fn pending_approval_oneshot_delivers_response() {
-        let ch = make_discord_channel();
+        let listen_to_bots = false;
+        let mention_only = false;
+        let ch = DiscordChannel::new(
+            "token".into(),
+            vec![],
+            "discord_test_alias",
+            Arc::new(Vec::new),
+            listen_to_bots,
+            mention_only,
+        );
         let (tx, rx) = oneshot::channel();
         ch.pending_approvals
             .lock()

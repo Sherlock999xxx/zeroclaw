@@ -1002,7 +1002,6 @@ fn synthesize_peer_group_from_allowlist(
     );
 }
 
-
 /// Wrap V2 `Option<T>` channel sections into V3 `HashMap<String, T>` keyed
 /// by `"default"`. Applies, per channel instance:
 ///
@@ -1024,10 +1023,7 @@ fn synthesize_peer_group_from_allowlist(
 ///   the channel type and reason.
 ///
 /// `cli: bool` is preserved at the top-level `channels.cli`, not aliased.
-fn alias_wrap_channels(
-    channels_value: toml::Value,
-    peer_groups: &mut toml::Table,
-) -> toml::Table {
+fn alias_wrap_channels(channels_value: toml::Value, peer_groups: &mut toml::Table) -> toml::Table {
     let mut channels_table = match channels_value {
         toml::Value::Table(t) => t,
         _ => return toml::Table::new(),
@@ -1261,9 +1257,9 @@ fn fold_channel_peer_auth_into_peer_groups(
     peer_groups: &mut toml::Table,
 ) {
     let Some(field_name) = (match channel_type {
-        "telegram" | "discord" | "slack" | "mattermost" | "matrix" | "nextcloud_talk"
-        | "irc" | "lark" | "line" | "feishu" | "dingtalk" | "wecom" | "wechat" | "qq"
-        | "twitter" | "mochat" => Some("allowed_users"),
+        "telegram" | "discord" | "slack" | "mattermost" | "matrix" | "nextcloud_talk" | "irc"
+        | "lark" | "line" | "feishu" | "dingtalk" | "wecom" | "wechat" | "qq" | "twitter"
+        | "mochat" => Some("allowed_users"),
         "imessage" => Some("allowed_contacts"),
         "signal" => Some("allowed_from"),
         "whatsapp" | "wati" => Some("allowed_numbers"),

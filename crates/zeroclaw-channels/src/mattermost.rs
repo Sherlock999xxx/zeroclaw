@@ -24,7 +24,12 @@ pub struct MattermostChannel {
     /// Channel IDs to listen on. Currently only the first is used at runtime;
     /// multi-channel listening lands separately.
     channel_ids: Vec<String>,
-    allowed_users: Vec<String>,
+    /// The alias key under `[channels.mattermost.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     /// When true (default), replies thread on the original post's root_id.
     /// When false, replies go to the channel root.
     thread_replies: bool,
@@ -45,7 +50,8 @@ impl MattermostChannel {
         login_id: Option<String>,
         password: Option<String>,
         channel_ids: Vec<String>,
-        allowed_users: Vec<String>,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
         thread_replies: bool,
         mention_only: bool,
     ) -> Self {
@@ -58,7 +64,8 @@ impl MattermostChannel {
             password,
             session_token: OnceCell::new(),
             channel_ids,
-            allowed_users,
+            alias: alias.into(),
+            peer_resolver,
             thread_replies,
             mention_only,
             typing_handle: Mutex::new(None),
@@ -66,6 +73,12 @@ impl MattermostChannel {
             transcription: None,
             transcription_manager: None,
         }
+    }
+
+    /// Return the alias under `[channels.mattermost.<alias>]` that this
+    /// channel handle is bound to.
+    pub fn alias(&self) -> &str {
+        &self.alias
     }
 
     /// Resolve the session token, performing the login flow on first call
@@ -174,11 +187,8 @@ impl MattermostChannel {
     /// Check if a user ID is in the allowlist.
     /// Empty list means deny everyone. "*" means allow everyone.
     fn is_user_allowed(&self, user_id: &str) -> bool {
-        crate::allowlist::is_user_allowed(
-            &self.allowed_users,
-            user_id,
-            crate::allowlist::Match::Sensitive,
-        )
+        let peers = (self.peer_resolver)();
+        crate::allowlist::is_user_allowed(&peers, user_id, crate::allowlist::Match::Sensitive)
     }
 
     /// Get the bot's own user ID and username so we can ignore our own messages
@@ -734,58 +744,57 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // Helper: create a channel with mention_only=false (legacy behavior).
-    fn make_channel(allowed: Vec<String>, thread_replies: bool) -> MattermostChannel {
-        MattermostChannel::new(
-            "url".into(),
-            Some("token".into()),
-            None,
-            None,
-            Vec::new(),
-            allowed,
-            thread_replies,
-            false,
-        )
-    }
-
-    // Helper: create a channel with mention_only=true.
-    fn make_mention_only_channel() -> MattermostChannel {
-        MattermostChannel::new(
-            "url".into(),
-            Some("token".into()),
-            None,
-            None,
-            Vec::new(),
-            vec!["*".into()],
-            true,
-            true,
-        )
-    }
-
     #[test]
     fn mattermost_url_trimming() {
+        let thread_replies = false;
+        let mention_only = false;
         let ch = MattermostChannel::new(
             "https://mm.example.com/".into(),
             Some("token".into()),
             None,
             None,
             Vec::new(),
-            vec![],
-            false,
-            false,
+            "mattermost_test_alias",
+            Arc::new(Vec::new),
+            thread_replies,
+            mention_only,
         );
         assert_eq!(ch.base_url, "https://mm.example.com");
     }
 
     #[test]
     fn mattermost_allowlist_wildcard() {
-        let ch = make_channel(vec!["*".into()], false);
+        let thread_replies = false;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         assert!(ch.is_user_allowed("any-id"));
     }
 
     #[test]
     fn mattermost_parse_post_basic() {
-        let ch = make_channel(vec!["*".into()], true);
+        let thread_replies = true;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post123",
             "user_id": "user456",
@@ -811,7 +820,19 @@ mod tests {
 
     #[test]
     fn mattermost_parse_post_thread_replies_enabled() {
-        let ch = make_channel(vec!["*".into()], true);
+        let thread_replies = true;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post123",
             "user_id": "user456",
@@ -835,7 +856,19 @@ mod tests {
 
     #[test]
     fn mattermost_parse_post_thread() {
-        let ch = make_channel(vec!["*".into()], false);
+        let thread_replies = false;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post123",
             "user_id": "user456",
@@ -859,7 +892,19 @@ mod tests {
 
     #[test]
     fn mattermost_parse_post_ignore_self() {
-        let ch = make_channel(vec!["*".into()], false);
+        let thread_replies = false;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post123",
             "user_id": "bot123",
@@ -880,7 +925,19 @@ mod tests {
 
     #[test]
     fn mattermost_parse_post_ignore_old() {
-        let ch = make_channel(vec!["*".into()], false);
+        let thread_replies = false;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post123",
             "user_id": "user456",
@@ -901,7 +958,19 @@ mod tests {
 
     #[test]
     fn mattermost_parse_post_no_thread_when_disabled() {
-        let ch = make_channel(vec!["*".into()], false);
+        let thread_replies = false;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post123",
             "user_id": "user456",
@@ -926,7 +995,19 @@ mod tests {
     #[test]
     fn mattermost_existing_thread_always_threads() {
         // Even with thread_replies=false, replies to existing threads stay in the thread
-        let ch = make_channel(vec!["*".into()], false);
+        let thread_replies = false;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post123",
             "user_id": "user456",
@@ -952,7 +1033,19 @@ mod tests {
 
     #[test]
     fn mention_only_skips_message_without_mention() {
-        let ch = make_mention_only_channel();
+        let thread_replies = true;
+        let mention_only = true;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post1",
             "user_id": "user1",
@@ -974,7 +1067,19 @@ mod tests {
 
     #[test]
     fn mention_only_accepts_message_with_at_mention() {
-        let ch = make_mention_only_channel();
+        let thread_replies = true;
+        let mention_only = true;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post1",
             "user_id": "user1",
@@ -998,7 +1103,19 @@ mod tests {
 
     #[test]
     fn mention_only_strips_mention_and_trims() {
-        let ch = make_mention_only_channel();
+        let thread_replies = true;
+        let mention_only = true;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post1",
             "user_id": "user1",
@@ -1022,7 +1139,19 @@ mod tests {
 
     #[test]
     fn mention_only_rejects_empty_after_stripping() {
-        let ch = make_mention_only_channel();
+        let thread_replies = true;
+        let mention_only = true;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post1",
             "user_id": "user1",
@@ -1044,7 +1173,19 @@ mod tests {
 
     #[test]
     fn mention_only_case_insensitive() {
-        let ch = make_mention_only_channel();
+        let thread_replies = true;
+        let mention_only = true;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post1",
             "user_id": "user1",
@@ -1069,7 +1210,19 @@ mod tests {
     #[test]
     fn mention_only_detects_metadata_mentions() {
         // Even without @username in text, metadata.mentions should trigger.
-        let ch = make_mention_only_channel();
+        let thread_replies = true;
+        let mention_only = true;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post1",
             "user_id": "user1",
@@ -1097,7 +1250,19 @@ mod tests {
 
     #[test]
     fn mention_only_word_boundary_prevents_partial_match() {
-        let ch = make_mention_only_channel();
+        let thread_replies = true;
+        let mention_only = true;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         // "@mybotextended" should NOT match "@mybot" because it extends the username.
         let post = json!({
             "id": "post1",
@@ -1120,7 +1285,19 @@ mod tests {
 
     #[test]
     fn mention_only_mention_in_middle_of_text() {
-        let ch = make_mention_only_channel();
+        let thread_replies = true;
+        let mention_only = true;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post1",
             "user_id": "user1",
@@ -1145,7 +1322,19 @@ mod tests {
     #[test]
     fn mention_only_disabled_passes_all_messages() {
         // With mention_only=false (default), messages pass through unfiltered.
-        let ch = make_channel(vec!["*".into()], true);
+        let thread_replies = true;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post1",
             "user_id": "user1",
@@ -1314,51 +1503,85 @@ mod tests {
 
     #[test]
     fn mattermost_manager_none_when_transcription_not_configured() {
-        let ch = make_channel(vec!["*".into()], false);
+        let thread_replies = false;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         assert!(ch.transcription_manager.is_none());
     }
 
     #[test]
     fn mattermost_manager_some_when_valid_config() {
-        let ch = make_channel(vec!["*".into()], false).with_transcription(
-            zeroclaw_config::schema::TranscriptionConfig {
-                enabled: true,
-                api_key: Some("test_key".to_string()),
-                api_url: "https://api.groq.com/openai/v1/audio/transcriptions".to_string(),
-                model: "whisper-large-v3".to_string(),
-                language: None,
-                initial_prompt: None,
-                max_duration_secs: 600,
-                openai: None,
-                deepgram: None,
-                assemblyai: None,
-                google: None,
-                local_whisper: None,
-                transcribe_non_ptt_audio: false,
-            },
-        );
+        let thread_replies = false;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        )
+        .with_transcription(zeroclaw_config::schema::TranscriptionConfig {
+            enabled: true,
+            api_key: Some("test_key".to_string()),
+            api_url: "https://api.groq.com/openai/v1/audio/transcriptions".to_string(),
+            model: "whisper-large-v3".to_string(),
+            language: None,
+            initial_prompt: None,
+            max_duration_secs: 600,
+            openai: None,
+            deepgram: None,
+            assemblyai: None,
+            google: None,
+            local_whisper: None,
+            transcribe_non_ptt_audio: false,
+        });
         assert!(ch.transcription_manager.is_some());
     }
 
     #[test]
     fn mattermost_manager_none_and_warn_on_init_failure() {
-        let ch = make_channel(vec!["*".into()], false).with_transcription(
-            zeroclaw_config::schema::TranscriptionConfig {
-                enabled: true,
-                api_key: Some(String::new()),
-                api_url: "https://api.groq.com/openai/v1/audio/transcriptions".to_string(),
-                model: "whisper-large-v3".to_string(),
-                language: None,
-                initial_prompt: None,
-                max_duration_secs: 600,
-                openai: None,
-                deepgram: None,
-                assemblyai: None,
-                google: None,
-                local_whisper: None,
-                transcribe_non_ptt_audio: false,
-            },
-        );
+        let thread_replies = false;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        )
+        .with_transcription(zeroclaw_config::schema::TranscriptionConfig {
+            enabled: true,
+            api_key: Some(String::new()),
+            api_url: "https://api.groq.com/openai/v1/audio/transcriptions".to_string(),
+            model: "whisper-large-v3".to_string(),
+            language: None,
+            initial_prompt: None,
+            max_duration_secs: 600,
+            openai: None,
+            deepgram: None,
+            assemblyai: None,
+            google: None,
+            local_whisper: None,
+            transcribe_non_ptt_audio: false,
+        });
         assert!(ch.transcription_manager.is_none());
     }
 
@@ -1420,7 +1643,19 @@ mod tests {
 
     #[test]
     fn mattermost_parse_post_uses_injected_text() {
-        let ch = make_channel(vec!["*".into()], true);
+        let thread_replies = true;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post123",
             "user_id": "user456",
@@ -1444,7 +1679,19 @@ mod tests {
 
     #[test]
     fn mattermost_parse_post_rejects_empty_message_without_injected() {
-        let ch = make_channel(vec!["*".into()], true);
+        let thread_replies = true;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "id": "post123",
             "user_id": "user456",
@@ -1466,7 +1713,19 @@ mod tests {
 
     #[tokio::test]
     async fn mattermost_transcribe_skips_when_manager_none() {
-        let ch = make_channel(vec!["*".into()], false);
+        let thread_replies = false;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        );
         let post = json!({
             "metadata": {
                 "files": [
@@ -1484,23 +1743,34 @@ mod tests {
 
     #[tokio::test]
     async fn mattermost_transcribe_skips_over_duration_limit() {
-        let ch = make_channel(vec!["*".into()], false).with_transcription(
-            zeroclaw_config::schema::TranscriptionConfig {
-                enabled: true,
-                api_key: Some("test_key".to_string()),
-                api_url: "https://api.groq.com/openai/v1/audio/transcriptions".to_string(),
-                model: "whisper-large-v3".to_string(),
-                language: None,
-                initial_prompt: None,
-                max_duration_secs: 3600,
-                openai: None,
-                deepgram: None,
-                assemblyai: None,
-                google: None,
-                local_whisper: None,
-                transcribe_non_ptt_audio: false,
-            },
-        );
+        let thread_replies = false;
+        let mention_only = false;
+        let ch = MattermostChannel::new(
+            "url".into(),
+            Some("token".into()),
+            None,
+            None,
+            Vec::new(),
+            "mattermost_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            thread_replies,
+            mention_only,
+        )
+        .with_transcription(zeroclaw_config::schema::TranscriptionConfig {
+            enabled: true,
+            api_key: Some("test_key".to_string()),
+            api_url: "https://api.groq.com/openai/v1/audio/transcriptions".to_string(),
+            model: "whisper-large-v3".to_string(),
+            language: None,
+            initial_prompt: None,
+            max_duration_secs: 3600,
+            openai: None,
+            deepgram: None,
+            assemblyai: None,
+            google: None,
+            local_whisper: None,
+            transcribe_non_ptt_audio: false,
+        });
 
         let post = json!({
             "metadata": {
@@ -1544,15 +1814,18 @@ mod tests {
                 .await;
 
             let whisper_url = format!("{}/v1/audio/transcriptions", mock_server.uri());
+            let thread_replies = false;
+            let mention_only = false;
             let ch = MattermostChannel::new(
                 mock_server.uri(),
                 Some("test_token".to_string()),
                 None,
                 None,
                 Vec::new(),
-                vec!["*".into()],
-                false,
-                false,
+                "mattermost_test_alias",
+                Arc::new(|| vec!["*".into()]),
+                thread_replies,
+                mention_only,
             )
             .with_transcription(zeroclaw_config::schema::TranscriptionConfig {
                 enabled: true,
@@ -1595,15 +1868,18 @@ mod tests {
         async fn mattermost_audio_skips_non_audio_attachment() {
             let mock_server = MockServer::start().await;
 
+            let thread_replies = false;
+            let mention_only = false;
             let ch = MattermostChannel::new(
                 mock_server.uri(),
                 Some("test_token".to_string()),
                 None,
                 None,
                 Vec::new(),
-                vec!["*".into()],
-                false,
-                false,
+                "mattermost_test_alias",
+                Arc::new(|| vec!["*".into()]),
+                thread_replies,
+                mention_only,
             )
             .with_transcription(zeroclaw_config::schema::TranscriptionConfig {
                 enabled: true,

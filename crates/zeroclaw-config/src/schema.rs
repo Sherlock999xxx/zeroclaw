@@ -10042,7 +10042,6 @@ impl ChannelConfig for WebhookConfig {
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "channels.imessage"]
 pub struct IMessageConfig {
-
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
     #[serde(default)]
@@ -12481,6 +12480,35 @@ pub async fn ensure_bootstrap_files(workspace_dir: &Path) -> Result<()> {
 }
 
 impl Config {
+    /// Resolve the inbound external-peer usernames authorized to talk
+    /// to the `{channel_type}.{alias}` channel ref, drawn live from
+    /// `peer_groups` (the V3 single source of truth for inbound peer
+    /// authorization).
+    ///
+    /// Walks every `[peer_groups.<name>]` whose `channel` matches and
+    /// flattens each group's `external_peers[].username` into a
+    /// deduplicated Vec preserving first-seen order. Returns an empty
+    /// Vec when no group references the channel — that means "no
+    /// external peers authorized" (callers may apply their own
+    /// wildcard semantics).
+    pub fn channel_external_peers(&self, channel_type: &str, alias: &str) -> Vec<String> {
+        let target = format!("{channel_type}.{alias}");
+        let mut out: Vec<String> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for group in self.peer_groups.values() {
+            if group.channel.as_str() != target {
+                continue;
+            }
+            for peer in &group.external_peers {
+                let username = peer.username.as_str().to_string();
+                if seen.insert(username.clone()) {
+                    out.push(username);
+                }
+            }
+        }
+        out
+    }
+
     /// Collect the `IntegrationDescriptor` from every nested config that
     /// declares one via `#[integration(...)]`. Adding a new toggleable
     /// integration is one struct-level attribute on the new config + one
@@ -14781,7 +14809,6 @@ auto_save = true
                     "default".to_string(),
                     TelegramConfig {
                         bot_token: "123:ABC".into(),
-                        allowed_users: vec!["user1".into()],
                         stream_mode: StreamMode::default(),
                         draft_update_interval_ms: default_draft_update_interval_ms(),
                         interrupt_on_new_message: false,
@@ -15466,7 +15493,6 @@ default_temperature = 0.7
                 app_secret: "feishu-secret".into(),
                 encrypt_key: Some("feishu-encrypt".into()),
                 verification_token: Some("feishu-verify".into()),
-                allowed_users: vec!["*".into()],
                 mention_only: false,
                 receive_mode: LarkReceiveMode::Websocket,
                 port: None,
@@ -15642,7 +15668,6 @@ default_temperature = 0.7
     async fn telegram_config_serde() {
         let tc = TelegramConfig {
             bot_token: "123:XYZ".into(),
-            allowed_users: vec!["alice".into(), "bob".into()],
             stream_mode: StreamMode::Partial,
             draft_update_interval_ms: 500,
             interrupt_on_new_message: true,
@@ -15655,7 +15680,6 @@ default_temperature = 0.7
         let json = serde_json::to_string(&tc).unwrap();
         let parsed: TelegramConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.bot_token, "123:XYZ");
-        assert_eq!(parsed.allowed_users.len(), 2);
         assert_eq!(parsed.stream_mode, StreamMode::Partial);
         assert_eq!(parsed.draft_update_interval_ms, 500);
         assert!(parsed.interrupt_on_new_message);
@@ -15677,7 +15701,6 @@ default_temperature = 0.7
             guild_ids: vec!["12345".into()],
             channel_ids: vec![],
             archive: false,
-            allowed_users: vec![],
             listen_to_bots: false,
             interrupt_on_new_message: false,
             mention_only: false,
@@ -15702,7 +15725,6 @@ default_temperature = 0.7
             guild_ids: Vec::new(),
             channel_ids: vec![],
             archive: false,
-            allowed_users: vec![],
             listen_to_bots: false,
             interrupt_on_new_message: false,
             mention_only: false,
@@ -15721,38 +15743,36 @@ default_temperature = 0.7
 
     // ── iMessage / Matrix config ────────────────────────────
 
-    #[test]
-    async fn imessage_config_serde() {
-        let ic = IMessageConfig {
-            allowed_contacts: vec!["+1234567890".into(), "user@icloud.com".into()],
-            excluded_tools: vec![],
-        };
-        let json = serde_json::to_string(&ic).unwrap();
-        let parsed: IMessageConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.allowed_contacts.len(), 2);
-        assert_eq!(parsed.allowed_contacts[0], "+1234567890");
-    }
+    // iMessage `allowed_contacts` was lifted out of `IMessageConfig` in V3;
+    // inbound peer authorization lives in `Config::peer_groups`. The
+    // round-trip of contact-list values from a V2 TOML is exercised by
+    // `imessage_v2_allowed_contacts_fold_into_peer_groups` below; per-field
+    // struct serde for `allowed_contacts` no longer applies.
 
     #[test]
-    async fn imessage_config_empty_contacts() {
-        let ic = IMessageConfig {
-            allowed_contacts: vec![],
-            excluded_tools: vec![],
-        };
-        let json = serde_json::to_string(&ic).unwrap();
-        let parsed: IMessageConfig = serde_json::from_str(&json).unwrap();
-        assert!(parsed.allowed_contacts.is_empty());
-    }
+    async fn imessage_v2_allowed_contacts_fold_into_peer_groups() {
+        // V2 TOML with `allowed_contacts` on the channel must be folded
+        // into a synthesized `peer_groups.imessage_default` group with
+        // each contact as an external peer.
+        let raw = r#"
+schema_version = 2
 
-    #[test]
-    async fn imessage_config_wildcard() {
-        let ic = IMessageConfig {
-            allowed_contacts: vec!["*".into()],
-            excluded_tools: vec![],
-        };
-        let toml_str = toml::to_string(&ic).unwrap();
-        let parsed: IMessageConfig = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.allowed_contacts, vec!["*"]);
+[channels.imessage]
+enabled = true
+allowed_contacts = ["+1234567890", "user@icloud.com"]
+"#;
+        let parsed = crate::migration::migrate_to_current(raw).expect("migration succeeds");
+        let group = parsed
+            .peer_groups
+            .get("imessage_default")
+            .expect("V2 imessage.allowed_contacts must fold into peer_groups.imessage_default");
+        assert_eq!(group.channel.as_str(), "imessage.default");
+        let usernames: Vec<&str> = group
+            .external_peers
+            .iter()
+            .map(|p| p.username.as_str())
+            .collect();
+        assert_eq!(usernames, vec!["+1234567890", "user@icloud.com"]);
     }
 
     #[test]
@@ -15762,7 +15782,6 @@ default_temperature = 0.7
             access_token: Some("syt_token_abc".into()),
             user_id: Some("@bot:matrix.org".into()),
             device_id: Some("DEVICE123".into()),
-            allowed_users: vec!["@user:matrix.org".into()],
             allowed_rooms: vec!["!room123:matrix.org".into()],
             interrupt_on_new_message: false,
             stream_mode: StreamMode::default(),
@@ -15786,7 +15805,6 @@ default_temperature = 0.7
             parsed.allowed_rooms.first().map(|s| s.as_str()),
             Some("!room123:matrix.org")
         );
-        assert_eq!(parsed.allowed_users.len(), 1);
     }
 
     #[test]
@@ -15796,7 +15814,6 @@ default_temperature = 0.7
             access_token: Some("tok".into()),
             user_id: None,
             device_id: None,
-            allowed_users: vec!["@admin:synapse.local".into(), "*".into()],
             allowed_rooms: vec!["!abc:synapse.local".into()],
             interrupt_on_new_message: false,
             stream_mode: StreamMode::default(),
@@ -15813,7 +15830,7 @@ default_temperature = 0.7
         let toml_str = toml::to_string(&mc).unwrap();
         let parsed: MatrixConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.homeserver, "https://synapse.local:8448");
-        assert_eq!(parsed.allowed_users.len(), 2);
+        assert_eq!(parsed.allowed_rooms.len(), 1);
     }
 
     #[test]
@@ -15852,7 +15869,6 @@ allowed_users = ["@u:matrix.org"]
             account: "+1234567890".into(),
             group_ids: vec!["group123".into()],
             dm_only: false,
-            allowed_from: vec!["+1111111111".into()],
             ignore_attachments: true,
             ignore_stories: false,
             proxy_url: None,
@@ -15865,7 +15881,6 @@ allowed_users = ["@u:matrix.org"]
         assert_eq!(parsed.account, "+1234567890");
         assert_eq!(parsed.group_ids, vec!["group123".to_string()]);
         assert!(!parsed.dm_only);
-        assert_eq!(parsed.allowed_from.len(), 1);
         assert!(parsed.ignore_attachments);
         assert!(!parsed.ignore_stories);
     }
@@ -15877,7 +15892,6 @@ allowed_users = ["@u:matrix.org"]
             account: "+9876543210".into(),
             group_ids: Vec::new(),
             dm_only: true,
-            allowed_from: vec!["*".into()],
             ignore_attachments: false,
             ignore_stories: true,
             proxy_url: None,
@@ -15899,7 +15913,6 @@ allowed_users = ["@u:matrix.org"]
         let parsed: SignalConfig = serde_json::from_str(json).unwrap();
         assert!(parsed.group_ids.is_empty());
         assert!(!parsed.dm_only);
-        assert!(parsed.allowed_from.is_empty());
         assert!(!parsed.ignore_attachments);
         assert!(!parsed.ignore_stories);
     }
@@ -15916,7 +15929,6 @@ allowed_users = ["@u:matrix.org"]
             imessage: HashMap::from([(
                 "default".to_string(),
                 IMessageConfig {
-                    allowed_contacts: vec!["+1".into()],
                     excluded_tools: vec![],
                 },
             )]),
@@ -15927,7 +15939,6 @@ allowed_users = ["@u:matrix.org"]
                     access_token: Some("tok".into()),
                     user_id: None,
                     device_id: None,
-                    allowed_users: vec!["@u:m".into()],
                     allowed_rooms: vec!["!r:m".into()],
                     interrupt_on_new_message: false,
                     stream_mode: StreamMode::default(),
@@ -15982,10 +15993,6 @@ allowed_users = ["@u:matrix.org"]
         assert!(!parsed.imessage.is_empty());
         assert!(!parsed.matrix.is_empty());
         assert_eq!(
-            parsed.imessage.get("default").unwrap().allowed_contacts,
-            vec!["+1"]
-        );
-        assert_eq!(
             parsed.matrix.get("default").unwrap().homeserver,
             "https://m.org"
         );
@@ -15998,43 +16005,60 @@ allowed_users = ["@u:matrix.org"]
         assert!(c.matrix.is_empty());
     }
 
-    // ── Edge cases: serde(default) for allowed_users ─────────
+    // ── Edge cases: serde(default) for non-secret optional fields ─────
+    // The legacy `allowed_users` field is no longer carried on channel
+    // configs (V3 moved inbound peer authorization into
+    // `Config::peer_groups`); V2 TOMLs with `allowed_users` are folded
+    // by `migrate_to_current` into `[peer_groups.<type>_<alias>]`. See
+    // `discord_v2_allowed_users_fold_into_peer_groups` below.
 
     #[test]
-    async fn discord_config_deserializes_without_allowed_users() {
-        // Old configs won't have allowed_users — serde(default) should fill vec![]
-        let json = r#"{"bot_token":"tok","guild_id":"123"}"#;
-        let parsed: DiscordConfig = serde_json::from_str(json).unwrap();
-        assert!(parsed.allowed_users.is_empty());
+    async fn discord_v2_allowed_users_fold_into_peer_groups() {
+        let raw = r#"
+schema_version = 2
+
+[channels.discord]
+enabled = true
+bot_token = "tok"
+guild_id = "123"
+allowed_users = ["111", "222"]
+"#;
+        let parsed = crate::migration::migrate_to_current(raw).expect("migration succeeds");
+        let group = parsed
+            .peer_groups
+            .get("discord_default")
+            .expect("V2 discord.allowed_users must fold into peer_groups.discord_default");
+        assert_eq!(group.channel.as_str(), "discord.default");
+        let usernames: Vec<&str> = group
+            .external_peers
+            .iter()
+            .map(|p| p.username.as_str())
+            .collect();
+        assert_eq!(usernames, vec!["111", "222"]);
     }
 
     #[test]
-    async fn discord_config_deserializes_with_allowed_users() {
-        let json = r#"{"bot_token":"tok","guild_id":"123","allowed_users":["111","222"]}"#;
-        let parsed: DiscordConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(parsed.allowed_users, vec!["111", "222"]);
-    }
+    async fn slack_v2_allowed_users_fold_into_peer_groups() {
+        let raw = r#"
+schema_version = 2
 
-    #[test]
-    async fn slack_config_deserializes_without_allowed_users() {
-        let json = r#"{"bot_token":"xoxb-tok"}"#;
-        let parsed: SlackConfig = serde_json::from_str(json).unwrap();
-        assert!(parsed.channel_ids.is_empty());
-        assert!(parsed.allowed_users.is_empty());
-        assert!(!parsed.interrupt_on_new_message);
-        assert_eq!(parsed.thread_replies, None);
-        assert!(!parsed.mention_only);
-    }
-
-    #[test]
-    async fn slack_config_deserializes_with_allowed_users() {
-        let json = r#"{"bot_token":"xoxb-tok","allowed_users":["U111"]}"#;
-        let parsed: SlackConfig = serde_json::from_str(json).unwrap();
-        assert!(parsed.channel_ids.is_empty());
-        assert_eq!(parsed.allowed_users, vec!["U111"]);
-        assert!(!parsed.interrupt_on_new_message);
-        assert_eq!(parsed.thread_replies, None);
-        assert!(!parsed.mention_only);
+[channels.slack]
+enabled = true
+bot_token = "xoxb-tok"
+allowed_users = ["U111"]
+"#;
+        let parsed = crate::migration::migrate_to_current(raw).expect("migration succeeds");
+        let group = parsed
+            .peer_groups
+            .get("slack_default")
+            .expect("V2 slack.allowed_users must fold into peer_groups.slack_default");
+        assert_eq!(group.channel.as_str(), "slack.default");
+        let usernames: Vec<&str> = group
+            .external_peers
+            .iter()
+            .map(|p| p.username.as_str())
+            .collect();
+        assert_eq!(usernames, vec!["U111"]);
     }
 
     #[test]
@@ -16042,7 +16066,6 @@ allowed_users = ["@u:matrix.org"]
         let json = r#"{"bot_token":"xoxb-tok","channel_ids":["C111","D222"]}"#;
         let parsed: SlackConfig = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.channel_ids, vec!["C111", "D222"]);
-        assert!(parsed.allowed_users.is_empty());
         assert!(!parsed.interrupt_on_new_message);
         assert_eq!(parsed.thread_replies, None);
         assert!(!parsed.mention_only);
@@ -16096,7 +16119,6 @@ bot_token = "tok"
 guild_id = "123"
 "#;
         let parsed: DiscordConfig = toml::from_str(toml_str).unwrap();
-        assert!(parsed.allowed_users.is_empty());
         assert_eq!(parsed.bot_token, "tok");
     }
 
@@ -16108,7 +16130,6 @@ channel_ids = ["C123", "D456"]
 "#;
         let parsed: SlackConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(parsed.channel_ids, vec!["C123", "D456"]);
-        assert!(parsed.allowed_users.is_empty());
         assert!(!parsed.interrupt_on_new_message);
         assert_eq!(parsed.thread_replies, None);
         assert!(!parsed.mention_only);
@@ -16166,7 +16187,6 @@ bot_token = "xoxb-tok"
             pair_phone: None,
             pair_code: None,
             ws_url: None,
-            allowed_numbers: vec!["+1234567890".into(), "+9876543210".into()],
             mention_only: false,
             mode: WhatsAppWebMode::default(),
             dm_policy: WhatsAppChatPolicy::default(),
@@ -16183,7 +16203,6 @@ bot_token = "xoxb-tok"
         assert_eq!(parsed.access_token, Some("EAABx...".into()));
         assert_eq!(parsed.phone_number_id, Some("123456789".into()));
         assert_eq!(parsed.verify_token, Some("my-verify-token".into()));
-        assert_eq!(parsed.allowed_numbers.len(), 2);
     }
 
     #[test]
@@ -16197,7 +16216,6 @@ bot_token = "xoxb-tok"
             pair_phone: None,
             pair_code: None,
             ws_url: None,
-            allowed_numbers: vec!["+1".into()],
             mention_only: false,
             mode: WhatsAppWebMode::default(),
             dm_policy: WhatsAppChatPolicy::default(),
@@ -16212,42 +16230,35 @@ bot_token = "xoxb-tok"
         let toml_str = toml::to_string(&wc).unwrap();
         let parsed: WhatsAppConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.phone_number_id, Some("12345".into()));
-        assert_eq!(parsed.allowed_numbers, vec!["+1"]);
     }
 
     #[test]
-    async fn whatsapp_config_deserializes_without_allowed_numbers() {
-        let json = r#"{"access_token":"tok","phone_number_id":"123","verify_token":"ver"}"#;
-        let parsed: WhatsAppConfig = serde_json::from_str(json).unwrap();
-        assert!(parsed.allowed_numbers.is_empty());
-    }
+    async fn whatsapp_v2_allowed_numbers_fold_into_peer_groups() {
+        // V2 `allowed_numbers` on a WhatsApp channel migrates to a
+        // synthesized `peer_groups.whatsapp_default` group. The wildcard
+        // `*` is dropped at synthesis; concrete numbers round-trip.
+        let raw = r#"
+schema_version = 2
 
-    #[test]
-    async fn whatsapp_config_wildcard_allowed() {
-        let wc = WhatsAppConfig {
-            access_token: Some("tok".into()),
-            phone_number_id: Some("123".into()),
-            verify_token: Some("ver".into()),
-            app_secret: None,
-            session_path: None,
-            pair_phone: None,
-            pair_code: None,
-            ws_url: None,
-            allowed_numbers: vec!["*".into()],
-            mention_only: false,
-            mode: WhatsAppWebMode::default(),
-            dm_policy: WhatsAppChatPolicy::default(),
-            group_policy: WhatsAppChatPolicy::default(),
-            self_chat_mode: false,
-            dm_mention_patterns: vec![],
-            group_mention_patterns: vec![],
-            proxy_url: None,
-            approval_timeout_secs: 300,
-            excluded_tools: vec![],
-        };
-        let toml_str = toml::to_string(&wc).unwrap();
-        let parsed: WhatsAppConfig = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.allowed_numbers, vec!["*"]);
+[channels.whatsapp]
+enabled = true
+access_token = "tok"
+phone_number_id = "123"
+verify_token = "ver"
+allowed_numbers = ["+1", "+2"]
+"#;
+        let parsed = crate::migration::migrate_to_current(raw).expect("migration succeeds");
+        let group = parsed
+            .peer_groups
+            .get("whatsapp_default")
+            .expect("V2 whatsapp.allowed_numbers must fold into peer_groups.whatsapp_default");
+        assert_eq!(group.channel.as_str(), "whatsapp.default");
+        let usernames: Vec<&str> = group
+            .external_peers
+            .iter()
+            .map(|p| p.username.as_str())
+            .collect();
+        assert_eq!(usernames, vec!["+1", "+2"]);
     }
 
     #[test]
@@ -16261,7 +16272,6 @@ bot_token = "xoxb-tok"
             pair_phone: None,
             pair_code: None,
             ws_url: None,
-            allowed_numbers: vec!["+1".into()],
             mention_only: false,
             mode: WhatsAppWebMode::default(),
             dm_policy: WhatsAppChatPolicy::default(),
@@ -16288,7 +16298,6 @@ bot_token = "xoxb-tok"
             pair_phone: None,
             pair_code: None,
             ws_url: None,
-            allowed_numbers: vec![],
             mention_only: false,
             mode: WhatsAppWebMode::default(),
             dm_policy: WhatsAppChatPolicy::default(),
@@ -16327,7 +16336,6 @@ bot_token = "xoxb-tok"
                     pair_phone: None,
                     pair_code: None,
                     ws_url: None,
-                    allowed_numbers: vec!["+1".into()],
                     mention_only: false,
                     mode: WhatsAppWebMode::default(),
                     dm_policy: WhatsAppChatPolicy::default(),
@@ -16378,7 +16386,6 @@ bot_token = "xoxb-tok"
         assert!(!parsed.whatsapp.is_empty());
         let wa = parsed.whatsapp.get("default").unwrap();
         assert_eq!(wa.phone_number_id, Some("123".into()));
-        assert_eq!(wa.allowed_numbers, vec!["+1"]);
     }
 
     #[test]
@@ -17255,7 +17262,6 @@ default_model = "legacy-model"
                 app_secret: "feishu-secret".into(),
                 encrypt_key: Some("feishu-encrypt".into()),
                 verification_token: Some("feishu-verify".into()),
-                allowed_users: vec!["*".into()],
                 mention_only: false,
                 receive_mode: LarkReceiveMode::Websocket,
                 port: None,
@@ -17711,7 +17717,6 @@ api_token = "tok"
             app_secret: "secret_abc".into(),
             encrypt_key: Some("encrypt_key".into()),
             verification_token: Some("verify_token".into()),
-            allowed_users: vec!["user_123".into(), "user_456".into()],
             mention_only: false,
             use_feishu: true,
             receive_mode: LarkReceiveMode::Websocket,
@@ -17725,7 +17730,6 @@ api_token = "tok"
         assert_eq!(parsed.app_secret, "secret_abc");
         assert_eq!(parsed.encrypt_key.as_deref(), Some("encrypt_key"));
         assert_eq!(parsed.verification_token.as_deref(), Some("verify_token"));
-        assert_eq!(parsed.allowed_users.len(), 2);
         assert!(parsed.use_feishu);
     }
 
@@ -17736,7 +17740,6 @@ api_token = "tok"
             app_secret: "secret_abc".into(),
             encrypt_key: Some("encrypt_key".into()),
             verification_token: Some("verify_token".into()),
-            allowed_users: vec!["*".into()],
             mention_only: false,
             use_feishu: false,
             receive_mode: LarkReceiveMode::Webhook,
@@ -17757,7 +17760,6 @@ api_token = "tok"
         let parsed: LarkConfig = serde_json::from_str(json).unwrap();
         assert!(parsed.encrypt_key.is_none());
         assert!(parsed.verification_token.is_none());
-        assert!(parsed.allowed_users.is_empty());
         assert!(!parsed.mention_only);
         assert!(!parsed.use_feishu);
     }
@@ -17773,10 +17775,32 @@ api_token = "tok"
     }
 
     #[test]
-    async fn lark_config_with_wildcard_allowed_users() {
-        let json = r#"{"app_id":"cli_123","app_secret":"secret","allowed_users":["*"]}"#;
-        let parsed: LarkConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(parsed.allowed_users, vec!["*"]);
+    async fn lark_v2_allowed_users_fold_into_peer_groups() {
+        // V2 `allowed_users` on a Lark channel migrates to a synthesized
+        // `peer_groups.lark_default` group. The wildcard `*` is dropped at
+        // synthesis (operator-explicit lists only); concrete user IDs
+        // round-trip through.
+        let raw = r#"
+schema_version = 2
+
+[channels.lark]
+enabled = true
+app_id = "cli_123"
+app_secret = "secret"
+allowed_users = ["user_alpha", "user_beta"]
+"#;
+        let parsed = crate::migration::migrate_to_current(raw).expect("migration succeeds");
+        let group = parsed
+            .peer_groups
+            .get("lark_default")
+            .expect("V2 lark.allowed_users must fold into peer_groups.lark_default");
+        assert_eq!(group.channel.as_str(), "lark.default");
+        let usernames: Vec<&str> = group
+            .external_peers
+            .iter()
+            .map(|p| p.username.as_str())
+            .collect();
+        assert_eq!(usernames, vec!["user_alpha", "user_beta"]);
     }
 
     #[test]
@@ -17786,7 +17810,6 @@ api_token = "tok"
             app_secret: "secret_abc".into(),
             encrypt_key: Some("encrypt_key".into()),
             verification_token: Some("verify_token".into()),
-            allowed_users: vec!["user_123".into(), "user_456".into()],
             mention_only: false,
             receive_mode: LarkReceiveMode::Websocket,
             port: None,
@@ -17799,7 +17822,6 @@ api_token = "tok"
         assert_eq!(parsed.app_secret, "secret_abc");
         assert_eq!(parsed.encrypt_key.as_deref(), Some("encrypt_key"));
         assert_eq!(parsed.verification_token.as_deref(), Some("verify_token"));
-        assert_eq!(parsed.allowed_users.len(), 2);
     }
 
     #[test]
@@ -17809,7 +17831,6 @@ api_token = "tok"
             app_secret: "secret_abc".into(),
             encrypt_key: Some("encrypt_key".into()),
             verification_token: Some("verify_token".into()),
-            allowed_users: vec!["*".into()],
             mention_only: false,
             receive_mode: LarkReceiveMode::Webhook,
             port: Some(9898),
@@ -17830,7 +17851,6 @@ api_token = "tok"
         let parsed: FeishuConfig = serde_json::from_str(json).unwrap();
         assert!(parsed.encrypt_key.is_none());
         assert!(parsed.verification_token.is_none());
-        assert!(parsed.allowed_users.is_empty());
         assert_eq!(parsed.receive_mode, LarkReceiveMode::Websocket);
         assert!(parsed.port.is_none());
     }
@@ -17886,24 +17906,37 @@ channel_secret = "sec"
             "group_policy default is mention"
         );
         assert_eq!(ln.webhook_port, 8443, "webhook_port default is 8443");
-        assert!(ln.allowed_users.is_empty());
         assert!(ln.proxy_url.is_none());
     }
 
     #[test]
     async fn line_config_allowlist_policy() {
-        // dm_policy = allowlist with an explicit user ID list.
+        // dm_policy = allowlist; the user ID list itself now lives on the
+        // V3 `peer_groups.line_default` group (synthesized from V2's
+        // `allowed_users`), not on the LineConfig struct.
         let toml = r#"
-[channels_config.line.default]
+schema_version = 2
+
+[channels.line]
+enabled = true
 channel_access_token = "tok"
 channel_secret = "sec"
 dm_policy = "allowlist"
 allowed_users = ["Uabc123", "Udef456"]
 "#;
-        let config: Config = toml::from_str(toml).unwrap();
+        let config = crate::migration::migrate_to_current(toml).expect("migration succeeds");
         let ln = config.channels.line.get("default").unwrap();
         assert_eq!(ln.dm_policy, LineDmPolicy::Allowlist);
-        assert_eq!(ln.allowed_users, vec!["Uabc123", "Udef456"]);
+        let group = config
+            .peer_groups
+            .get("line_default")
+            .expect("V2 line.allowed_users must fold into peer_groups.line_default");
+        let usernames: Vec<&str> = group
+            .external_peers
+            .iter()
+            .map(|p| p.username.as_str())
+            .collect();
+        assert_eq!(usernames, vec!["Uabc123", "Udef456"]);
     }
 
     #[test]
@@ -17942,7 +17975,6 @@ group_policy = "disabled"
             base_url: "https://cloud.example.com".into(),
             app_token: "app-token".into(),
             webhook_secret: Some("webhook-secret".into()),
-            allowed_users: vec!["user_a".into(), "*".into()],
             proxy_url: None,
             bot_name: None,
             excluded_tools: vec![],
@@ -17955,7 +17987,6 @@ group_policy = "disabled"
         assert_eq!(parsed.base_url, "https://cloud.example.com");
         assert_eq!(parsed.app_token, "app-token");
         assert_eq!(parsed.webhook_secret.as_deref(), Some("webhook-secret"));
-        assert_eq!(parsed.allowed_users, vec!["user_a", "*"]);
     }
 
     #[test]
@@ -17963,7 +17994,6 @@ group_policy = "disabled"
         let json = r#"{"base_url":"https://cloud.example.com","app_token":"app-token"}"#;
         let parsed: NextcloudTalkConfig = serde_json::from_str(json).unwrap();
         assert!(parsed.webhook_secret.is_none());
-        assert!(parsed.allowed_users.is_empty());
     }
 
     // ── Config file permission hardening (Unix only) ───────────────
@@ -18168,7 +18198,6 @@ require_otp_to_resume = true
             "default".to_string(),
             TelegramConfig {
                 bot_token: plaintext_token.into(),
-                allowed_users: vec!["user1".into()],
                 stream_mode: StreamMode::default(),
                 draft_update_interval_ms: default_draft_update_interval_ms(),
                 interrupt_on_new_message: false,
@@ -19006,7 +19035,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             access_token: Some("tok".into()),
             user_id: None,
             device_id: None,
-            allowed_users: vec![],
             allowed_rooms: vec!["!r:m".into()],
             interrupt_on_new_message: false,
             stream_mode: StreamMode::default(),
@@ -19038,7 +19066,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             access_token: None,
             user_id: None,
             device_id: None,
-            allowed_users: vec![],
             allowed_rooms: vec!["!r:m".into()],
             interrupt_on_new_message: false,
             stream_mode: StreamMode::default(),
@@ -19063,7 +19090,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             access_token: Some("old".into()),
             user_id: None,
             device_id: None,
-            allowed_users: vec![],
             allowed_rooms: vec!["!r:m".into()],
             interrupt_on_new_message: false,
             stream_mode: StreamMode::default(),
@@ -19089,7 +19115,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             access_token: Some("tok".into()),
             user_id: None,
             device_id: None,
-            allowed_users: vec![],
             allowed_rooms: vec!["!r:m".into()],
             interrupt_on_new_message: false,
             stream_mode: StreamMode::default(),
@@ -19125,7 +19150,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
                 access_token: Some("mx-tok".into()),
                 user_id: None,
                 device_id: None,
-                allowed_users: vec![],
                 allowed_rooms: vec!["!r:m".into()],
                 interrupt_on_new_message: false,
                 stream_mode: StreamMode::default(),
@@ -19157,7 +19181,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
                 access_token: Some("old".into()),
                 user_id: None,
                 device_id: None,
-                allowed_users: vec![],
                 allowed_rooms: vec!["!r:m".into()],
                 interrupt_on_new_message: false,
                 stream_mode: StreamMode::default(),
@@ -19198,7 +19221,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
                 access_token: Some("old".into()),
                 user_id: None,
                 device_id: None,
-                allowed_users: vec![],
                 allowed_rooms: vec!["!r:m".into()],
                 interrupt_on_new_message: false,
                 stream_mode: StreamMode::default(),
@@ -19248,7 +19270,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             access_token: Some("plaintext-token".into()),
             user_id: None,
             device_id: None,
-            allowed_users: vec![],
             allowed_rooms: vec!["!r:m".into()],
             interrupt_on_new_message: false,
             stream_mode: StreamMode::default(),
@@ -19285,7 +19306,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             access_token: Some("plaintext-token".into()),
             user_id: None,
             device_id: None,
-            allowed_users: vec![],
             allowed_rooms: vec!["!r:m".into()],
             interrupt_on_new_message: false,
             stream_mode: StreamMode::default(),
@@ -19318,7 +19338,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             access_token: Some("plaintext-token".into()),
             user_id: None,
             device_id: None,
-            allowed_users: vec![],
             allowed_rooms: vec!["!r:m".into()],
             interrupt_on_new_message: false,
             stream_mode: StreamMode::default(),
@@ -19346,7 +19365,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             access_token: Some("tok".into()),
             user_id: Some("@bot:m.org".into()),
             device_id: None,
-            allowed_users: vec![],
             allowed_rooms: vec!["!r:m".into()],
             interrupt_on_new_message: false,
             stream_mode: StreamMode::default(),

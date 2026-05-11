@@ -386,7 +386,13 @@ pub struct LarkChannel {
     app_secret: String,
     verification_token: String,
     port: Option<u16>,
-    allowed_users: Vec<String>,
+    /// The alias key under `[channels.lark.<alias>]` (or
+    /// `[channels.feishu.<alias>]`) this handle is bound to. Used to scope
+    /// peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     /// Bot open_id resolved at runtime via `/bot/v3/info`.
     resolved_bot_open_id: Arc<StdRwLock<Option<String>>>,
     mention_only: bool,
@@ -412,7 +418,8 @@ impl LarkChannel {
         app_secret: String,
         verification_token: String,
         port: Option<u16>,
-        allowed_users: Vec<String>,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
         mention_only: bool,
     ) -> Self {
         Self::new_with_platform(
@@ -420,10 +427,17 @@ impl LarkChannel {
             app_secret,
             verification_token,
             port,
-            allowed_users,
+            alias,
+            peer_resolver,
             mention_only,
             LarkPlatform::Lark,
         )
+    }
+
+    /// Return the alias under `[channels.lark.<alias>]` that this
+    /// channel handle is bound to.
+    pub fn alias(&self) -> &str {
+        &self.alias
     }
 
     fn new_with_platform(
@@ -431,7 +445,8 @@ impl LarkChannel {
         app_secret: String,
         verification_token: String,
         port: Option<u16>,
-        allowed_users: Vec<String>,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
         mention_only: bool,
         platform: LarkPlatform,
     ) -> Self {
@@ -440,7 +455,8 @@ impl LarkChannel {
             app_secret,
             verification_token,
             port,
-            allowed_users,
+            alias: alias.into(),
+            peer_resolver,
             resolved_bot_open_id: Arc::new(StdRwLock::new(None)),
             mention_only,
             platform,
@@ -457,7 +473,11 @@ impl LarkChannel {
 
     /// Build from `LarkConfig` using legacy compatibility:
     /// when `use_feishu=true`, this instance routes to Feishu endpoints.
-    pub fn from_config(config: &zeroclaw_config::schema::LarkConfig) -> Self {
+    pub fn from_config(
+        config: &zeroclaw_config::schema::LarkConfig,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    ) -> Self {
         let platform = if config.use_feishu {
             LarkPlatform::Feishu
         } else {
@@ -468,7 +488,8 @@ impl LarkChannel {
             config.app_secret.clone(),
             config.verification_token.clone().unwrap_or_default(),
             config.port,
-            config.allowed_users.clone(),
+            alias,
+            peer_resolver,
             config.mention_only,
             platform,
         );
@@ -480,13 +501,18 @@ impl LarkChannel {
     /// Build from `LarkConfig` forcing `LarkPlatform::Lark`, ignoring the
     /// legacy `use_feishu` flag.  Used by the channel factory when the config
     /// section is explicitly `[channels_config.lark]`.
-    pub fn from_lark_config(config: &zeroclaw_config::schema::LarkConfig) -> Self {
+    pub fn from_lark_config(
+        config: &zeroclaw_config::schema::LarkConfig,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    ) -> Self {
         let mut ch = Self::new_with_platform(
             config.app_id.clone(),
             config.app_secret.clone(),
             config.verification_token.clone().unwrap_or_default(),
             config.port,
-            config.allowed_users.clone(),
+            alias,
+            peer_resolver,
             config.mention_only,
             LarkPlatform::Lark,
         );
@@ -496,13 +522,18 @@ impl LarkChannel {
     }
 
     /// Build from `FeishuConfig` with `LarkPlatform::Feishu`.
-    pub fn from_feishu_config(config: &zeroclaw_config::schema::FeishuConfig) -> Self {
+    pub fn from_feishu_config(
+        config: &zeroclaw_config::schema::FeishuConfig,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    ) -> Self {
         let mut ch = Self::new_with_platform(
             config.app_id.clone(),
             config.app_secret.clone(),
             config.verification_token.clone().unwrap_or_default(),
             config.port,
-            config.allowed_users.clone(),
+            alias,
+            peer_resolver,
             config.mention_only,
             LarkPlatform::Feishu,
         );
@@ -907,7 +938,7 @@ impl LarkChannel {
 
                     let sender_open_id = recv.sender.sender_id.open_id.as_deref().unwrap_or("");
                     if !self.is_user_allowed(sender_open_id) {
-                        tracing::warn!("Lark WS: ignoring {sender_open_id} (not in allowed_users)");
+                        tracing::warn!("Lark WS: ignoring {sender_open_id} (not in peer group)");
                         continue;
                     }
 
@@ -1053,11 +1084,8 @@ impl LarkChannel {
 
     /// Check if a user open_id is allowed
     fn is_user_allowed(&self, open_id: &str) -> bool {
-        crate::allowlist::is_user_allowed(
-            &self.allowed_users,
-            open_id,
-            crate::allowlist::Match::Sensitive,
-        )
+        let peers = (self.peer_resolver)();
+        crate::allowlist::is_user_allowed(&peers, open_id, crate::allowlist::Match::Sensitive)
     }
 
     /// Get or refresh tenant access token
@@ -2484,6 +2512,10 @@ mod tests {
         ch
     }
 
+    fn resolver_from(peers: Vec<String>) -> Arc<dyn Fn() -> Vec<String> + Send + Sync> {
+        Arc::new(move || peers.clone())
+    }
+
     fn make_channel() -> LarkChannel {
         with_bot_open_id(
             LarkChannel::new(
@@ -2491,7 +2523,8 @@ mod tests {
                 "test_app_secret".into(),
                 "test_verification_token".into(),
                 None,
-                vec!["ou_testuser123".into()],
+                "lark_test_alias",
+                resolver_from(vec!["ou_testuser123".into()]),
                 true,
             ),
             "ou_bot",
@@ -2636,7 +2669,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec!["*".into()],
+            "lark_test_alias",
+            resolver_from(vec!["*".into()]),
             true,
         );
         assert!(ch.is_user_allowed("ou_anyone"));
@@ -2649,7 +2683,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec![],
+            "lark_test_alias",
+            resolver_from(vec![]),
             true,
         );
         assert!(!ch.is_user_allowed("ou_anyone"));
@@ -2725,7 +2760,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec!["*".into()],
+            "lark_test_alias",
+            resolver_from(vec!["*".into()]),
             true,
         );
         let payload = serde_json::json!({
@@ -2785,7 +2821,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec!["*".into()],
+            "lark_test_alias",
+            resolver_from(vec!["*".into()]),
             true,
         );
         let payload = serde_json::json!({
@@ -2814,7 +2851,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec!["*".into()],
+            "lark_test_alias",
+            resolver_from(vec!["*".into()]),
             true,
         );
         let payload = serde_json::json!({
@@ -2840,7 +2878,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec!["*".into()],
+            "lark_test_alias",
+            resolver_from(vec!["*".into()]),
             true,
         );
         let payload = serde_json::json!({
@@ -2866,7 +2905,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec!["*".into()],
+            "lark_test_alias",
+            resolver_from(vec!["*".into()]),
             true,
         );
         let payload = serde_json::json!({
@@ -2904,7 +2944,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec!["*".into()],
+            "lark_test_alias",
+            resolver_from(vec!["*".into()]),
             true,
         );
         let payload = serde_json::json!({
@@ -2929,7 +2970,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec!["*".into()],
+            "lark_test_alias",
+            resolver_from(vec!["*".into()]),
             true,
         );
         let payload = serde_json::json!({
@@ -2968,7 +3010,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec!["*".into()],
+            "lark_test_alias",
+            resolver_from(vec!["*".into()]),
             true,
         );
         let payload = serde_json::json!({
@@ -2995,7 +3038,6 @@ mod tests {
             app_secret: "secret456".into(),
             encrypt_key: None,
             verification_token: Some("vtoken789".into()),
-            allowed_users: vec!["ou_user1".into(), "ou_user2".into()],
             mention_only: false,
             use_feishu: false,
             receive_mode: LarkReceiveMode::default(),
@@ -3008,7 +3050,6 @@ mod tests {
         assert_eq!(parsed.app_id, "cli_app123");
         assert_eq!(parsed.app_secret, "secret456");
         assert_eq!(parsed.verification_token.as_deref(), Some("vtoken789"));
-        assert_eq!(parsed.allowed_users.len(), 2);
     }
 
     #[test]
@@ -3019,7 +3060,6 @@ mod tests {
             app_secret: "secret".into(),
             encrypt_key: None,
             verification_token: Some("tok".into()),
-            allowed_users: vec!["*".into()],
             mention_only: false,
             use_feishu: false,
             receive_mode: LarkReceiveMode::Webhook,
@@ -3031,7 +3071,6 @@ mod tests {
         let parsed: LarkConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.app_id, "app");
         assert_eq!(parsed.verification_token.as_deref(), Some("tok"));
-        assert_eq!(parsed.allowed_users, vec!["*"]);
     }
 
     #[test]
@@ -3040,7 +3079,6 @@ mod tests {
         let json = r#"{"app_id":"a","app_secret":"s"}"#;
         let parsed: LarkConfig = serde_json::from_str(json).unwrap();
         assert!(parsed.verification_token.is_none());
-        assert!(parsed.allowed_users.is_empty());
         assert!(!parsed.mention_only);
         assert_eq!(parsed.receive_mode, LarkReceiveMode::Websocket);
         assert!(parsed.port.is_none());
@@ -3055,7 +3093,6 @@ mod tests {
             app_secret: "secret456".into(),
             encrypt_key: None,
             verification_token: Some("vtoken789".into()),
-            allowed_users: vec!["*".into()],
             mention_only: false,
             use_feishu: false,
             receive_mode: LarkReceiveMode::Webhook,
@@ -3064,7 +3101,7 @@ mod tests {
             excluded_tools: vec![],
         };
 
-        let ch = LarkChannel::from_config(&cfg);
+        let ch = LarkChannel::from_config(&cfg, "lark_test_alias", resolver_from(vec!["*".into()]));
 
         assert_eq!(ch.api_base(), LARK_BASE_URL);
         assert_eq!(ch.ws_base(), LARK_WS_BASE_URL);
@@ -3081,7 +3118,6 @@ mod tests {
             app_secret: "secret456".into(),
             encrypt_key: None,
             verification_token: Some("vtoken789".into()),
-            allowed_users: vec!["*".into()],
             mention_only: false,
             use_feishu: true,
             receive_mode: LarkReceiveMode::Webhook,
@@ -3090,7 +3126,8 @@ mod tests {
             excluded_tools: vec![],
         };
 
-        let ch = LarkChannel::from_lark_config(&cfg);
+        let ch =
+            LarkChannel::from_lark_config(&cfg, "lark_test_alias", resolver_from(vec!["*".into()]));
 
         assert_eq!(ch.api_base(), LARK_BASE_URL);
         assert_eq!(ch.ws_base(), LARK_WS_BASE_URL);
@@ -3106,7 +3143,6 @@ mod tests {
             app_secret: "secret456".into(),
             encrypt_key: None,
             verification_token: Some("vtoken789".into()),
-            allowed_users: vec!["*".into()],
             mention_only: false,
             receive_mode: LarkReceiveMode::Webhook,
             port: Some(9898),
@@ -3114,7 +3150,11 @@ mod tests {
             excluded_tools: vec![],
         };
 
-        let ch = LarkChannel::from_feishu_config(&cfg);
+        let ch = LarkChannel::from_feishu_config(
+            &cfg,
+            "feishu_test_alias",
+            resolver_from(vec!["*".into()]),
+        );
 
         assert_eq!(ch.api_base(), FEISHU_BASE_URL);
         assert_eq!(ch.ws_base(), FEISHU_WS_BASE_URL);
@@ -3130,7 +3170,6 @@ mod tests {
             app_secret: "secret456".into(),
             encrypt_key: None,
             verification_token: Some("vtoken789".into()),
-            allowed_users: vec!["*".into()],
             mention_only: true,
             receive_mode: LarkReceiveMode::Websocket,
             port: None,
@@ -3143,8 +3182,16 @@ mod tests {
             ..cfg_true.clone()
         };
 
-        let ch_true = LarkChannel::from_feishu_config(&cfg_true);
-        let ch_false = LarkChannel::from_feishu_config(&cfg_false);
+        let ch_true = LarkChannel::from_feishu_config(
+            &cfg_true,
+            "feishu_test_alias",
+            resolver_from(vec!["*".into()]),
+        );
+        let ch_false = LarkChannel::from_feishu_config(
+            &cfg_false,
+            "feishu_test_alias",
+            resolver_from(vec!["*".into()]),
+        );
 
         assert!(
             ch_true.mention_only,
@@ -3164,7 +3211,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec!["*".into()],
+            "lark_test_alias",
+            resolver_from(vec!["*".into()]),
             true,
         );
         let payload = serde_json::json!({
@@ -3192,7 +3240,8 @@ mod tests {
                 "secret".into(),
                 "token".into(),
                 None,
-                vec!["*".into()],
+                "lark_test_alias",
+                resolver_from(vec!["*".into()]),
                 true,
             ),
             "ou_bot_123",
@@ -3256,7 +3305,8 @@ mod tests {
                 "secret".into(),
                 "token".into(),
                 None,
-                vec!["*".into()],
+                "lark_test_alias",
+                resolver_from(vec!["*".into()]),
                 true,
             ),
             "ou_bot_123",
@@ -3308,7 +3358,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec!["*".into()],
+            "lark_test_alias",
+            resolver_from(vec!["*".into()]),
             false,
         );
 
@@ -3342,14 +3393,17 @@ mod tests {
             app_secret: "secret456".into(),
             encrypt_key: None,
             verification_token: Some("vtoken789".into()),
-            allowed_users: vec!["*".into()],
             mention_only: false,
             receive_mode: zeroclaw_config::schema::LarkReceiveMode::Webhook,
             port: Some(9898),
             proxy_url: None,
             excluded_tools: vec![],
         };
-        let ch_feishu = LarkChannel::from_feishu_config(&feishu_cfg);
+        let ch_feishu = LarkChannel::from_feishu_config(
+            &feishu_cfg,
+            "feishu_test_alias",
+            resolver_from(vec!["*".into()]),
+        );
         assert_eq!(
             ch_feishu.message_reaction_url("om_test_message_id"),
             "https://open.feishu.cn/open-apis/im/v1/messages/om_test_message_id/reactions"
@@ -3714,7 +3768,8 @@ mod tests {
             "secret".into(),
             "token".into(),
             None,
-            vec![],
+            "feishu_test_alias",
+            resolver_from(vec![]),
             false,
             LarkPlatform::Feishu,
         );

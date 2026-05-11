@@ -31,7 +31,7 @@ const MAX_LINE_AUDIO_BYTES: u64 = 25 * 1024 * 1024;
 /// DM (1:1) access is controlled by `dm_policy`:
 /// - `open`      — respond to everyone
 /// - `pairing`   — require a one-time `/bind <code>` handshake (default)
-/// - `allowlist` — respond only to user IDs in `allowed_users`
+/// - `allowlist` — respond only to user IDs in the channel's peer group
 ///
 /// Group/room access is controlled by `group_policy`:
 /// - `open`     — respond to every message
@@ -46,8 +46,19 @@ pub struct LineChannel {
     dm_policy: LineDmPolicy,
     /// Group/room access policy.
     group_policy: LineGroupPolicy,
-    /// Allowlist — used when `dm_policy = Allowlist`.
-    allowed_users: Arc<RwLock<Vec<String>>>,
+    /// The alias key under `[channels.line.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    /// Optional pairing-persist handle. `None` in tests and one-shot
+    /// builds (pairing then doesn't survive — and without persistence
+    /// the resolver never sees the paired user, matching telegram's
+    /// no-persistence semantics). `Some` in the long-running daemon,
+    /// wired via `.with_persistence(config)`. RwLock so concurrent
+    /// peer reads from sibling channels don't serialize.
+    persist: Option<Arc<parking_lot::RwLock<Config>>>,
     /// Pairing guard — `Some` when `dm_policy = Pairing`.
     pairing: Option<Arc<PairingGuard>>,
     /// TCP port the embedded webhook server listens on.
@@ -83,7 +94,13 @@ struct LineState {
     bot_user_id: String,
     dm_policy: LineDmPolicy,
     group_policy: LineGroupPolicy,
-    allowed_users: Arc<RwLock<Vec<String>>>,
+    /// Alias under `[channels.line.<alias>]` — scopes peer-group writes.
+    alias: String,
+    /// Resolves the configured peer allowlist at message-time. Reads
+    /// canonical state, no cache.
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    /// Optional pairing-persist handle for the `/bind` flow.
+    persist: Option<Arc<parking_lot::RwLock<Config>>>,
     pairing: Option<Arc<PairingGuard>>,
     pending_tokens: Arc<RwLock<HashMap<String, String>>>,
     /// HTTP client and credentials for downloading audio content.
@@ -135,6 +152,62 @@ fn build_webhook_router(state: Arc<LineState>) -> axum::Router {
     Router::new()
         .route("/line/webhook", post(handle_webhook))
         .with_state(state)
+}
+
+/// Check whether `user_id` is in the LINE peer allowlist resolved from
+/// canonical config state at call-time. LINE user IDs are case-sensitive.
+fn is_line_user_allowed(state: &LineState, user_id: &str) -> bool {
+    let peers = (state.peer_resolver)();
+    crate::allowlist::is_user_allowed(&peers, user_id, crate::allowlist::Match::Sensitive)
+}
+
+/// Persist a newly-paired LINE userId into `peer_groups.line_<alias>.external_peers`
+/// via the shared Config handle. Mirrors telegram/wechat's `persist_allowed_identity`.
+/// No-op-with-warn when `state.persist` is unset (test fixtures).
+async fn persist_line_paired_identity(state: &LineState, user_id: &str) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use zeroclaw_config::multi_agent::{PeerExternal, PeerGroupConfig, PeerUsername};
+    use zeroclaw_config::providers::ChannelRef;
+
+    let Some(config) = &state.persist else {
+        tracing::warn!("LINE: paired userId {user_id} not persisted (no persistence handle wired)");
+        return Ok(());
+    };
+    let normalized = user_id.trim().to_string();
+    if normalized.is_empty() {
+        anyhow::bail!("Cannot persist empty LINE userId");
+    }
+    let group_name = format!("line_{}", state.alias);
+    let channel_ref = ChannelRef::new(format!("line.{}", state.alias));
+    let snapshot = {
+        let mut cfg = config.write();
+        if !cfg.channels.line.contains_key(&state.alias) {
+            anyhow::bail!("Missing [channels.line.{}] section", state.alias);
+        }
+        let group = cfg
+            .peer_groups
+            .entry(group_name)
+            .or_insert_with(|| PeerGroupConfig {
+                channel: channel_ref,
+                ..PeerGroupConfig::default()
+            });
+        if group
+            .external_peers
+            .iter()
+            .any(|p| p.username.as_str() == normalized)
+        {
+            return Ok(());
+        }
+        group.external_peers.push(PeerExternal {
+            username: PeerUsername::new(normalized),
+        });
+        cfg.clone()
+    };
+    snapshot
+        .save()
+        .await
+        .context("Failed to persist LINE paired userId to config.toml")?;
+    Ok(())
 }
 
 async fn handle_webhook(
@@ -286,36 +359,30 @@ async fn handle_webhook(
             match state.dm_policy {
                 LineDmPolicy::Open => {}
                 LineDmPolicy::Allowlist => {
-                    let allowed = state
-                        .allowed_users
-                        .read()
-                        .iter()
-                        .any(|u| u == "*" || u == user_id);
-                    if !allowed {
+                    if !is_line_user_allowed(&*state, user_id) {
                         tracing::warn!(
                             "LINE: ignoring DM from unauthorized user: {user_id}. \
-                            Add to channels.line.allowed_users or use dm_policy = pairing."
+                            Add to the channel peer group or use dm_policy = pairing."
                         );
                         continue;
                     }
                 }
                 LineDmPolicy::Pairing => {
-                    let already_allowed = state
-                        .allowed_users
-                        .read()
-                        .iter()
-                        .any(|u| u == "*" || u == user_id);
-
-                    if !already_allowed {
+                    if !is_line_user_allowed(&*state, user_id) {
                         // Try pairing bind
                         if let Some(code) = LineChannel::extract_bind_code(text) {
                             if let Some(ref guard) = state.pairing {
                                 match guard.try_pair(code, user_id).await {
                                     Ok(Some(_)) => {
-                                        state.allowed_users.write().push(user_id.to_string());
-                                        tracing::info!("LINE: paired userId={user_id}");
-                                        // Send confirmation via Push API (no reply token yet)
-                                        // We forward a synthetic message to let the agent greet
+                                        if let Err(e) =
+                                            persist_line_paired_identity(&*state, user_id).await
+                                        {
+                                            tracing::warn!(
+                                                "LINE: paired userId={user_id} but persist failed: {e}"
+                                            );
+                                        } else {
+                                            tracing::info!("LINE: paired userId={user_id}");
+                                        }
                                     }
                                     Ok(None) => {
                                         tracing::warn!(
@@ -428,13 +495,15 @@ impl LineChannel {
         channel_secret: String,
         dm_policy: LineDmPolicy,
         group_policy: LineGroupPolicy,
-        allowed_users: Vec<String>,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
         webhook_port: u16,
     ) -> Self {
         let token = channel_access_token;
         let secret = channel_secret;
 
-        let pairing = if dm_policy == LineDmPolicy::Pairing && allowed_users.is_empty() {
+        let configured_peers = peer_resolver();
+        let pairing = if dm_policy == LineDmPolicy::Pairing && configured_peers.is_empty() {
             let guard = PairingGuard::new(true, &[]);
             if let Some(code) = guard.pairing_code() {
                 println!("  🔐 LINE pairing required. One-time bind code: {code}");
@@ -450,7 +519,9 @@ impl LineChannel {
             channel_secret: secret,
             dm_policy,
             group_policy,
-            allowed_users: Arc::new(RwLock::new(allowed_users)),
+            alias: alias.into(),
+            peer_resolver,
+            persist: None,
             pairing,
             webhook_port,
             pending_tokens: Arc::new(RwLock::new(HashMap::new())),
@@ -461,17 +532,31 @@ impl LineChannel {
         }
     }
 
+    /// Wire the shared `Config` handle so `persist_line_paired_identity`
+    /// can write a newly-paired userId into `peer_groups.line_<alias>.external_peers`
+    /// and save. Long-running daemon sets this from the orchestrator; tests
+    /// and one-shot callers leave it unset (pairing then doesn't survive).
+    pub fn with_persistence(mut self, config: Arc<parking_lot::RwLock<Config>>) -> Self {
+        self.persist = Some(config);
+        self
+    }
+
     /// Construct a `LineChannel` directly from a [`zeroclaw_config::schema::LineConfig`].
     ///
     /// Mirrors [`LarkChannel::from_config`] — keeps construction logic inside the
     /// channel crate rather than duplicating it across orchestrator call sites.
-    pub fn from_config(config: &zeroclaw_config::schema::LineConfig) -> Self {
+    pub fn from_config(
+        config: &zeroclaw_config::schema::LineConfig,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    ) -> Self {
         Self::new(
             config.channel_access_token.clone(),
             config.channel_secret.clone(),
             config.dm_policy.clone(),
             config.group_policy.clone(),
-            config.allowed_users.clone(),
+            alias,
+            peer_resolver,
             config.webhook_port,
         )
         .with_proxy_url(config.proxy_url.clone())
@@ -761,7 +846,9 @@ impl LineChannel {
             bot_user_id,
             dm_policy: self.dm_policy.clone(),
             group_policy: self.group_policy.clone(),
-            allowed_users: Arc::clone(&self.allowed_users),
+            alias: self.alias.clone(),
+            peer_resolver: Arc::clone(&self.peer_resolver),
+            persist: self.persist.clone(),
             pairing: self.pairing.clone(),
             pending_tokens: Arc::clone(&self.pending_tokens),
             client: self.client.clone(),
@@ -853,13 +940,22 @@ mod tests {
 
     // ---- Helpers -----------------------------------------------------------
 
+    fn empty_resolver() -> Arc<dyn Fn() -> Vec<String> + Send + Sync> {
+        Arc::new(Vec::new)
+    }
+
+    fn resolver_from(peers: Vec<String>) -> Arc<dyn Fn() -> Vec<String> + Send + Sync> {
+        Arc::new(move || peers.clone())
+    }
+
     fn make_channel() -> LineChannel {
         LineChannel::new(
             "test_access_token".into(),
             "test_secret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Mention,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             8444,
         )
     }
@@ -993,13 +1089,14 @@ mod tests {
     }
 
     #[test]
-    fn pairing_mode_creates_guard_when_no_allowed_users() {
+    fn pairing_mode_creates_guard_when_no_configured_peers() {
         let ch = LineChannel::new(
             "tok".into(),
             "sec".into(),
             LineDmPolicy::Pairing,
             LineGroupPolicy::Mention,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             8444,
         );
         assert!(ch.pairing_code_active());
@@ -1012,7 +1109,8 @@ mod tests {
             "sec".into(),
             LineDmPolicy::Pairing,
             LineGroupPolicy::Mention,
-            vec!["Uallowed".into()],
+            "line_test_alias",
+            resolver_from(vec!["Uallowed".into()]),
             8444,
         );
         assert!(!ch.pairing_code_active());
@@ -1033,7 +1131,8 @@ mod tests {
             "sec".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Mention,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             8444,
         );
         assert_eq!(ch.channel_access_token, "env-token");
@@ -1050,7 +1149,8 @@ mod tests {
             "".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Mention,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             8444,
         );
         assert_eq!(ch.channel_secret, "env-secret");
@@ -1212,7 +1312,8 @@ mod tests {
             "sec".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             8444,
         )
         .with_api_base_url(&server.uri());
@@ -1237,7 +1338,8 @@ mod tests {
             "sec".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             8444,
         )
         .with_api_base_url(&server.uri());
@@ -1263,7 +1365,8 @@ mod tests {
             "sec".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             8444,
         )
         .with_api_base_url(&server.uri());
@@ -1297,7 +1400,8 @@ mod tests {
             "sec".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             8444,
         )
         .with_api_base_url(&server.uri());
@@ -1338,7 +1442,8 @@ mod tests {
             "sec".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             8444,
         )
         .with_api_base_url(&server.uri());
@@ -1363,7 +1468,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let (port, _rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1379,7 +1485,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1405,7 +1512,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let tokens = Arc::clone(&ch.pending_tokens);
@@ -1433,7 +1541,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Allowlist,
             LineGroupPolicy::Open,
-            vec!["Uallowed".to_string()],
+            "line_test_alias",
+            resolver_from(vec!["Uallowed".to_string()]),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1455,7 +1564,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Allowlist,
             LineGroupPolicy::Open,
-            vec!["Uallowed".to_string()],
+            "line_test_alias",
+            resolver_from(vec!["Uallowed".to_string()]),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1479,7 +1589,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Pairing,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1499,7 +1610,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Pairing,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1519,14 +1631,15 @@ mod tests {
 
     #[tokio::test]
     async fn webhook_dm_pairing_allows_pre_seeded_user() {
-        // If dm_policy=Pairing but a user is already in allowed_users,
-        // they should be forwarded without needing to /bind again.
+        // If dm_policy=Pairing but a user is already in the channel peer
+        // group, they should be forwarded without needing to /bind again.
         let ch = LineChannel::new(
             "tok".into(),
             "mysecret".into(),
             LineDmPolicy::Pairing,
             LineGroupPolicy::Open,
-            vec!["Utrusted".to_string()],
+            "line_test_alias",
+            resolver_from(vec!["Utrusted".to_string()]),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1548,7 +1661,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Disabled,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1575,7 +1689,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1603,7 +1718,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Mention,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot123").await;
@@ -1631,7 +1747,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Mention,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot123").await;
@@ -1657,7 +1774,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1683,7 +1801,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1710,7 +1829,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let (port, _rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1729,7 +1849,8 @@ mod tests {
             "sec".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         )
         .with_transcription(zeroclaw_config::schema::TranscriptionConfig {
@@ -1746,7 +1867,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         );
         let (port, mut rx, abort) = spawn_webhook(ch, "Ubot").await;
@@ -1824,7 +1946,8 @@ mod tests {
             "mysecret".into(),
             LineDmPolicy::Open,
             LineGroupPolicy::Open,
-            vec![],
+            "line_test_alias",
+            empty_resolver(),
             0,
         )
         .with_api_base_url(&api_server.uri())

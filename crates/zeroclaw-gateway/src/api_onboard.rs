@@ -201,7 +201,7 @@ pub async fn handle_onboard_status(State(state): State<AppState>, headers: Heade
     if let Err(e) = require_auth(&state, &headers) {
         return e.into_response();
     }
-    let cfg = state.config.lock().clone();
+    let cfg = state.config.read().clone();
 
     let has_completed = !cfg.onboard_state.completed_sections.is_empty();
     let has_model_provider = !cfg.model_providers.is_empty();
@@ -244,7 +244,7 @@ pub async fn handle_agent_options(State(state): State<AppState>, headers: Header
     if let Err(e) = require_auth(&state, &headers) {
         return e.into_response();
     }
-    let cfg = state.config.lock().clone();
+    let cfg = state.config.read().clone();
 
     fn dotted_aliases(cfg: &zeroclaw_config::schema::Config, prefix: &str) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
@@ -290,7 +290,7 @@ pub async fn handle_sections(State(state): State<AppState>, headers: HeaderMap) 
     if let Err(e) = require_auth(&state, &headers) {
         return e.into_response();
     }
-    let cfg = state.config.lock().clone();
+    let cfg = state.config.read().clone();
     let completed: std::collections::HashSet<String> = cfg
         .onboard_state
         .completed_sections
@@ -515,7 +515,7 @@ pub async fn handle_section_picker(
     if let Err(e) = require_auth(&state, &headers) {
         return e.into_response();
     }
-    let cfg = state.config.lock().clone();
+    let cfg = state.config.read().clone();
 
     use zeroclaw_config::onboarding::Section;
     let Some(section_enum) = Section::from_key(&section) else {
@@ -761,7 +761,7 @@ pub async fn handle_section_select(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "default".to_string());
 
-    let mut working = state.config.lock().clone();
+    let mut working = state.config.read().clone();
 
     use zeroclaw_config::onboarding::Section;
     let Some(section_enum) = Section::from_key(&section) else {
@@ -893,7 +893,7 @@ pub async fn handle_section_select(
             format!("save after select failed: {e}"),
         ));
     }
-    *state.config.lock() = working;
+    *state.config.write() = working;
 
     axum::Json(SelectItemResponse {
         fields_prefix,

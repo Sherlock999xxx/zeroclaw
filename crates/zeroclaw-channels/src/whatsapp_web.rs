@@ -66,8 +66,12 @@ pub struct WhatsAppWebChannel {
     /// `[whatsapp.ws_url]` — replaces the legacy `WHATSAPP_WS_URL` env-var
     /// read.
     ws_url: Option<String>,
-    /// Allowed phone numbers (E.164 format) or "*" for all
-    allowed_numbers: Vec<String>,
+    /// The alias key under `[channels.whatsapp.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     /// When true, only respond to messages that @-mention the bot in groups
     mention_only: bool,
     /// Bot phone number (digits only), resolved from pair_phone or device identity at runtime
@@ -108,32 +112,28 @@ pub struct WhatsAppWebChannel {
 }
 
 impl WhatsAppWebChannel {
-    /// Create a new WhatsApp Web channel
+    /// Create a new WhatsApp Web channel from a `WhatsAppConfig`.
     ///
-    /// # Arguments
-    ///
-    /// * `session_path` - Path to the SQLite session database
-    /// * `pair_phone` - Optional phone number for pair code linking (format: "15551234567")
-    /// * `pair_code` - Optional custom pair code (leave empty for auto-generated)
-    /// * `allowed_numbers` - Phone numbers allowed to interact (E.164 format) or "*" for all
-    /// * `mode` - Usage mode (business or personal)
-    /// * `dm_policy` - DM policy when mode = personal
-    /// * `group_policy` - Group policy when mode = personal
-    /// * `mention_only` - When true, only respond to group messages that @-mention the bot
-    /// * `self_chat_mode` - Whether to always respond in self-chat when mode = personal
+    /// `config` is the schema block under `[channels.whatsapp.<alias>]`;
+    /// `alias` is that alias key; `peer_resolver` resolves inbound
+    /// external peers from canonical state at message-time (no cache —
+    /// see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
     #[cfg(feature = "whatsapp-web")]
     pub fn new(
-        session_path: String,
-        pair_phone: Option<String>,
-        pair_code: Option<String>,
-        ws_url: Option<String>,
-        allowed_numbers: Vec<String>,
-        mention_only: bool,
-        mode: zeroclaw_config::schema::WhatsAppWebMode,
-        dm_policy: zeroclaw_config::schema::WhatsAppChatPolicy,
-        group_policy: zeroclaw_config::schema::WhatsAppChatPolicy,
-        self_chat_mode: bool,
+        config: &zeroclaw_config::schema::WhatsAppConfig,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     ) -> Self {
+        let session_path = config.session_path.clone().unwrap_or_default();
+        let pair_phone = config.pair_phone.clone();
+        let pair_code = config.pair_code.clone();
+        let ws_url = config.ws_url.clone();
+        let mention_only = config.mention_only;
+        let mode = config.mode.clone();
+        let dm_policy = config.dm_policy.clone();
+        let group_policy = config.group_policy.clone();
+        let self_chat_mode = config.self_chat_mode;
+
         // Seed bot_phone from pair_phone (digits only)
         let bot_phone = pair_phone
             .as_ref()
@@ -153,7 +153,8 @@ impl WhatsAppWebChannel {
             pair_phone,
             pair_code,
             ws_url,
-            allowed_numbers,
+            alias: alias.into(),
+            peer_resolver,
             mention_only,
             bot_phone: Arc::new(Mutex::new(bot_phone)),
             mode,
@@ -171,6 +172,12 @@ impl WhatsAppWebChannel {
             dm_mention_patterns: Arc::new(Vec::new()),
             group_mention_patterns: Arc::new(Vec::new()),
         }
+    }
+
+    /// Return the alias under `[channels.whatsapp.<alias>]` that this
+    /// channel handle is bound to.
+    pub fn alias(&self) -> &str {
+        &self.alias
     }
 
     /// Configure voice transcription (STT) for incoming voice notes.
@@ -237,7 +244,8 @@ impl WhatsAppWebChannel {
     /// Check if a phone number is allowed (E.164 format: +1234567890)
     #[cfg(feature = "whatsapp-web")]
     fn is_number_allowed(&self, phone: &str) -> bool {
-        Self::is_number_allowed_for_list(&self.allowed_numbers, phone)
+        let peers = (self.peer_resolver)();
+        Self::is_number_allowed_for_list(&peers, phone)
     }
 
     /// Check whether a phone number is allowed against a provided allowlist.
@@ -1162,7 +1170,7 @@ impl Channel for WhatsAppWebChannel {
 
             // Build the bot
             let tx_clone = tx.clone();
-            let allowed_numbers = self.allowed_numbers.clone();
+            let peer_resolver = Arc::clone(&self.peer_resolver);
             let logout_tx_clone = logout_tx.clone();
             let retry_count_clone = retry_count.clone();
             let session_revoked_clone = session_revoked.clone();
@@ -1189,7 +1197,7 @@ impl Channel for WhatsAppWebChannel {
                 )
                 .on_event(move |event, client| {
                     let tx_inner = tx_clone.clone();
-                    let allowed_numbers = allowed_numbers.clone();
+                    let peer_resolver = Arc::clone(&peer_resolver);
                     let logout_tx = logout_tx_clone.clone();
                     let retry_count = retry_count_clone.clone();
                     let session_revoked = session_revoked_clone.clone();
@@ -1222,10 +1230,11 @@ impl Channel for WhatsAppWebChannel {
                                     mapped_phone.as_deref(),
                                 );
 
+                                let allowed_peers = peer_resolver();
                                 let normalized = sender_candidates
                                     .iter()
                                     .find(|candidate| {
-                                        Self::is_number_allowed_for_list(&allowed_numbers, candidate)
+                                        Self::is_number_allowed_for_list(&allowed_peers, candidate)
                                     })
                                     .cloned();
 
@@ -1743,7 +1752,9 @@ impl WhatsAppWebChannel {
         _session_path: String,
         _pair_phone: Option<String>,
         _pair_code: Option<String>,
-        _allowed_numbers: Vec<String>,
+        _ws_url: Option<String>,
+        _alias: impl Into<String>,
+        _peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
         _mention_only: bool,
         _mode: zeroclaw_config::schema::WhatsAppWebMode,
         _dm_policy: zeroclaw_config::schema::WhatsAppChatPolicy,
@@ -1804,33 +1815,41 @@ mod tests {
     #[cfg(feature = "whatsapp-web")]
     use wa_rs_binary::jid::Jid;
 
-    #[cfg(feature = "whatsapp-web")]
-    fn make_channel() -> WhatsAppWebChannel {
-        WhatsAppWebChannel::new(
-            "/tmp/test-whatsapp.db".into(),
-            None,
-            None,
-            None,
-            vec!["+1234567890".into()],
-            false,
-            zeroclaw_config::schema::WhatsAppWebMode::default(),
-            zeroclaw_config::schema::WhatsAppChatPolicy::default(),
-            zeroclaw_config::schema::WhatsAppChatPolicy::default(),
-            false,
-        )
-    }
-
     #[test]
     #[cfg(feature = "whatsapp-web")]
     fn whatsapp_web_channel_name() {
-        let ch = make_channel();
+        let mention_only = false;
+        let self_chat_mode = false;
+        let cfg = zeroclaw_config::schema::WhatsAppConfig {
+            session_path: Some("/tmp/test-whatsapp.db".into()),
+            mention_only,
+            self_chat_mode,
+            ..Default::default()
+        };
+        let ch = WhatsAppWebChannel::new(
+            &cfg,
+            "whatsapp_web_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         assert_eq!(ch.name(), "whatsapp");
     }
 
     #[test]
     #[cfg(feature = "whatsapp-web")]
     fn whatsapp_web_number_allowed_exact() {
-        let ch = make_channel();
+        let mention_only = false;
+        let self_chat_mode = false;
+        let cfg = zeroclaw_config::schema::WhatsAppConfig {
+            session_path: Some("/tmp/test-whatsapp.db".into()),
+            mention_only,
+            self_chat_mode,
+            ..Default::default()
+        };
+        let ch = WhatsAppWebChannel::new(
+            &cfg,
+            "whatsapp_web_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         assert!(ch.is_number_allowed("+1234567890"));
         assert!(!ch.is_number_allowed("+9876543210"));
     }
@@ -1838,17 +1857,18 @@ mod tests {
     #[test]
     #[cfg(feature = "whatsapp-web")]
     fn whatsapp_web_number_allowed_wildcard() {
+        let mention_only = false;
+        let self_chat_mode = false;
+        let cfg = zeroclaw_config::schema::WhatsAppConfig {
+            session_path: Some("/tmp/test.db".into()),
+            mention_only,
+            self_chat_mode,
+            ..Default::default()
+        };
         let ch = WhatsAppWebChannel::new(
-            "/tmp/test.db".into(),
-            None,
-            None,
-            None,
-            vec!["*".into()],
-            false,
-            zeroclaw_config::schema::WhatsAppWebMode::default(),
-            zeroclaw_config::schema::WhatsAppChatPolicy::default(),
-            zeroclaw_config::schema::WhatsAppChatPolicy::default(),
-            false,
+            &cfg,
+            "whatsapp_web_test_alias",
+            Arc::new(|| vec!["*".into()]),
         );
         assert!(ch.is_number_allowed("+1234567890"));
         assert!(ch.is_number_allowed("+9999999999"));
@@ -1857,18 +1877,15 @@ mod tests {
     #[test]
     #[cfg(feature = "whatsapp-web")]
     fn whatsapp_web_number_denied_empty() {
-        let ch = WhatsAppWebChannel::new(
-            "/tmp/test.db".into(),
-            None,
-            None,
-            None,
-            vec![],
-            false,
-            zeroclaw_config::schema::WhatsAppWebMode::default(),
-            zeroclaw_config::schema::WhatsAppChatPolicy::default(),
-            zeroclaw_config::schema::WhatsAppChatPolicy::default(),
-            false,
-        );
+        let mention_only = false;
+        let self_chat_mode = false;
+        let cfg = zeroclaw_config::schema::WhatsAppConfig {
+            session_path: Some("/tmp/test.db".into()),
+            mention_only,
+            self_chat_mode,
+            ..Default::default()
+        };
+        let ch = WhatsAppWebChannel::new(&cfg, "whatsapp_web_test_alias", Arc::new(Vec::new));
         // Empty allowlist means "deny all" (matches channel-wide allowlist policy).
         assert!(!ch.is_number_allowed("+1234567890"));
     }
@@ -1876,21 +1893,57 @@ mod tests {
     #[test]
     #[cfg(feature = "whatsapp-web")]
     fn whatsapp_web_normalize_phone_adds_plus() {
-        let ch = make_channel();
+        let mention_only = false;
+        let self_chat_mode = false;
+        let cfg = zeroclaw_config::schema::WhatsAppConfig {
+            session_path: Some("/tmp/test-whatsapp.db".into()),
+            mention_only,
+            self_chat_mode,
+            ..Default::default()
+        };
+        let ch = WhatsAppWebChannel::new(
+            &cfg,
+            "whatsapp_web_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         assert_eq!(ch.normalize_phone("1234567890"), "+1234567890");
     }
 
     #[test]
     #[cfg(feature = "whatsapp-web")]
     fn whatsapp_web_normalize_phone_preserves_plus() {
-        let ch = make_channel();
+        let mention_only = false;
+        let self_chat_mode = false;
+        let cfg = zeroclaw_config::schema::WhatsAppConfig {
+            session_path: Some("/tmp/test-whatsapp.db".into()),
+            mention_only,
+            self_chat_mode,
+            ..Default::default()
+        };
+        let ch = WhatsAppWebChannel::new(
+            &cfg,
+            "whatsapp_web_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         assert_eq!(ch.normalize_phone("+1234567890"), "+1234567890");
     }
 
     #[test]
     #[cfg(feature = "whatsapp-web")]
     fn whatsapp_web_normalize_phone_from_jid() {
-        let ch = make_channel();
+        let mention_only = false;
+        let self_chat_mode = false;
+        let cfg = zeroclaw_config::schema::WhatsAppConfig {
+            session_path: Some("/tmp/test-whatsapp.db".into()),
+            mention_only,
+            self_chat_mode,
+            ..Default::default()
+        };
+        let ch = WhatsAppWebChannel::new(
+            &cfg,
+            "whatsapp_web_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         assert_eq!(
             ch.normalize_phone("1234567890@s.whatsapp.net"),
             "+1234567890"
@@ -1993,7 +2046,19 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "whatsapp-web")]
     async fn whatsapp_web_health_check_disconnected() {
-        let ch = make_channel();
+        let mention_only = false;
+        let self_chat_mode = false;
+        let cfg = zeroclaw_config::schema::WhatsAppConfig {
+            session_path: Some("/tmp/test-whatsapp.db".into()),
+            mention_only,
+            self_chat_mode,
+            ..Default::default()
+        };
+        let ch = WhatsAppWebChannel::new(
+            &cfg,
+            "whatsapp_web_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         assert!(!ch.health_check().await);
     }
 
@@ -2089,7 +2154,20 @@ mod tests {
             ..Default::default()
         };
 
-        let ch = make_channel().with_transcription(tc);
+        let mention_only = false;
+        let self_chat_mode = false;
+        let cfg = zeroclaw_config::schema::WhatsAppConfig {
+            session_path: Some("/tmp/test-whatsapp.db".into()),
+            mention_only,
+            self_chat_mode,
+            ..Default::default()
+        };
+        let ch = WhatsAppWebChannel::new(
+            &cfg,
+            "whatsapp_web_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        )
+        .with_transcription(tc);
         assert!(ch.transcription.is_some());
         assert!(ch.transcription_manager.is_some());
     }
@@ -2098,7 +2176,20 @@ mod tests {
     #[cfg(feature = "whatsapp-web")]
     fn with_transcription_ignores_when_disabled() {
         let tc = zeroclaw_config::schema::TranscriptionConfig::default(); // enabled = false
-        let ch = make_channel().with_transcription(tc);
+        let mention_only = false;
+        let self_chat_mode = false;
+        let cfg = zeroclaw_config::schema::WhatsAppConfig {
+            session_path: Some("/tmp/test-whatsapp.db".into()),
+            mention_only,
+            self_chat_mode,
+            ..Default::default()
+        };
+        let ch = WhatsAppWebChannel::new(
+            &cfg,
+            "whatsapp_web_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        )
+        .with_transcription(tc);
         assert!(ch.transcription.is_none());
         assert!(ch.transcription_manager.is_none());
     }
@@ -2271,17 +2362,19 @@ mod tests {
     #[test]
     #[cfg(feature = "whatsapp-web")]
     fn constructor_seeds_bot_phone_from_pair_phone() {
+        let mention_only = true;
+        let self_chat_mode = false;
+        let cfg = zeroclaw_config::schema::WhatsAppConfig {
+            session_path: Some("/tmp/test.db".into()),
+            pair_phone: Some("919211916069".into()),
+            mention_only,
+            self_chat_mode,
+            ..Default::default()
+        };
         let ch = WhatsAppWebChannel::new(
-            "/tmp/test.db".into(),
-            Some("919211916069".into()),
-            None,
-            None,
-            vec!["*".into()],
-            true,
-            zeroclaw_config::schema::WhatsAppWebMode::default(),
-            zeroclaw_config::schema::WhatsAppChatPolicy::default(),
-            zeroclaw_config::schema::WhatsAppChatPolicy::default(),
-            false,
+            &cfg,
+            "whatsapp_web_test_alias",
+            Arc::new(|| vec!["*".into()]),
         );
         assert_eq!(*ch.bot_phone.lock(), Some("919211916069".to_string()));
     }
@@ -2289,17 +2382,18 @@ mod tests {
     #[test]
     #[cfg(feature = "whatsapp-web")]
     fn constructor_no_pair_phone_leaves_bot_phone_none() {
+        let mention_only = true;
+        let self_chat_mode = false;
+        let cfg = zeroclaw_config::schema::WhatsAppConfig {
+            session_path: Some("/tmp/test.db".into()),
+            mention_only,
+            self_chat_mode,
+            ..Default::default()
+        };
         let ch = WhatsAppWebChannel::new(
-            "/tmp/test.db".into(),
-            None,
-            None,
-            None,
-            vec!["*".into()],
-            true,
-            zeroclaw_config::schema::WhatsAppWebMode::default(),
-            zeroclaw_config::schema::WhatsAppChatPolicy::default(),
-            zeroclaw_config::schema::WhatsAppChatPolicy::default(),
-            false,
+            &cfg,
+            "whatsapp_web_test_alias",
+            Arc::new(|| vec!["*".into()]),
         );
         assert_eq!(*ch.bot_phone.lock(), None);
     }

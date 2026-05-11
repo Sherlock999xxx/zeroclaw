@@ -77,6 +77,7 @@ pub use zeroclaw_infra::session_sqlite::SqliteSessionBackend;
 pub use zeroclaw_infra::stall_watchdog::StallWatchdog;
 
 use anyhow::{Context, Result};
+use parking_lot::RwLock;
 use portable_atomic::{AtomicU64, Ordering};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -4281,7 +4282,15 @@ fn maybe_restart_managed_daemon_service() -> Result<bool> {
 }
 
 /// Build a single channel instance by config section name (e.g. "telegram").
-fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Channel>> {
+fn build_channel_by_id(
+    config_arc: &Arc<RwLock<Config>>,
+    channel_id: &str,
+) -> Result<Arc<dyn Channel>> {
+    // Shadow `config` with a read guard so the existing body, which
+    // dereferences fields like `config.channels.foo`, keeps working
+    // through `Deref<Target = Config>`. Peer-resolver closures that
+    // need to outlive this function capture `config_arc.clone()`.
+    let config = config_arc.read();
     match channel_id {
         #[cfg(feature = "channel-telegram")]
         "telegram" => {
@@ -4291,18 +4300,21 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .get("default")
                 .context("Telegram channel is not configured")?;
             let ack = tg.ack_reactions.unwrap_or(config.channels.ack_reactions);
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("telegram", &alias))
+            };
             Ok(Arc::new(
-                TelegramChannel::new(
-                    tg.bot_token.clone(),
-                    config.channel_external_peers("telegram", "default"),
-                    tg.mention_only,
-                )
-                .with_ack_reactions(ack)
-                .with_streaming(tg.stream_mode, tg.draft_update_interval_ms)
-                .with_transcription(config.transcription.clone())
-                .with_tts(config)
-                .with_workspace_dir(config.workspace_dir.clone())
-                .with_approval_timeout_secs(tg.approval_timeout_secs),
+                TelegramChannel::new(tg.bot_token.clone(), alias, peer_resolver, tg.mention_only)
+                    .with_persistence(config_arc.clone())
+                    .with_ack_reactions(ack)
+                    .with_streaming(tg.stream_mode, tg.draft_update_interval_ms)
+                    .with_transcription(config.transcription.clone())
+                    .with_tts(&config)
+                    .with_workspace_dir(config.workspace_dir.clone())
+                    .with_approval_timeout_secs(tg.approval_timeout_secs),
             ))
         }
         "discord" => {
@@ -4311,11 +4323,18 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .discord
                 .get("default")
                 .context("Discord channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("discord", &alias))
+            };
             Ok(Arc::new(
                 DiscordChannel::new(
                     dc.bot_token.clone(),
                     dc.guild_ids.clone(),
-                    config.channel_external_peers("discord", "default"),
+                    alias,
+                    peer_resolver,
                     dc.listen_to_bots,
                     dc.mention_only,
                 )
@@ -4337,12 +4356,19 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .slack
                 .get("default")
                 .context("Slack channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("slack", &alias))
+            };
             Ok(Arc::new(
                 SlackChannel::new(
                     sl.bot_token.clone(),
                     sl.app_token.clone(),
                     sl.channel_ids.clone(),
-                    config.channel_external_peers("slack", "default"),
+                    alias,
+                    peer_resolver,
                 )
                 .with_workspace_dir(config.workspace_dir.clone())
                 .with_markdown_blocks(sl.use_markdown_blocks)
@@ -4358,13 +4384,20 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .mattermost
                 .get("default")
                 .context("Mattermost channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("mattermost", &alias))
+            };
             Ok(Arc::new(MattermostChannel::new(
                 mm.url.clone(),
                 mm.bot_token.clone(),
                 mm.login_id.clone(),
                 mm.password.clone(),
                 mm.channel_ids.clone(),
-                config.channel_external_peers("mattermost", "default"),
+                alias,
+                peer_resolver,
                 mm.thread_replies.unwrap_or(true),
                 mm.mention_only.unwrap_or(false),
             )))
@@ -4375,13 +4408,20 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .signal
                 .get("default")
                 .context("Signal channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("signal", &alias))
+            };
             Ok(Arc::new(
                 SignalChannel::new(
                     sg.http_url.clone(),
                     sg.account.clone(),
                     sg.group_ids.clone(),
                     sg.dm_only,
-                    config.channel_external_peers("signal", "default"),
+                    alias,
+                    peer_resolver,
                     sg.ignore_attachments,
                     sg.ignore_stories,
                 )
@@ -4401,8 +4441,14 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                     .parent()
                     .map(|p| p.join("state").join("matrix"))
                     .unwrap_or_else(|| std::path::PathBuf::from(".zeroclaw/state/matrix"));
+                let alias = "default".to_string();
+                let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                    let cfg_arc = config_arc.clone();
+                    let alias = alias.clone();
+                    Arc::new(move || cfg_arc.read().channel_external_peers("matrix", &alias))
+                };
                 Ok(Arc::new(
-                    MatrixChannel::new(mx.clone(), state_dir)?
+                    MatrixChannel::new(mx.clone(), alias, peer_resolver, state_dir)?
                         .with_transcription(config.transcription.clone())
                         .with_workspace_dir(config.workspace_dir.clone()),
                 ))
@@ -4425,18 +4471,13 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                         "WhatsApp channel send requires Web mode (session_path must be set)"
                     );
                 }
-                Ok(Arc::new(WhatsAppWebChannel::new(
-                    wa.session_path.clone().unwrap_or_default(),
-                    wa.pair_phone.clone(),
-                    wa.pair_code.clone(),
-                    wa.ws_url.clone(),
-                    config.channel_external_peers("whatsapp", "default"),
-                    wa.mention_only,
-                    wa.mode.clone(),
-                    wa.dm_policy.clone(),
-                    wa.group_policy.clone(),
-                    wa.self_chat_mode,
-                )))
+                let alias = "default".to_string();
+                let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                    let cfg_arc = config_arc.clone();
+                    let alias = alias.clone();
+                    Arc::new(move || cfg_arc.read().channel_external_peers("whatsapp", &alias))
+                };
+                Ok(Arc::new(WhatsAppWebChannel::new(wa, alias, peer_resolver)))
             }
             #[cfg(not(feature = "whatsapp-web"))]
             {
@@ -4449,10 +4490,17 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .qq
                 .get("default")
                 .context("QQ channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("qq", &alias))
+            };
             Ok(Arc::new(QQChannel::new(
                 qq.app_id.clone(),
                 qq.app_secret.clone(),
-                config.channel_external_peers("qq", "default"),
+                alias,
+                peer_resolver,
             )))
         }
         "lark" => {
@@ -4463,7 +4511,17 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                     .lark
                     .get("default")
                     .context("Lark channel is not configured")?;
-                Ok(Arc::new(LarkChannel::from_lark_config(lk)))
+                let alias = "default".to_string();
+                let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                    let cfg_arc = config_arc.clone();
+                    let alias = alias.clone();
+                    Arc::new(move || cfg_arc.read().channel_external_peers("lark", &alias))
+                };
+                Ok(Arc::new(LarkChannel::from_lark_config(
+                    lk,
+                    alias,
+                    peer_resolver,
+                )))
             }
             #[cfg(not(feature = "channel-lark"))]
             {
@@ -4474,7 +4532,17 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
             #[cfg(feature = "channel-lark")]
             {
                 if let Some(fs) = config.channels.feishu.values().next() {
-                    return Ok(Arc::new(LarkChannel::from_feishu_config(fs)));
+                    let alias = "default".to_string();
+                    let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                        let cfg_arc = config_arc.clone();
+                        let alias = alias.clone();
+                        Arc::new(move || cfg_arc.read().channel_external_peers("feishu", &alias))
+                    };
+                    return Ok(Arc::new(LarkChannel::from_feishu_config(
+                        fs,
+                        alias,
+                        peer_resolver,
+                    )));
                 }
                 // Legacy: [channels_config.lark] with use_feishu = true
                 let lk = config
@@ -4482,7 +4550,13 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                     .lark
                     .get("default")
                     .context("Feishu channel is not configured")?;
-                Ok(Arc::new(LarkChannel::from_config(lk)))
+                let alias = "default".to_string();
+                let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                    let cfg_arc = config_arc.clone();
+                    let alias = alias.clone();
+                    Arc::new(move || cfg_arc.read().channel_external_peers("lark", &alias))
+                };
+                Ok(Arc::new(LarkChannel::from_config(lk, alias, peer_resolver)))
             }
             #[cfg(not(feature = "channel-lark"))]
             {
@@ -4495,11 +4569,18 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .dingtalk
                 .get("default")
                 .context("DingTalk channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("dingtalk", &alias))
+            };
             Ok(Arc::new(
                 DingTalkChannel::new(
                     dt.client_id.clone(),
                     dt.client_secret.clone(),
-                    config.channel_external_peers("dingtalk", "default"),
+                    alias,
+                    peer_resolver,
                 )
                 .with_proxy_url(dt.proxy_url.clone()),
             ))
@@ -4510,9 +4591,16 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .wecom
                 .get("default")
                 .context("WeCom channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("wecom", &alias))
+            };
             Ok(Arc::new(WeComChannel::new(
                 wc.webhook_key.clone(),
-                config.channel_external_peers("wechat", "default"),
+                alias,
+                peer_resolver,
             )))
         }
         #[cfg(feature = "channel-wechat")]
@@ -4522,13 +4610,21 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .wechat
                 .get("default")
                 .context("WeChat channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("wechat", &alias))
+            };
             Ok(Arc::new(
                 WeChatChannel::new(
-                    config.channel_external_peers("wechat", "default"),
+                    alias,
+                    peer_resolver,
                     wc.api_base_url.clone(),
                     wc.cdn_base_url.clone(),
                     wc.state_dir.as_ref().map(std::path::PathBuf::from),
                 )?
+                .with_persistence(config_arc.clone())
                 .with_workspace_dir(config.workspace_dir.clone()),
             ))
         }
@@ -4542,12 +4638,23 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .nextcloud_talk
                 .get("default")
                 .context("Nextcloud Talk channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || {
+                    cfg_arc
+                        .read()
+                        .channel_external_peers("nextcloud_talk", &alias)
+                })
+            };
             Ok(Arc::new(
                 NextcloudTalkChannel::new_with_proxy(
                     nc.base_url.clone(),
                     nc.app_token.clone(),
                     nc.bot_name.clone().unwrap_or_default(),
-                    config.channel_external_peers("nextcloud_talk", "default"),
+                    alias,
+                    peer_resolver,
                     nc.proxy_url.clone(),
                 )
                 .with_streaming(nc.stream_mode, nc.draft_update_interval_ms),
@@ -4559,11 +4666,18 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .wati
                 .get("default")
                 .context("WATI channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("wati", &alias))
+            };
             Ok(Arc::new(WatiChannel::new_with_proxy(
                 wati_cfg.api_token.clone(),
                 wati_cfg.api_url.clone(),
                 wati_cfg.tenant_id.clone(),
-                config.channel_external_peers("wati", "default"),
+                alias,
+                peer_resolver,
                 wati_cfg.proxy_url.clone(),
             )))
         }
@@ -4573,10 +4687,17 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .linq
                 .get("default")
                 .context("Linq channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("linq", &alias))
+            };
             Ok(Arc::new(LinqChannel::new(
                 lq.api_token.clone(),
                 lq.from_phone.clone(),
-                config.channel_external_peers("linq", "default"),
+                alias,
+                peer_resolver,
             )))
         }
         #[cfg(feature = "channel-email")]
@@ -4586,7 +4707,17 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .email
                 .get("default")
                 .context("Email channel is not configured")?;
-            Ok(Arc::new(EmailChannel::new(em.clone())))
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("email", &alias))
+            };
+            Ok(Arc::new(EmailChannel::new(
+                em.clone(),
+                alias,
+                peer_resolver,
+            )))
         }
         #[cfg(feature = "channel-email")]
         "gmail_push" | "gmail-push" => {
@@ -4595,7 +4726,17 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .gmail_push
                 .get("default")
                 .context("Gmail Push channel is not configured")?;
-            Ok(Arc::new(GmailPushChannel::new(gp.clone())))
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("gmail_push", &alias))
+            };
+            Ok(Arc::new(GmailPushChannel::new(
+                gp.clone(),
+                alias,
+                peer_resolver,
+            )))
         }
         "irc" => {
             let irc_cfg = config
@@ -4603,13 +4744,20 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .irc
                 .get("default")
                 .context("IRC channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("irc", &alias))
+            };
             Ok(Arc::new(IrcChannel::new(crate::irc::IrcChannelConfig {
                 server: irc_cfg.server.clone(),
                 port: irc_cfg.port,
                 nickname: irc_cfg.nickname.clone(),
                 username: irc_cfg.username.clone(),
                 channels: irc_cfg.channels.clone(),
-                allowed_users: config.channel_external_peers("irc", "default"),
+                alias,
+                peer_resolver,
                 server_password: irc_cfg.server_password.clone(),
                 nickserv_password: irc_cfg.nickserv_password.clone(),
                 sasl_password: irc_cfg.sasl_password.clone(),
@@ -4623,9 +4771,16 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .twitter
                 .get("default")
                 .context("X/Twitter channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("twitter", &alias))
+            };
             Ok(Arc::new(TwitterChannel::new(
                 tw.bearer_token.clone(),
-                config.channel_external_peers("twitter", "default"),
+                alias,
+                peer_resolver,
             )))
         }
         "mochat" => {
@@ -4634,10 +4789,17 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .mochat
                 .get("default")
                 .context("Mochat channel is not configured")?;
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("mochat", &alias))
+            };
             Ok(Arc::new(MochatChannel::new(
                 mc.api_url.clone(),
                 mc.api_token.clone(),
-                config.channel_external_peers("mochat", "default"),
+                alias,
+                peer_resolver,
                 mc.poll_interval_secs,
             )))
         }
@@ -4645,9 +4807,13 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
             if !config.channels.imessage.contains_key("default") {
                 anyhow::bail!("iMessage channel is not configured");
             }
-            Ok(Arc::new(IMessageChannel::new(
-                config.channel_external_peers("imessage", "default"),
-            )))
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("imessage", &alias))
+            };
+            Ok(Arc::new(IMessageChannel::new(alias, peer_resolver)))
         }
         "line" => {
             #[cfg(feature = "channel-line")]
@@ -4657,7 +4823,16 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                     .line
                     .get("default")
                     .context("LINE channel is not configured")?;
-                Ok(Arc::new(LineChannel::from_config(ln)))
+                let alias = "default".to_string();
+                let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                    let cfg_arc = config_arc.clone();
+                    let alias = alias.clone();
+                    Arc::new(move || cfg_arc.read().channel_external_peers("line", &alias))
+                };
+                Ok(Arc::new(
+                    LineChannel::from_config(ln, alias, peer_resolver)
+                        .with_persistence(config_arc.clone()),
+                ))
             }
             #[cfg(not(feature = "channel-line"))]
             {
@@ -4694,7 +4869,10 @@ pub async fn send_channel_message(
     recipient: &str,
     message: &str,
 ) -> Result<()> {
-    let channel = build_channel_by_id(config, channel_id)?;
+    // Wrap into the canonical shared handle for the builder; this is a
+    // one-shot path so the snapshot is dropped immediately after send.
+    let config_arc = Arc::new(RwLock::new(config.clone()));
+    let channel = build_channel_by_id(&config_arc, channel_id)?;
     let msg = SendMessage::new(message, recipient);
     channel
         .send(&msg)
@@ -4727,13 +4905,18 @@ struct ConfiguredChannel {
 }
 
 fn collect_configured_channels(
-    config: &Config,
+    config_arc: &Arc<RwLock<Config>>,
     matrix_skip_context: &str,
     tool_specs: &[(String, String)],
 ) -> Vec<ConfiguredChannel> {
     let _ = matrix_skip_context;
     let _ = tool_specs;
     let mut channels = Vec::new();
+
+    // Shadow `config` with a read guard so the existing body keeps
+    // working via `Deref<Target = Config>`. Resolver closures that
+    // outlive the function capture `config_arc.clone()`.
+    let config = config_arc.read();
 
     let active_channel_aliases: std::collections::HashSet<String> = config
         .agents
@@ -4748,18 +4931,25 @@ fn collect_configured_channels(
             continue;
         }
         let ack = tg.ack_reactions.unwrap_or(config.channels.ack_reactions);
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("telegram", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "Telegram",
             channel: Arc::new(
                 TelegramChannel::new(
                     tg.bot_token.clone(),
-                    config.channel_external_peers("telegram", "default"),
+                    alias.clone(),
+                    peer_resolver,
                     tg.mention_only,
                 )
+                .with_persistence(config_arc.clone())
                 .with_ack_reactions(ack)
                 .with_streaming(tg.stream_mode, tg.draft_update_interval_ms)
                 .with_transcription(config.transcription.clone())
-                .with_tts(config)
+                .with_tts(&config)
                 .with_workspace_dir(config.workspace_dir.clone())
                 .with_proxy_url(tg.proxy_url.clone())
                 .with_tool_command_specs(tool_specs.to_vec())
@@ -4772,10 +4962,16 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("discord.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("discord", &alias))
+        };
         let mut discord_ch = DiscordChannel::new(
             dc.bot_token.clone(),
             dc.guild_ids.clone(),
-            config.channel_external_peers("discord", "default"),
+            alias.clone(),
+            peer_resolver,
             dc.listen_to_bots,
             dc.mention_only,
         )
@@ -4810,6 +5006,11 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("slack.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("slack", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "Slack",
             channel: Arc::new(
@@ -4817,7 +5018,8 @@ fn collect_configured_channels(
                     sl.bot_token.clone(),
                     sl.app_token.clone(),
                     sl.channel_ids.clone(),
-                    config.channel_external_peers("slack", "default"),
+                    alias.clone(),
+                    peer_resolver,
                 )
                 .with_thread_replies(sl.thread_replies.unwrap_or(true))
                 .with_group_reply_policy(sl.mention_only, Vec::new())
@@ -4837,6 +5039,11 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("mattermost.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("mattermost", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "Mattermost",
             channel: Arc::new(
@@ -4846,7 +5053,8 @@ fn collect_configured_channels(
                     mm.login_id.clone(),
                     mm.password.clone(),
                     mm.channel_ids.clone(),
-                    config.channel_external_peers("mattermost", "default"),
+                    alias.clone(),
+                    peer_resolver,
                     mm.thread_replies.unwrap_or(true),
                     mm.mention_only.unwrap_or(false),
                 )
@@ -4860,9 +5068,15 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("imessage.{alias}")) {
             continue;
         }
+        let _ = im;
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("imessage", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "iMessage",
-            channel: Arc::new(IMessageChannel::new(config.channel_external_peers("imessage", "default"))),
+            channel: Arc::new(IMessageChannel::new(alias.clone(), peer_resolver)),
         });
     }
 
@@ -4876,7 +5090,12 @@ fn collect_configured_channels(
             .parent()
             .map(|p| p.join("state").join("matrix"))
             .unwrap_or_else(|| std::path::PathBuf::from(".zeroclaw/state/matrix"));
-        match MatrixChannel::new(mx.clone(), state_dir) {
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("matrix", &alias))
+        };
+        match MatrixChannel::new(mx.clone(), alias.clone(), peer_resolver, state_dir) {
             Ok(channel) => {
                 let channel = channel
                     .with_transcription(config.transcription.clone())
@@ -4904,6 +5123,11 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("signal.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("signal", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "Signal",
             channel: Arc::new(
@@ -4912,7 +5136,8 @@ fn collect_configured_channels(
                     sig.account.clone(),
                     sig.group_ids.clone(),
                     sig.dm_only,
-                    config.channel_external_peers("signal", "default"),
+                    alias.clone(),
+                    peer_resolver,
                     sig.ignore_attachments,
                     sig.ignore_stories,
                 )
@@ -4936,6 +5161,11 @@ fn collect_configured_channels(
             "cloud" => {
                 // Cloud API mode: requires phone_number_id, access_token, verify_token
                 if wa.is_cloud_config() {
+                    let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                        let cfg_arc = config_arc.clone();
+                        let alias = alias.clone();
+                        Arc::new(move || cfg_arc.read().channel_external_peers("whatsapp", &alias))
+                    };
                     channels.push(ConfiguredChannel {
                         display_name: "WhatsApp",
                         channel: Arc::new(
@@ -4943,7 +5173,8 @@ fn collect_configured_channels(
                                 wa.access_token.clone().unwrap_or_default(),
                                 wa.phone_number_id.clone().unwrap_or_default(),
                                 wa.verify_token.clone().unwrap_or_default(),
-                                config.channel_external_peers("whatsapp", "default"),
+                                alias.clone(),
+                                peer_resolver,
                             )
                             .with_proxy_url(wa.proxy_url.clone())
                             .with_dm_mention_patterns(wa.dm_mention_patterns.clone())
@@ -4961,25 +5192,19 @@ fn collect_configured_channels(
                 // Web mode: requires session_path
                 #[cfg(feature = "whatsapp-web")]
                 if wa.is_web_config() {
+                    let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                        let cfg_arc = config_arc.clone();
+                        let alias = alias.clone();
+                        Arc::new(move || cfg_arc.read().channel_external_peers("whatsapp", &alias))
+                    };
                     channels.push(ConfiguredChannel {
                         display_name: "WhatsApp",
                         channel: Arc::new(
-                            WhatsAppWebChannel::new(
-                                wa.session_path.clone().unwrap_or_default(),
-                                wa.pair_phone.clone(),
-                                wa.pair_code.clone(),
-                                wa.ws_url.clone(),
-                                config.channel_external_peers("whatsapp", "default"),
-                                wa.mention_only,
-                                wa.mode.clone(),
-                                wa.dm_policy.clone(),
-                                wa.group_policy.clone(),
-                                wa.self_chat_mode,
-                            )
-                            .with_transcription(config.transcription.clone())
-                            .with_tts(config)
-                            .with_dm_mention_patterns(wa.dm_mention_patterns.clone())
-                            .with_group_mention_patterns(wa.group_mention_patterns.clone()),
+                            WhatsAppWebChannel::new(wa, alias.clone(), peer_resolver)
+                                .with_transcription(config.transcription.clone())
+                                .with_tts(&config)
+                                .with_dm_mention_patterns(wa.dm_mention_patterns.clone())
+                                .with_group_mention_patterns(wa.group_mention_patterns.clone()),
                         ),
                     });
                 } else {
@@ -5008,12 +5233,18 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("linq.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("linq", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "Linq",
             channel: Arc::new(LinqChannel::new(
                 lq.api_token.clone(),
                 lq.from_phone.clone(),
-                config.channel_external_peers("linq", "default"),
+                alias.clone(),
+                peer_resolver,
             )),
         });
     }
@@ -5022,11 +5253,17 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("wati.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("wati", &alias))
+        };
         let wati_channel = WatiChannel::new_with_proxy(
             wati_cfg.api_token.clone(),
             wati_cfg.api_url.clone(),
             wati_cfg.tenant_id.clone(),
-            config.channel_external_peers("wati", "default"),
+            alias.clone(),
+            peer_resolver,
             wati_cfg.proxy_url.clone(),
         )
         .with_transcription(config.transcription.clone());
@@ -5040,13 +5277,23 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("nextcloud_talk.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || {
+                cfg_arc
+                    .read()
+                    .channel_external_peers("nextcloud_talk", &alias)
+            })
+        };
         channels.push(ConfiguredChannel {
             display_name: "Nextcloud Talk",
             channel: Arc::new(NextcloudTalkChannel::new_with_proxy(
                 nc.base_url.clone(),
                 nc.app_token.clone(),
                 nc.bot_name.clone().unwrap_or_default(),
-                config.channel_external_peers("nextcloud_talk", "default"),
+                alias.clone(),
+                peer_resolver,
                 nc.proxy_url.clone(),
             )),
         });
@@ -5057,9 +5304,18 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("email.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("email", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "Email",
-            channel: Arc::new(EmailChannel::new(email_cfg.clone())),
+            channel: Arc::new(EmailChannel::new(
+                email_cfg.clone(),
+                alias.clone(),
+                peer_resolver,
+            )),
         });
     }
 
@@ -5068,9 +5324,18 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("gmail_push.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("gmail_push", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "Gmail Push",
-            channel: Arc::new(GmailPushChannel::new(gp_cfg.clone())),
+            channel: Arc::new(GmailPushChannel::new(
+                gp_cfg.clone(),
+                alias.clone(),
+                peer_resolver,
+            )),
         });
     }
 
@@ -5078,6 +5343,11 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("irc.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("irc", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "IRC",
             channel: Arc::new(IrcChannel::new(crate::irc::IrcChannelConfig {
@@ -5086,7 +5356,8 @@ fn collect_configured_channels(
                 nickname: irc.nickname.clone(),
                 username: irc.username.clone(),
                 channels: irc.channels.clone(),
-                allowed_users: config.channel_external_peers("irc", "default"),
+                alias: alias.clone(),
+                peer_resolver,
                 server_password: irc.server_password.clone(),
                 nickserv_password: irc.nickserv_password.clone(),
                 sasl_password: irc.sasl_password.clone(),
@@ -5101,6 +5372,11 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("lark.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("lark", &alias))
+        };
         if lk.use_feishu {
             if !config.channels.feishu.is_empty() {
                 tracing::warn!(
@@ -5113,7 +5389,7 @@ fn collect_configured_channels(
                 channels.push(ConfiguredChannel {
                     display_name: "Feishu",
                     channel: Arc::new(
-                        LarkChannel::from_config(lk)
+                        LarkChannel::from_config(lk, alias.clone(), peer_resolver)
                             .with_transcription(config.transcription.clone()),
                     ),
                 });
@@ -5122,7 +5398,7 @@ fn collect_configured_channels(
             channels.push(ConfiguredChannel {
                 display_name: "Lark",
                 channel: Arc::new(
-                    LarkChannel::from_lark_config(lk)
+                    LarkChannel::from_lark_config(lk, alias.clone(), peer_resolver)
                         .with_transcription(config.transcription.clone()),
                 ),
             });
@@ -5134,10 +5410,15 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("feishu.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("feishu", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "Feishu",
             channel: Arc::new(
-                LarkChannel::from_feishu_config(fs)
+                LarkChannel::from_feishu_config(fs, alias.clone(), peer_resolver)
                     .with_transcription(config.transcription.clone()),
             ),
         });
@@ -5155,10 +5436,17 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("line.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("line", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "LINE",
             channel: Arc::new(
-                LineChannel::from_config(ln).with_transcription(config.transcription.clone()),
+                LineChannel::from_config(ln, alias.clone(), peer_resolver)
+                    .with_persistence(config_arc.clone())
+                    .with_transcription(config.transcription.clone()),
             ),
         });
     }
@@ -5174,13 +5462,19 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("dingtalk.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("dingtalk", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "DingTalk",
             channel: Arc::new(
                 DingTalkChannel::new(
                     dt.client_id.clone(),
                     dt.client_secret.clone(),
-                    config.channel_external_peers("dingtalk", "default"),
+                    alias.clone(),
+                    peer_resolver,
                 )
                 .with_proxy_url(dt.proxy_url.clone()),
             ),
@@ -5191,13 +5485,19 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("qq.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("qq", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "QQ",
             channel: Arc::new(
                 QQChannel::new(
                     qq.app_id.clone(),
                     qq.app_secret.clone(),
-                    config.channel_external_peers("qq", "default"),
+                    alias.clone(),
+                    peer_resolver,
                 )
                 .with_workspace_dir(config.workspace_dir.clone())
                 .with_proxy_url(qq.proxy_url.clone()),
@@ -5209,11 +5509,17 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("twitter.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("twitter", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "X/Twitter",
             channel: Arc::new(TwitterChannel::new(
                 tw.bearer_token.clone(),
-                config.channel_external_peers("twitter", "default"),
+                alias.clone(),
+                peer_resolver,
             )),
         });
     }
@@ -5222,12 +5528,18 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("mochat.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("mochat", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "Mochat",
             channel: Arc::new(MochatChannel::new(
                 mc.api_url.clone(),
                 mc.api_token.clone(),
-                config.channel_external_peers("mochat", "default"),
+                alias.clone(),
+                peer_resolver,
                 mc.poll_interval_secs,
             )),
         });
@@ -5237,11 +5549,17 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("wecom.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("wecom", &alias))
+        };
         channels.push(ConfiguredChannel {
             display_name: "WeCom",
             channel: Arc::new(WeComChannel::new(
                 wc.webhook_key.clone(),
-                config.channel_external_peers("wechat", "default"),
+                alias.clone(),
+                peer_resolver,
             )),
         });
     }
@@ -5251,8 +5569,14 @@ fn collect_configured_channels(
         if !active_channel_aliases.contains(&format!("wechat.{alias}")) {
             continue;
         }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("wechat", &alias))
+        };
         match WeChatChannel::new(
-            wechat.allowed_users.clone(),
+            alias.clone(),
+            peer_resolver,
             wechat.api_base_url.clone(),
             wechat.cdn_base_url.clone(),
             wechat.state_dir.as_ref().map(std::path::PathBuf::from),
@@ -5260,7 +5584,11 @@ fn collect_configured_channels(
             Ok(channel) => {
                 channels.push(ConfiguredChannel {
                     display_name: "WeChat",
-                    channel: Arc::new(channel.with_workspace_dir(config.workspace_dir.clone())),
+                    channel: Arc::new(
+                        channel
+                            .with_persistence(config_arc.clone())
+                            .with_workspace_dir(config.workspace_dir.clone()),
+                    ),
                 });
             }
             Err(err) => {
@@ -5391,27 +5719,41 @@ fn collect_configured_channels(
 
 /// Run health checks for configured channels.
 pub async fn doctor_channels(config: Config) -> Result<()> {
+    let config_arc = Arc::new(RwLock::new(config));
     #[allow(unused_mut)]
-    let mut channels = collect_configured_channels(&config, "health check", &[]);
+    let mut channels = collect_configured_channels(&config_arc, "health check", &[]);
 
     #[cfg(feature = "channel-nostr")]
     {
-        let active_nostr: std::collections::HashSet<String> = config
-            .agents
-            .values()
-            .filter(|a| a.enabled)
-            .flat_map(|a| a.channels.iter().map(|c| c.as_str().to_string()))
-            .collect();
-        for (alias, ns) in &config.channels.nostr {
-            if !active_nostr.contains(&format!("nostr.{alias}")) {
-                continue;
-            }
-            let allowed_pubkeys = config.channel_external_peers("nostr", alias);
+        // Materialize the work list into owned values BEFORE any `.await`
+        // so the RwLockReadGuard is dropped before the async constructor
+        // runs (parking_lot guards are not Send).
+        let nostr_jobs: Vec<(String, String, Vec<String>)> = {
+            let config = config_arc.read();
+            let active_nostr: std::collections::HashSet<String> = config
+                .agents
+                .values()
+                .filter(|a| a.enabled)
+                .flat_map(|a| a.channels.iter().map(|c| c.as_str().to_string()))
+                .collect();
+            config
+                .channels
+                .nostr
+                .iter()
+                .filter(|(alias, _)| active_nostr.contains(&format!("nostr.{alias}")))
+                .map(|(alias, ns)| (alias.clone(), ns.private_key.clone(), ns.relays.clone()))
+                .collect()
+        };
+        for (alias, private_key, relays) in nostr_jobs {
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_arc.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("nostr", &alias))
+            };
             channels.push(ConfiguredChannel {
                 display_name: "Nostr",
                 channel: Arc::new(
-                    NostrChannel::new(&ns.private_key, ns.relays.clone(), &allowed_pubkeys)
-                        .await?,
+                    NostrChannel::new(&private_key, relays, alias, peer_resolver).await?,
                 ),
             });
         }
@@ -5453,7 +5795,7 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
         }
     }
 
-    if !config.channels.webhook.is_empty() {
+    if !config_arc.read().channels.webhook.is_empty() {
         println!("  ℹ️  Webhook   check via `zeroclaw gateway` then GET /health");
     }
 
@@ -5468,6 +5810,13 @@ pub async fn start_channels(
     config: Config,
     canvas_store: Option<zeroclaw_runtime::tools::CanvasStore>,
 ) -> Result<()> {
+    // Wrap into the canonical shared handle so channels and persistence
+    // paths share one source of truth. The local `config` shadowing
+    // keeps this function's body (which threads `config` through dozens
+    // of sync reads and awaits) compatible with the old `Config` shape
+    // via a one-time clone; channels themselves consult `config_arc`.
+    let config_arc = Arc::new(RwLock::new(config));
+    let config: Config = config_arc.read().clone();
     // No model resolves yet — the user has channels configured but hasn't
     // finished onboarding their model_provider. Returning Ok() here lets the
     // daemon supervisor mark the channels component "done" instead of
@@ -5877,16 +6226,26 @@ pub async fn start_channels(
     // Collect active channels from a shared builder to keep startup and doctor parity.
     #[allow(unused_mut)]
     let mut channels: Vec<Arc<dyn Channel>> =
-        collect_configured_channels(&config, "runtime startup", &tool_specs)
+        collect_configured_channels(&config_arc, "runtime startup", &tool_specs)
             .into_iter()
             .map(|configured| configured.channel)
             .collect();
 
     #[cfg(feature = "channel-nostr")]
     if let Some((alias, ns)) = config.channels.nostr.iter().next() {
-        let allowed_pubkeys = config.channel_external_peers("nostr", alias);
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("nostr", &alias))
+        };
         channels.push(Arc::new(
-            NostrChannel::new(&ns.private_key, ns.relays.clone(), &allowed_pubkeys).await?,
+            NostrChannel::new(
+                &ns.private_key,
+                ns.relays.clone(),
+                alias.clone(),
+                peer_resolver,
+            )
+            .await?,
         ));
     }
     if channels.is_empty() {
@@ -6229,9 +6588,16 @@ pub async fn deliver_announcement(
                 .telegram
                 .get("default")
                 .ok_or_else(|| anyhow::anyhow!("telegram channel not configured"))?;
+            // One-shot delivery: a snapshot resolver is sufficient
+            // because the channel handle is dropped immediately after
+            // the single send call. No long-running cache risk.
+            let peers = config.channel_external_peers("telegram", "default");
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> =
+                Arc::new(move || peers.clone());
             let ch = TelegramChannel::new(
                 tg.bot_token.clone(),
-                config.channel_external_peers("telegram", "default"),
+                "default",
+                peer_resolver,
                 tg.mention_only,
             );
             zeroclaw_api::channel::Channel::send(&ch, &SendMessage::new(&safe_output, target))
@@ -6243,10 +6609,15 @@ pub async fn deliver_announcement(
                 .discord
                 .get("default")
                 .ok_or_else(|| anyhow::anyhow!("discord channel not configured"))?;
+            // One-shot delivery: snapshot resolver is sufficient.
+            let peers = config.channel_external_peers("discord", "default");
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> =
+                Arc::new(move || peers.clone());
             let ch = DiscordChannel::new(
                 dc.bot_token.clone(),
                 dc.guild_ids.clone(),
-                config.channel_external_peers("discord", "default"),
+                "default",
+                peer_resolver,
                 dc.listen_to_bots,
                 dc.mention_only,
             )
@@ -6261,11 +6632,16 @@ pub async fn deliver_announcement(
                 .slack
                 .get("default")
                 .ok_or_else(|| anyhow::anyhow!("slack channel not configured"))?;
+            // One-shot delivery: snapshot resolver is sufficient.
+            let peers = config.channel_external_peers("slack", "default");
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> =
+                Arc::new(move || peers.clone());
             let ch = SlackChannel::new(
                 sl.bot_token.clone(),
                 sl.app_token.clone(),
                 sl.channel_ids.clone(),
-                config.channel_external_peers("slack", "default"),
+                "default",
+                peer_resolver,
             )
             .with_workspace_dir(config.workspace_dir.clone());
             zeroclaw_api::channel::Channel::send(&ch, &SendMessage::new(&safe_output, target))
@@ -6277,12 +6653,17 @@ pub async fn deliver_announcement(
                 .signal
                 .get("default")
                 .ok_or_else(|| anyhow::anyhow!("signal channel not configured"))?;
+            // One-shot delivery: snapshot resolver is sufficient.
+            let peers = config.channel_external_peers("signal", "default");
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> =
+                Arc::new(move || peers.clone());
             let ch = SignalChannel::new(
                 sg.http_url.clone(),
                 sg.account.clone(),
                 sg.group_ids.clone(),
                 sg.dm_only,
-                config.channel_external_peers("signal", "default"),
+                "default",
+                peer_resolver,
                 sg.ignore_attachments,
                 sg.ignore_stories,
             );
@@ -6296,8 +6677,15 @@ pub async fn deliver_announcement(
                 .wechat
                 .get("default")
                 .ok_or_else(|| anyhow::anyhow!("wechat channel not configured"))?;
+            // One-shot delivery: snapshot resolver is sufficient. No
+            // `.with_persistence` — paired-user writes need a long-running
+            // shared Config handle which this path does not have.
+            let peers = config.channel_external_peers("wechat", "default");
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> =
+                Arc::new(move || peers.clone());
             let ch = WeChatChannel::new(
-                config.channel_external_peers("wechat", "default"),
+                "default",
+                peer_resolver,
                 wc.api_base_url.clone(),
                 wc.cdn_base_url.clone(),
                 wc.state_dir.as_ref().map(std::path::PathBuf::from),
@@ -11931,7 +12319,8 @@ This is an example JSON object for profile settings."#;
             },
         );
 
-        let channels = collect_configured_channels(&config, "test", &[]);
+        let config_arc = Arc::new(RwLock::new(config));
+        let channels = collect_configured_channels(&config_arc, "test", &[]);
 
         assert!(
             channels
@@ -11954,7 +12343,8 @@ This is an example JSON object for profile settings."#;
             zeroclaw_config::scattered_types::EmailConfig::default(),
         );
 
-        let channels = collect_configured_channels(&config, "test", &[]);
+        let config_arc = Arc::new(RwLock::new(config));
+        let channels = collect_configured_channels(&config_arc, "test", &[]);
         assert!(
             !channels.iter().any(|entry| entry.display_name == "Email"),
             "email with no agent reference should not be collected"
@@ -11970,7 +12360,8 @@ This is an example JSON object for profile settings."#;
             zeroclaw_config::scattered_types::VoiceCallConfig::default(),
         );
 
-        let channels = collect_configured_channels(&config, "test", &[]);
+        let config_arc = Arc::new(RwLock::new(config));
+        let channels = collect_configured_channels(&config_arc, "test", &[]);
         assert!(
             !channels
                 .iter()
@@ -12548,7 +12939,8 @@ This is an example JSON object for profile settings."#;
     #[test]
     fn build_channel_by_id_unknown_channel_returns_error() {
         let config = Config::default();
-        match build_channel_by_id(&config, "nonexistent") {
+        let config_arc = Arc::new(RwLock::new(config));
+        match build_channel_by_id(&config_arc, "nonexistent") {
             Err(e) => {
                 let err_msg = e.to_string();
                 assert!(
@@ -13121,7 +13513,8 @@ This is an example JSON object for profile settings."#;
     #[test]
     fn build_channel_by_id_unconfigured_telegram_returns_error() {
         let config = Config::default();
-        match build_channel_by_id(&config, "telegram") {
+        let config_arc = Arc::new(RwLock::new(config));
+        match build_channel_by_id(&config_arc, "telegram") {
             Err(e) => {
                 let err_msg = e.to_string();
                 assert!(
@@ -13151,7 +13544,8 @@ This is an example JSON object for profile settings."#;
                 excluded_tools: vec![],
             },
         );
-        match build_channel_by_id(&config, "telegram") {
+        let config_arc = Arc::new(RwLock::new(config));
+        match build_channel_by_id(&config_arc, "telegram") {
             Ok(channel) => assert_eq!(channel.name(), "telegram"),
             Err(e) => panic!("should succeed when telegram is configured: {e}"),
         }
@@ -13161,7 +13555,8 @@ This is an example JSON object for profile settings."#;
     #[test]
     fn build_channel_by_id_unconfigured_voice_call_returns_error() {
         let config = Config::default();
-        match build_channel_by_id(&config, "voice-call") {
+        let config_arc = Arc::new(RwLock::new(config));
+        match build_channel_by_id(&config_arc, "voice-call") {
             Err(e) => {
                 let err_msg = e.to_string();
                 assert!(
@@ -13193,7 +13588,8 @@ This is an example JSON object for profile settings."#;
                 excluded_tools: vec![],
             },
         );
-        match build_channel_by_id(&config, "voice-call") {
+        let config_arc = Arc::new(RwLock::new(config));
+        match build_channel_by_id(&config_arc, "voice-call") {
             Ok(channel) => assert_eq!(channel.name(), "voice_call"),
             Err(e) => panic!("should succeed when voice-call is configured: {e}"),
         }

@@ -107,7 +107,10 @@ fn scan_dir(dir: &Path, violations: &mut Vec<String>) {
         }
         let display = path.display().to_string();
         // Skip canonical-SOT files entirely.
-        if ALLOWED_PATHS.iter().any(|allowed| display.contains(allowed)) {
+        if ALLOWED_PATHS
+            .iter()
+            .any(|allowed| display.contains(allowed))
+        {
             continue;
         }
         let Ok(src) = fs::read_to_string(&path) else {
@@ -130,9 +133,7 @@ fn scan_dir(dir: &Path, violations: &mut Vec<String>) {
             if !has_bad_name {
                 continue;
             }
-            let has_bad_type = FORBIDDEN_TYPE_SUBSTRINGS
-                .iter()
-                .any(|t| line.contains(t));
+            let has_bad_type = FORBIDDEN_TYPE_SUBSTRINGS.iter().any(|t| line.contains(t));
             if !has_bad_type {
                 continue;
             }

@@ -41,7 +41,7 @@ use axum::{
     response::{IntoResponse, Json},
     routing::{delete, get, patch, post},
 };
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -354,7 +354,7 @@ fn normalize_max_keys(configured: usize, fallback: usize) -> usize {
 /// Shared state for all axum handlers
 #[derive(Clone)]
 pub struct AppState {
-    pub config: Arc<Mutex<Config>>,
+    pub config: Arc<RwLock<Config>>,
     pub model_provider: Arc<dyn ModelProvider>,
     pub model: String,
     pub temperature: f64,
@@ -449,7 +449,7 @@ pub async fn run_gateway(
              Docker/VM: if you are running inside a container or VM, this is expected."
         );
     }
-    let config_state = Arc::new(Mutex::new(config.clone()));
+    let config_state = Arc::new(RwLock::new(config.clone()));
 
     // ── Hooks ──────────────────────────────────────────────────────
     let hooks: Option<std::sync::Arc<zeroclaw_runtime::hooks::HookRunner>> = if config.hooks.enabled
@@ -708,11 +708,18 @@ pub async fn run_gateway(
         .get("default")
         .filter(|wa| wa.is_cloud_config())
         .map(|wa| {
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_state.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("whatsapp", &alias))
+            };
             Arc::new(WhatsAppChannel::new(
                 wa.access_token.clone().unwrap_or_default(),
                 wa.phone_number_id.clone().unwrap_or_default(),
                 wa.verify_token.clone().unwrap_or_default(),
-                wa.allowed_numbers.clone(),
+                alias,
+                peer_resolver,
             ))
         });
 
@@ -733,10 +740,17 @@ pub async fn run_gateway(
 
     // Linq channel (if configured)
     let linq_channel: Option<Arc<LinqChannel>> = config.channels.linq.values().next().map(|lq| {
+        let alias = "default".to_string();
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_state.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("linq", &alias))
+        };
         Arc::new(LinqChannel::new(
             lq.api_token.clone(),
             lq.from_phone.clone(),
-            lq.allowed_senders.clone(),
+            alias,
+            peer_resolver,
         ))
     });
 
@@ -758,12 +772,19 @@ pub async fn run_gateway(
     // WATI channel (if configured)
     let wati_channel: Option<Arc<WatiChannel>> =
         config.channels.wati.values().next().map(|wati_cfg| {
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_state.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("wati", &alias))
+            };
             Arc::new(
                 WatiChannel::new(
                     wati_cfg.api_token.clone(),
                     wati_cfg.api_url.clone(),
                     wati_cfg.tenant_id.clone(),
-                    wati_cfg.allowed_numbers.clone(),
+                    alias,
+                    peer_resolver,
                 )
                 .with_transcription(config.transcription.clone()),
             )
@@ -772,11 +793,22 @@ pub async fn run_gateway(
     // Nextcloud Talk channel (if configured)
     let nextcloud_talk_channel: Option<Arc<NextcloudTalkChannel>> =
         config.channels.nextcloud_talk.values().next().map(|nc| {
+            let alias = "default".to_string();
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_state.clone();
+                let alias = alias.clone();
+                Arc::new(move || {
+                    cfg_arc
+                        .read()
+                        .channel_external_peers("nextcloud_talk", &alias)
+                })
+            };
             Arc::new(NextcloudTalkChannel::new(
                 nc.base_url.clone(),
                 nc.app_token.clone(),
                 nc.bot_name.clone().unwrap_or_default(),
-                nc.allowed_users.clone(),
+                alias,
+                peer_resolver,
             ))
         });
 
@@ -807,7 +839,15 @@ pub async fn run_gateway(
             .gmail_push
             .iter()
             .find(|(alias, _)| active.contains(&format!("gmail_push.{alias}")))
-            .map(|(_, gp)| Arc::new(GmailPushChannel::new(gp.clone())))
+            .map(|(alias, gp)| {
+                let alias = alias.clone();
+                let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                    let cfg_arc = config_state.clone();
+                    let alias = alias.clone();
+                    Arc::new(move || cfg_arc.read().channel_external_peers("gmail_push", &alias))
+                };
+                Arc::new(GmailPushChannel::new(gp.clone(), alias, peer_resolver))
+            })
     };
 
     // ── Session persistence for WS chat ─────────────────────
@@ -1526,11 +1566,11 @@ async fn handle_pair(
     }
 }
 
-async fn persist_pairing_tokens(config: Arc<Mutex<Config>>, pairing: &PairingGuard) -> Result<()> {
+async fn persist_pairing_tokens(config: Arc<RwLock<Config>>, pairing: &PairingGuard) -> Result<()> {
     let paired_tokens = pairing.tokens();
     // This is needed because parking_lot's guard is not Send so we clone the inner
     // this should be removed once async mutexes are used everywhere
-    let mut updated_cfg = { config.lock().clone() };
+    let mut updated_cfg = { config.read().clone() };
     updated_cfg.gateway.paired_tokens = paired_tokens;
     updated_cfg
         .save()
@@ -1538,7 +1578,7 @@ async fn persist_pairing_tokens(config: Arc<Mutex<Config>>, pairing: &PairingGua
         .context("Failed to persist paired tokens to config.toml")?;
 
     // Keep shared runtime config in sync with persisted tokens.
-    *config.lock() = updated_cfg;
+    *config.write() = updated_cfg;
     Ok(())
 }
 
@@ -1619,7 +1659,7 @@ async fn run_gateway_chat_with_tools(
 
     #[cfg(not(test))]
     {
-        let config = state.config.lock().clone();
+        let config = state.config.read().clone();
         // Legacy: webhook chat / SSE / pairing endpoints don't yet
         // accept an explicit agent in the request payload. Pick the
         // migration-synthesized "default" agent (or first enabled) until
@@ -1810,7 +1850,7 @@ async fn handle_webhook(
 
     let provider_label = state
         .config
-        .lock()
+        .read()
         .first_model_provider_type()
         .unwrap_or("unknown")
         .to_string();
@@ -2746,7 +2786,7 @@ mod tests {
     use axum::http::HeaderValue;
     use axum::response::IntoResponse;
     use http_body_util::BodyExt;
-    use parking_lot::Mutex;
+    use parking_lot::{Mutex, RwLock};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use zeroclaw_api::channel::ChannelMessage;
     use zeroclaw_memory::{Memory, MemoryCategory, MemoryEntry};
@@ -2872,7 +2912,7 @@ mod tests {
     #[tokio::test]
     async fn metrics_endpoint_returns_hint_when_prometheus_is_disabled() {
         let state = AppState {
-            config: Arc::new(Mutex::new(Config::default())),
+            config: Arc::new(RwLock::new(Config::default())),
             model_provider: Arc::new(MockModelProvider::default()),
             model: "test-model".into(),
             temperature: 0.0,
@@ -2946,7 +2986,7 @@ mod tests {
 
         let observer: Arc<dyn zeroclaw_runtime::observability::Observer> = Arc::new(wrapped);
         let state = AppState {
-            config: Arc::new(Mutex::new(Config::default())),
+            config: Arc::new(RwLock::new(Config::default())),
             model_provider: Arc::new(MockModelProvider::default()),
             model: "test-model".into(),
             temperature: 0.0,
@@ -3149,14 +3189,14 @@ mod tests {
         let token = guard.try_pair(&code, "test_client").await.unwrap().unwrap();
         assert!(guard.is_authenticated(&token));
 
-        let shared_config = Arc::new(Mutex::new(config));
+        let shared_config = Arc::new(RwLock::new(config));
         Box::pin(persist_pairing_tokens(shared_config.clone(), &guard))
             .await
             .unwrap();
 
         // In-memory tokens should remain as plaintext 64-char hex hashes.
         let plaintext = {
-            let in_memory = shared_config.lock();
+            let in_memory = shared_config.read();
             assert_eq!(in_memory.gateway.paired_tokens.len(), 1);
             in_memory.gateway.paired_tokens[0].clone()
         };
@@ -3455,7 +3495,7 @@ mod tests {
         let memory: Arc<dyn Memory> = Arc::new(MockMemory);
 
         let state = AppState {
-            config: Arc::new(Mutex::new(Config::default())),
+            config: Arc::new(RwLock::new(Config::default())),
             model_provider,
             model: "test-model".into(),
             temperature: 0.0,
@@ -3537,7 +3577,7 @@ mod tests {
         let memory: Arc<dyn Memory> = tracking_impl.clone();
 
         let state = AppState {
-            config: Arc::new(Mutex::new(Config::default())),
+            config: Arc::new(RwLock::new(Config::default())),
             model_provider,
             model: "test-model".into(),
             temperature: 0.0,
@@ -3631,7 +3671,7 @@ mod tests {
         let secret = generate_test_secret();
 
         let state = AppState {
-            config: Arc::new(Mutex::new(Config::default())),
+            config: Arc::new(RwLock::new(Config::default())),
             model_provider,
             model: "test-model".into(),
             temperature: 0.0,
@@ -3697,7 +3737,7 @@ mod tests {
         let wrong_secret = generate_test_secret();
 
         let state = AppState {
-            config: Arc::new(Mutex::new(Config::default())),
+            config: Arc::new(RwLock::new(Config::default())),
             model_provider,
             model: "test-model".into(),
             temperature: 0.0,
@@ -3768,7 +3808,7 @@ mod tests {
         let secret = generate_test_secret();
 
         let state = AppState {
-            config: Arc::new(Mutex::new(Config::default())),
+            config: Arc::new(RwLock::new(Config::default())),
             model_provider,
             model: "test-model".into(),
             temperature: 0.0,
@@ -3844,7 +3884,7 @@ mod tests {
         let memory: Arc<dyn Memory> = Arc::new(MockMemory);
 
         let state = AppState {
-            config: Arc::new(Mutex::new(Config::default())),
+            config: Arc::new(RwLock::new(Config::default())),
             model_provider,
             model: "test-model".into(),
             temperature: 0.0,
@@ -3903,11 +3943,14 @@ mod tests {
         let model_provider: Arc<dyn ModelProvider> = provider_impl.clone();
         let memory: Arc<dyn Memory> = Arc::new(MockMemory);
 
+        let alias = "nextcloud_talk_test_alias";
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = Arc::new(Vec::new);
         let channel = Arc::new(NextcloudTalkChannel::new(
             "https://cloud.example.com".into(),
             "app-token".into(),
             String::new(),
-            vec!["*".into()],
+            alias,
+            peer_resolver,
         ));
 
         let secret = "nextcloud-test-secret";
@@ -3917,7 +3960,7 @@ mod tests {
         let invalid_signature = "deadbeef";
 
         let state = AppState {
-            config: Arc::new(Mutex::new(Config::default())),
+            config: Arc::new(RwLock::new(Config::default())),
             model_provider,
             model: "test-model".into(),
             temperature: 0.0,

@@ -169,8 +169,19 @@ pub struct WatchResponse {
 /// Incoming messages arrive via webhook (`POST /webhook/gmail`) and are
 /// dispatched to the agent.  The `listen` method registers the Gmail watch
 /// subscription and periodically renews it.
+///
+/// Inbound sender authorization lives in `peer_groups` in V3; this channel
+/// resolves the authorized senders at message-time via [`Self::peer_resolver`]
+/// rather than reading a per-channel `allowed_senders` field (it no longer
+/// exists on `GmailPushConfig`).
 pub struct GmailPushChannel {
     pub config: GmailPushConfig,
+    /// The alias key under `[channels.gmail.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    pub alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    pub peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     http: Client,
     last_history_id: Arc<Mutex<u64>>,
     /// Sender half injected by the gateway to forward webhook-received messages.
@@ -178,13 +189,19 @@ pub struct GmailPushChannel {
 }
 
 impl GmailPushChannel {
-    pub fn new(config: GmailPushConfig) -> Self {
+    pub fn new(
+        config: GmailPushConfig,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    ) -> Self {
         let http = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
             .expect("failed to build HTTP client");
         Self {
             config,
+            alias: alias.into(),
+            peer_resolver,
             http,
             last_history_id: Arc::new(Mutex::new(0)),
             tx: Arc::new(Mutex::new(None)),
@@ -316,15 +333,28 @@ impl GmailPushChannel {
     }
 
     /// Check if a sender email is in the allowlist.
+    ///
+    /// Email allowlist entries support three syntaxes — preserved from
+    /// the legacy `GmailPushConfig::allowed_senders` semantics:
+    /// - `*`                wildcard, allow anyone.
+    /// - `user@host`        full address, case-insensitive.
+    /// - `@host` / `host`   domain match, case-insensitive.
     pub fn is_sender_allowed(&self, email: &str) -> bool {
-        if self.config.allowed_senders.is_empty() {
+        let peers = (self.peer_resolver)();
+        Self::is_email_sender_allowed(&peers, email)
+    }
+
+    /// Pure, testable predicate that applies the email-allowlist match
+    /// semantics against an already-resolved peer list.
+    fn is_email_sender_allowed(peers: &[String], email: &str) -> bool {
+        if peers.is_empty() {
             return false;
         }
-        if self.config.allowed_senders.iter().any(|a| a == "*") {
+        if peers.iter().any(|a| a == "*") {
             return true;
         }
         let email_lower = email.to_lowercase();
-        self.config.allowed_senders.iter().any(|allowed| {
+        peers.iter().any(|allowed| {
             if allowed.starts_with('@') {
                 email_lower.ends_with(&allowed.to_lowercase())
             } else if allowed.contains('@') {
@@ -932,37 +962,52 @@ mod tests {
 
     // ── Sender allowlist ─────────────────────────────────────────
 
+    fn empty_resolver() -> Arc<dyn Fn() -> Vec<String> + Send + Sync> {
+        Arc::new(Vec::new)
+    }
+
+    fn resolver_from(peers: Vec<String>) -> Arc<dyn Fn() -> Vec<String> + Send + Sync> {
+        Arc::new(move || peers.clone())
+    }
+
     #[test]
     fn sender_allowed_empty_denies() {
-        let ch = GmailPushChannel::new(GmailPushConfig::default());
+        let ch = GmailPushChannel::new(
+            GmailPushConfig::default(),
+            "gmail_push_test_alias",
+            empty_resolver(),
+        );
         assert!(!ch.is_sender_allowed("anyone@example.com"));
     }
 
     #[test]
     fn sender_allowed_wildcard() {
-        let ch = GmailPushChannel::new(GmailPushConfig {
-            allowed_senders: vec!["*".into()],
-            ..Default::default()
-        });
+        let ch = GmailPushChannel::new(
+            GmailPushConfig::default(),
+            "gmail_push_test_alias",
+            resolver_from(vec!["*".into()]),
+        );
         assert!(ch.is_sender_allowed("anyone@example.com"));
     }
 
     #[test]
     fn sender_allowed_specific_email() {
-        let ch = GmailPushChannel::new(GmailPushConfig {
-            allowed_senders: vec!["user@example.com".into()],
-            ..Default::default()
-        });
+        let ch = GmailPushChannel::new(
+            GmailPushConfig::default(),
+            "gmail_push_test_alias",
+            resolver_from(vec!["user@example.com".into()]),
+        );
         assert!(ch.is_sender_allowed("user@example.com"));
         assert!(!ch.is_sender_allowed("other@example.com"));
     }
 
     #[test]
     fn sender_allowed_domain_with_at() {
-        let ch = GmailPushChannel::new(GmailPushConfig {
-            allowed_senders: vec!["@example.com".into()],
-            ..Default::default()
-        });
+        let ch = GmailPushChannel::new(
+            GmailPushConfig::default(),
+            "gmail_push_test_alias",
+            resolver_from(vec!["@example.com".into()]),
+        );
         assert!(ch.is_sender_allowed("user@example.com"));
         assert!(ch.is_sender_allowed("admin@example.com"));
         assert!(!ch.is_sender_allowed("user@other.com"));
@@ -970,10 +1015,11 @@ mod tests {
 
     #[test]
     fn sender_allowed_domain_without_at() {
-        let ch = GmailPushChannel::new(GmailPushConfig {
-            allowed_senders: vec!["example.com".into()],
-            ..Default::default()
-        });
+        let ch = GmailPushChannel::new(
+            GmailPushConfig::default(),
+            "gmail_push_test_alias",
+            resolver_from(vec!["example.com".into()]),
+        );
         assert!(ch.is_sender_allowed("user@example.com"));
         assert!(!ch.is_sender_allowed("user@other.com"));
     }
@@ -1001,7 +1047,6 @@ mod tests {
         assert!(config.topic.is_empty());
         assert_eq!(config.label_filter, vec!["INBOX"]);
         assert!(config.oauth_token.is_empty());
-        assert!(config.allowed_senders.is_empty());
         assert!(config.webhook_url.is_empty());
     }
 
@@ -1019,7 +1064,6 @@ mod tests {
             topic: "projects/test/topics/gmail".into(),
             label_filter: vec!["INBOX".into(), "IMPORTANT".into()],
             oauth_token: "test-token".into(),
-            allowed_senders: vec!["@example.com".into()],
             webhook_url: "https://example.com/webhook/gmail".into(),
             webhook_secret: "my-secret".into(),
             excluded_tools: vec![],
@@ -1035,7 +1079,11 @@ mod tests {
 
     #[test]
     fn channel_name() {
-        let ch = GmailPushChannel::new(GmailPushConfig::default());
+        let ch = GmailPushChannel::new(
+            GmailPushConfig::default(),
+            "gmail_push_test_alias",
+            empty_resolver(),
+        );
         assert_eq!(ch.name(), "gmail_push");
     }
 

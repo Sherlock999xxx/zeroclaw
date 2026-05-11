@@ -235,7 +235,7 @@ pub async fn handle_ws_nodes(
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     // Auth: check node auth token if configured
-    let nodes_config = state.config.lock().nodes.clone();
+    let nodes_config = state.config.read().nodes.clone();
     if let Some(ref expected_token) = nodes_config.auth_token {
         let token = extract_node_ws_token(&headers, params.token.as_deref()).unwrap_or("");
         if token != expected_token {

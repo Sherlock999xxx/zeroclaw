@@ -280,7 +280,12 @@ const AUTH_RETRY_MAX_BACKOFF_MS: u64 = 8_000;
 pub struct QQChannel {
     app_id: String,
     app_secret: String,
-    allowed_users: Vec<String>,
+    /// The alias key under `[channels.qq.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     /// Cached access token + expiry timestamp.
     token_cache: Arc<RwLock<Option<(String, u64)>>>,
     /// Message deduplication set.
@@ -301,11 +306,17 @@ pub struct QQChannel {
 }
 
 impl QQChannel {
-    pub fn new(app_id: String, app_secret: String, allowed_users: Vec<String>) -> Self {
+    pub fn new(
+        app_id: String,
+        app_secret: String,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    ) -> Self {
         Self {
             app_id,
             app_secret,
-            allowed_users,
+            alias: alias.into(),
+            peer_resolver,
             token_cache: Arc::new(RwLock::new(None)),
             dedup: Arc::new(RwLock::new(HashSet::new())),
             workspace_dir: None,
@@ -315,6 +326,12 @@ impl QQChannel {
             session_id: Arc::new(RwLock::new(None)),
             last_sequence: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Return the alias under `[channels.qq.<alias>]` that this
+    /// channel handle is bound to.
+    pub fn alias(&self) -> &str {
+        &self.alias
     }
 
     /// Configure workspace directory for saving downloaded attachments.
@@ -334,11 +351,8 @@ impl QQChannel {
     }
 
     fn is_user_allowed(&self, user_id: &str) -> bool {
-        crate::allowlist::is_user_allowed(
-            &self.allowed_users,
-            user_id,
-            crate::allowlist::Match::Sensitive,
-        )
+        let peers = (self.peer_resolver)();
+        crate::allowlist::is_user_allowed(&peers, user_id, crate::allowlist::Match::Sensitive)
     }
 
     /// Fetch an access token from QQ's OAuth2 endpoint.
@@ -1422,38 +1436,59 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn make_channel() -> QQChannel {
-        QQChannel::new("id".into(), "secret".into(), vec![])
-    }
-
     #[test]
     fn test_name() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         assert_eq!(ch.name(), "qq");
     }
 
     #[test]
     fn test_user_allowed_wildcard() {
-        let ch = QQChannel::new("id".into(), "secret".into(), vec!["*".into()]);
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         assert!(ch.is_user_allowed("anyone"));
     }
 
     #[test]
     fn test_user_allowed_specific() {
-        let ch = QQChannel::new("id".into(), "secret".into(), vec!["user123".into()]);
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(|| vec!["user123".into()]),
+        );
         assert!(ch.is_user_allowed("user123"));
         assert!(!ch.is_user_allowed("other"));
     }
 
     #[test]
     fn test_user_denied_empty() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         assert!(!ch.is_user_allowed("anyone"));
     }
 
     #[tokio::test]
     async fn test_dedup() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         assert!(!ch.is_duplicate("msg1").await);
         assert!(ch.is_duplicate("msg1").await);
         assert!(!ch.is_duplicate("msg2").await);
@@ -1461,22 +1496,51 @@ mod tests {
 
     #[tokio::test]
     async fn test_dedup_empty_id() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         assert!(!ch.is_duplicate("").await);
         assert!(!ch.is_duplicate("").await);
     }
 
     #[test]
-    fn test_config_serde() {
-        let toml_str = r#"
+    fn v2_allowed_users_fold_into_peer_groups() {
+        // V2 `[channels.qq].allowed_users` migrates into a synthesized
+        // `[peer_groups.qq_default]` block in V3, while the channel block
+        // itself survives under the bridge alias `default`.
+        let v2_toml = r#"
+schema_version = 2
+
+[channels.qq]
+enabled = true
 app_id = "12345"
 app_secret = "secret_abc"
 allowed_users = ["user1"]
 "#;
-        let config: zeroclaw_config::schema::QQConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.app_id, "12345");
-        assert_eq!(config.app_secret, "secret_abc");
-        assert_eq!(config.allowed_users, vec!["user1"]);
+        let cfg = zeroclaw_config::migration::migrate_to_current(v2_toml)
+            .expect("V2 qq config migrates to V3");
+        let qq = cfg
+            .channels
+            .qq
+            .get("default")
+            .expect("V2 qq folds under alias `default`");
+        assert_eq!(qq.app_id, "12345");
+        assert_eq!(qq.app_secret, "secret_abc");
+
+        let group = cfg
+            .peer_groups
+            .get("qq_default")
+            .expect("qq allow-list synthesizes [peer_groups.qq_default]");
+        assert_eq!(group.channel.as_str(), "qq.default");
+        let peers: Vec<&str> = group
+            .external_peers
+            .iter()
+            .map(|p| p.username.as_str())
+            .collect();
+        assert_eq!(peers, vec!["user1"]);
     }
 
     // --- Marker parsing tests ---
@@ -1645,7 +1709,12 @@ allowed_users = ["user1"]
 
     #[tokio::test]
     async fn test_compose_message_content_text_only() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         let payload = json!({ "content": "  hello world  " });
         assert_eq!(
             ch.compose_message_content(&payload).await,
@@ -1655,7 +1724,12 @@ allowed_users = ["user1"]
 
     #[tokio::test]
     async fn test_compose_message_content_image_attachment() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         let payload = json!({
             "content": "   ",
             "attachments": [{
@@ -1671,7 +1745,12 @@ allowed_users = ["user1"]
 
     #[tokio::test]
     async fn test_compose_message_content_text_and_attachments() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         let payload = json!({
             "content": "Here is an image",
             "attachments": [
@@ -1690,7 +1769,12 @@ allowed_users = ["user1"]
 
     #[tokio::test]
     async fn test_compose_all_attachment_types() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         let payload = json!({
             "content": "",
             "attachments": [
@@ -1709,7 +1793,12 @@ allowed_users = ["user1"]
 
     #[tokio::test]
     async fn test_compose_fixes_double_slash_url() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         let payload = json!({
             "content": "",
             "attachments": [{
@@ -1726,7 +1815,12 @@ allowed_users = ["user1"]
     #[tokio::test]
     async fn test_compose_fallback_no_workspace() {
         // Without workspace_dir, attachments use URLs directly
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         let payload = json!({
             "content": "text",
             "attachments": [{
@@ -1741,7 +1835,12 @@ allowed_users = ["user1"]
 
     #[tokio::test]
     async fn test_compose_drops_empty_url() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         let payload = json!({
             "content": "   ",
             "attachments": [{
@@ -1831,7 +1930,12 @@ allowed_users = ["user1"]
 
     #[tokio::test]
     async fn test_upload_cache_hit_and_miss() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         let key = QQChannel::upload_cache_key(b"test_data", "c2c", "user1", QQMediaFileType::Image);
 
         // Miss
@@ -1850,7 +1954,12 @@ allowed_users = ["user1"]
 
     #[tokio::test]
     async fn test_upload_cache_expired() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         let key = QQChannel::upload_cache_key(b"test_data", "group", "g1", QQMediaFileType::Video);
 
         // Set with 0 TTL (already expired considering 60s safety margin)
@@ -1865,7 +1974,12 @@ allowed_users = ["user1"]
 
     #[tokio::test]
     async fn test_reply_tracker_allows_up_to_limit() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         for _ in 0..REPLY_LIMIT {
             assert!(ch.check_reply_allowed("msg1").await);
         }
@@ -1875,7 +1989,12 @@ allowed_users = ["user1"]
 
     #[tokio::test]
     async fn test_reply_tracker_independent_msg_ids() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         assert!(ch.check_reply_allowed("msg_a").await);
         assert!(ch.check_reply_allowed("msg_b").await);
     }
@@ -1912,7 +2031,12 @@ allowed_users = ["user1"]
 
     #[tokio::test]
     async fn test_get_token_returns_cached_token_without_fetch() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         // Pre-populate the token cache with a token that expires far in the future
         let future_expiry = now_secs() + 3600;
         *ch.token_cache.write().await = Some(("cached_tok".to_string(), future_expiry));
@@ -1924,7 +2048,12 @@ allowed_users = ["user1"]
 
     #[tokio::test]
     async fn test_get_token_refreshes_expired_cache() {
-        let ch = make_channel();
+        let ch = QQChannel::new(
+            "id".into(),
+            "secret".into(),
+            "qq_test_alias",
+            Arc::new(Vec::new),
+        );
         // Pre-populate with an already-expired token
         *ch.token_cache.write().await = Some(("old_tok".to_string(), 0));
 

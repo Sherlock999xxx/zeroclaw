@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use zeroclaw_api::channel::{Channel, ChannelMessage, SendMessage};
+use zeroclaw_config::schema::Config;
 use zeroclaw_runtime::i18n;
 use zeroclaw_runtime::security::pairing::PairingGuard;
 
@@ -369,8 +370,16 @@ pub struct WeChatChannel {
     api_base_url: String,
     /// CDN base URL.
     cdn_base_url: String,
-    /// Allowed WeChat user IDs. Empty = deny all, `"*"` = allow all.
-    allowed_users: Arc<RwLock<Vec<String>>>,
+    /// The alias key under `[channels.wechat.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    /// Optional pairing-persist handle. `None` in tests; `Some` in the
+    /// long-running daemon, wired via `.with_persistence(config)`. RwLock so
+    /// concurrent peer reads from sibling channels don't serialize.
+    persist: Option<Arc<parking_lot::RwLock<Config>>>,
     /// Pairing guard for /bind flow.
     pairing: Option<PairingGuard>,
     /// HTTP client for API requests.
@@ -564,7 +573,8 @@ fn extract_text_from_items(items: &[serde_json::Value]) -> String {
 
 impl WeChatChannel {
     pub fn new(
-        allowed_users: Vec<String>,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
         api_base_url: Option<String>,
         cdn_base_url: Option<String>,
         state_dir: Option<PathBuf>,
@@ -572,7 +582,10 @@ impl WeChatChannel {
         let api_base_url = https_base_url("api_base_url", api_base_url, DEFAULT_API_BASE_URL)?;
         let cdn_base_url = https_base_url("cdn_base_url", cdn_base_url, CDN_BASE_URL)?;
 
-        let pairing = if allowed_users.is_empty() {
+        let has_peers = !peer_resolver().is_empty();
+        let pairing = if has_peers {
+            None
+        } else {
             let guard = PairingGuard::new(true, &[]);
             if let Some(code) = guard.pairing_code() {
                 println!(
@@ -588,8 +601,6 @@ impl WeChatChannel {
                 );
             }
             Some(guard)
-        } else {
-            None
         };
 
         let state_dir = state_dir.unwrap_or_else(|| {
@@ -603,7 +614,9 @@ impl WeChatChannel {
             account_id: RwLock::new(None),
             api_base_url,
             cdn_base_url,
-            allowed_users: Arc::new(RwLock::new(allowed_users)),
+            alias: alias.into(),
+            peer_resolver,
+            persist: None,
             pairing,
             client: reqwest::Client::new(),
             context_tokens: Mutex::new(HashMap::new()),
@@ -621,6 +634,15 @@ impl WeChatChannel {
 
     pub fn with_workspace_dir(mut self, dir: PathBuf) -> Self {
         self.workspace_dir = Some(dir);
+        self
+    }
+
+    /// Wire the shared Config handle so `persist_allowed_identity` can
+    /// write a paired user into `peer_groups` and save. The long-running
+    /// daemon sets this from the orchestrator; tests and one-shot
+    /// callers leave it unset (pairing works at runtime, doesn't persist).
+    pub fn with_persistence(mut self, config: Arc<parking_lot::RwLock<Config>>) -> Self {
+        self.persist = Some(config);
         self
     }
 
@@ -714,27 +736,58 @@ impl WeChatChannel {
     }
 
     fn is_user_allowed(&self, user_id: &str) -> bool {
-        self.allowed_users
-            .read()
-            .map(|users| {
-                crate::allowlist::is_user_allowed(
-                    &users,
-                    user_id,
-                    crate::allowlist::Match::Sensitive,
-                )
-            })
-            .unwrap_or(false)
+        let peers = (self.peer_resolver)();
+        crate::allowlist::is_user_allowed(&peers, user_id, crate::allowlist::Match::Sensitive)
     }
 
-    fn add_allowed_identity_runtime(&self, identity: &str) {
-        if identity.is_empty() {
-            return;
+    async fn persist_allowed_identity(&self, identity: &str) -> anyhow::Result<()> {
+        use zeroclaw_config::multi_agent::{PeerExternal, PeerGroupConfig, PeerUsername};
+        use zeroclaw_config::providers::ChannelRef;
+
+        let Some(config) = &self.persist else {
+            tracing::warn!(
+                "WeChat: paired identity {identity} not persisted (no persistence handle wired)"
+            );
+            return Ok(());
+        };
+        let normalized = identity.trim().to_string();
+        if normalized.is_empty() {
+            anyhow::bail!("Cannot persist empty WeChat identity");
         }
-        if let Ok(mut users) = self.allowed_users.write()
-            && !users.iter().any(|u| u == identity)
-        {
-            users.push(identity.to_string());
-        }
+        let group_name = format!("wechat_{}", self.alias);
+        let channel_ref = ChannelRef::new(format!("wechat.{}", self.alias));
+        let snapshot = {
+            let mut cfg = config.write();
+            if !cfg.channels.wechat.contains_key(&self.alias) {
+                anyhow::bail!(
+                    "Missing [channels.wechat.{}] section. Run `zeroclaw onboard --channels-only` first",
+                    self.alias
+                );
+            }
+            let group = cfg
+                .peer_groups
+                .entry(group_name)
+                .or_insert_with(|| PeerGroupConfig {
+                    channel: channel_ref,
+                    ..PeerGroupConfig::default()
+                });
+            if group
+                .external_peers
+                .iter()
+                .any(|p| p.username.as_str() == normalized)
+            {
+                return Ok(());
+            }
+            group.external_peers.push(PeerExternal {
+                username: PeerUsername::new(normalized),
+            });
+            cfg.clone()
+        };
+        snapshot
+            .save()
+            .await
+            .context("Failed to persist WeChat peer to config.toml")?;
+        Ok(())
     }
 
     fn extract_bind_code(text: &str) -> Option<&str> {
@@ -1456,9 +1509,11 @@ impl WeChatChannel {
             *a = Some(account_id.clone());
         }
 
-        // If a user scanned, auto-add them to allowed list
-        if let Some(ref uid) = user_id {
-            self.add_allowed_identity_runtime(uid);
+        // If a user scanned, persist them as an allowed peer
+        if let Some(ref uid) = user_id
+            && let Err(e) = self.persist_allowed_identity(uid).await
+        {
+            tracing::warn!("WeChat: failed to persist scanned identity {uid}: {e}");
         }
 
         // Persist to disk
@@ -1628,7 +1683,11 @@ impl WeChatChannel {
             if let Some(pairing) = self.pairing.as_ref() {
                 match pairing.try_pair(code, from_user_id).await {
                     Ok(Some(_token)) => {
-                        self.add_allowed_identity_runtime(from_user_id);
+                        if let Err(e) = self.persist_allowed_identity(from_user_id).await {
+                            tracing::warn!(
+                                "WeChat: failed to persist bound identity {from_user_id}: {e}"
+                            );
+                        }
                         let ctx = self.get_context_token(from_user_id);
                         let reply = wechat_cli_string("cli-wechat-bound-success");
                         let _ = self.send_text(from_user_id, &reply, ctx.as_deref()).await;
@@ -1997,7 +2056,8 @@ mod tests {
     #[test]
     fn wechat_channel_name() {
         let ch = WeChatChannel::new(
-            vec!["*".into()],
+            "wechat_test_alias",
+            Arc::new(|| vec!["*".into()]),
             None,
             None,
             Some("/tmp/test-wechat".into()),
@@ -2009,7 +2069,8 @@ mod tests {
     #[test]
     fn wechat_channel_rejects_http_api_base_url() {
         let result = WeChatChannel::new(
-            vec!["*".into()],
+            "wechat_test_alias",
+            Arc::new(|| vec!["*".into()]),
             Some("http://ilink.example.test".into()),
             None,
             Some("/tmp/test-wechat".into()),
@@ -2023,7 +2084,8 @@ mod tests {
     #[test]
     fn wechat_channel_rejects_http_cdn_base_url() {
         let result = WeChatChannel::new(
-            vec!["*".into()],
+            "wechat_test_alias",
+            Arc::new(|| vec!["*".into()]),
             None,
             Some("http://cdn.example.test".into()),
             Some("/tmp/test-wechat".into()),
@@ -2082,7 +2144,8 @@ mod tests {
     #[test]
     fn is_user_allowed_wildcard() {
         let ch = WeChatChannel::new(
-            vec!["*".into()],
+            "wechat_test_alias",
+            Arc::new(|| vec!["*".into()]),
             None,
             None,
             Some("/tmp/test-wechat".into()),
@@ -2094,7 +2157,8 @@ mod tests {
     #[test]
     fn is_user_allowed_specific() {
         let ch = WeChatChannel::new(
-            vec!["user1@im.wechat".into()],
+            "wechat_test_alias",
+            Arc::new(|| vec!["user1@im.wechat".into()]),
             None,
             None,
             Some("/tmp/test-wechat".into()),
@@ -2102,6 +2166,21 @@ mod tests {
         .unwrap();
         assert!(ch.is_user_allowed("user1@im.wechat"));
         assert!(!ch.is_user_allowed("user2@im.wechat"));
+    }
+
+    #[tokio::test]
+    async fn persist_allowed_identity_without_handle_warns_and_returns_ok() {
+        let ch = WeChatChannel::new(
+            "wechat_test_alias",
+            Arc::new(Vec::new),
+            None,
+            None,
+            Some("/tmp/test-wechat".into()),
+        )
+        .unwrap();
+        // No `.with_persistence(...)` wired — should not panic, returns Ok(()).
+        let result = ch.persist_allowed_identity("user_xyz@im.wechat").await;
+        assert!(result.is_ok());
     }
 
     #[test]

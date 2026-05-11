@@ -50,7 +50,12 @@ pub struct WhatsAppChannel {
     access_token: String,
     endpoint_id: String,
     verify_token: String,
-    allowed_numbers: Vec<String>,
+    /// The alias key under `[channels.whatsapp.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     /// Per-channel proxy URL override.
     proxy_url: Option<String>,
     /// Compiled mention patterns for DM mention gating.
@@ -67,18 +72,26 @@ impl WhatsAppChannel {
         access_token: String,
         endpoint_id: String,
         verify_token: String,
-        allowed_numbers: Vec<String>,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     ) -> Self {
         Self {
             access_token,
             endpoint_id,
             verify_token,
-            allowed_numbers,
+            alias: alias.into(),
+            peer_resolver,
             proxy_url: None,
             dm_mention_patterns: Vec::new(),
             group_mention_patterns: Vec::new(),
             approval_timeout_secs: 300,
         }
+    }
+
+    /// Return the alias under `[channels.whatsapp.<alias>]` that this
+    /// channel handle is bound to.
+    pub fn alias(&self) -> &str {
+        &self.alias
     }
 
     pub fn with_approval_timeout_secs(mut self, secs: u64) -> Self {
@@ -206,7 +219,8 @@ impl WhatsAppChannel {
 
     /// Check if a phone number is allowed (E.164 format: +1234567890)
     fn is_number_allowed(&self, phone: &str) -> bool {
-        self.allowed_numbers.iter().any(|n| n == "*" || n == phone)
+        let peers = (self.peer_resolver)();
+        crate::allowlist::is_user_allowed(&peers, phone, crate::allowlist::Match::Sensitive)
     }
 
     /// Get the verify token for webhook verification
@@ -447,50 +461,77 @@ impl Channel for WhatsAppChannel {
 mod tests {
     use super::*;
 
-    fn make_channel() -> WhatsAppChannel {
-        WhatsAppChannel::new(
+    #[test]
+    fn whatsapp_channel_name() {
+        let ch = WhatsAppChannel::new(
             "test-token".into(),
             "123456789".into(),
             "verify-me".into(),
-            vec!["+1234567890".into()],
-        )
-    }
-
-    #[test]
-    fn whatsapp_channel_name() {
-        let ch = make_channel();
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         assert_eq!(ch.name(), "whatsapp");
     }
 
     #[test]
     fn whatsapp_verify_token() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         assert_eq!(ch.verify_token(), "verify-me");
     }
 
     #[test]
     fn whatsapp_number_allowed_exact() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         assert!(ch.is_number_allowed("+1234567890"));
         assert!(!ch.is_number_allowed("+9876543210"));
     }
 
     #[test]
     fn whatsapp_number_allowed_wildcard() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         assert!(ch.is_number_allowed("+1234567890"));
         assert!(ch.is_number_allowed("+9999999999"));
     }
 
     #[test]
     fn whatsapp_number_denied_empty() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec![]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(Vec::new),
+        );
         assert!(!ch.is_number_allowed("+1234567890"));
     }
 
     #[test]
     fn whatsapp_parse_empty_payload() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({});
         let msgs = ch.parse_webhook_payload(&payload);
         assert!(msgs.is_empty());
@@ -498,7 +539,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_valid_text_message() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "object": "whatsapp_business_account",
             "entry": [{
@@ -535,7 +582,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_unauthorized_number() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "object": "whatsapp_business_account",
             "entry": [{
@@ -558,7 +611,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_non_text_message_skipped() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -580,7 +639,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_multiple_messages() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -606,7 +671,8 @@ mod tests {
             "tok".into(),
             "123".into(),
             "ver".into(),
-            vec!["+1234567890".into()],
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
         );
         // API sends without +, but we normalize to +
         let payload = serde_json::json!({
@@ -631,7 +697,13 @@ mod tests {
 
     #[test]
     fn whatsapp_empty_text_skipped() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -657,7 +729,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_missing_entry_array() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "object": "whatsapp_business_account"
         });
@@ -667,7 +745,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_entry_not_array() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "entry": "not_an_array"
         });
@@ -677,7 +761,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_missing_changes_array() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{ "id": "123" }]
         });
@@ -687,7 +777,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_changes_not_array() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": "not_an_array"
@@ -699,7 +795,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_missing_value() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{ "field": "messages" }]
@@ -711,7 +813,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_missing_messages_array() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -727,7 +835,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_messages_not_array() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -743,7 +857,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_missing_from_field() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -763,7 +883,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_missing_text_body() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -787,7 +913,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_null_text_body() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -808,7 +940,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_invalid_timestamp_uses_current() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -831,7 +969,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_missing_timestamp_uses_current() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -852,7 +996,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_multiple_entries() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [
                 {
@@ -889,7 +1039,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_multiple_changes() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [
@@ -925,7 +1081,13 @@ mod tests {
     #[test]
     fn whatsapp_parse_status_update_ignored() {
         // Status updates have "statuses" instead of "messages"
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -945,7 +1107,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_audio_message_skipped() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -966,7 +1134,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_video_message_skipped() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -987,7 +1161,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_document_message_skipped() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1008,7 +1188,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_sticker_message_skipped() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1029,7 +1215,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_location_message_skipped() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1050,7 +1242,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_contacts_message_skipped() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1071,7 +1269,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_reaction_message_skipped() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1096,7 +1300,8 @@ mod tests {
             "tok".into(),
             "123".into(),
             "ver".into(),
-            vec!["+1111111111".into()],
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1111111111".into()]),
         );
         let payload = serde_json::json!({
             "entry": [{
@@ -1119,7 +1324,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_unicode_message() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1141,7 +1352,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_very_long_message() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let long_text = "A".repeat(10_000);
         let payload = serde_json::json!({
             "entry": [{
@@ -1164,7 +1381,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_whitespace_only_message_skipped() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1191,11 +1414,14 @@ mod tests {
             "tok".into(),
             "123".into(),
             "ver".into(),
-            vec![
-                "+1111111111".into(),
-                "+2222222222".into(),
-                "+3333333333".into(),
-            ],
+            "whatsapp_test_alias",
+            Arc::new(|| {
+                vec![
+                    "+1111111111".into(),
+                    "+2222222222".into(),
+                    "+3333333333".into(),
+                ]
+            }),
         );
         assert!(ch.is_number_allowed("+1111111111"));
         assert!(ch.is_number_allowed("+2222222222"));
@@ -1210,7 +1436,8 @@ mod tests {
             "tok".into(),
             "123".into(),
             "ver".into(),
-            vec!["+1234567890".into()],
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
         );
         assert!(ch.is_number_allowed("+1234567890"));
         // Different number should not match
@@ -1223,7 +1450,8 @@ mod tests {
             "tok".into(),
             "123".into(),
             "ver".into(),
-            vec!["+1234567890".into()],
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
         );
         // If API sends with +, we should still handle it
         let payload = serde_json::json!({
@@ -1251,7 +1479,8 @@ mod tests {
             "my-access-token".into(),
             "phone-id-123".into(),
             "my-verify-token".into(),
-            vec!["+111".into(), "+222".into()],
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+111".into(), "+222".into()]),
         );
         assert_eq!(ch.verify_token(), "my-verify-token");
         assert!(ch.is_number_allowed("+111"));
@@ -1261,7 +1490,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_empty_messages_array() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1277,7 +1512,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_empty_entry_array() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "entry": []
         });
@@ -1287,7 +1528,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_empty_changes_array() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": []
@@ -1299,7 +1546,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_newlines_preserved() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1321,7 +1574,13 @@ mod tests {
 
     #[test]
     fn whatsapp_parse_special_characters() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1347,26 +1606,6 @@ mod tests {
     // ══════════════════════════════════════════════════════════
     // MENTION-PATTERN GATING — Unit tests
     // ══════════════════════════════════════════════════════════
-
-    fn make_group_mention_channel() -> WhatsAppChannel {
-        WhatsAppChannel::new(
-            "test-token".into(),
-            "123456789".into(),
-            "verify-me".into(),
-            vec!["*".into()],
-        )
-        .with_group_mention_patterns(vec!["@?ZeroClaw".into()])
-    }
-
-    fn make_dm_mention_channel() -> WhatsAppChannel {
-        WhatsAppChannel::new(
-            "test-token".into(),
-            "123456789".into(),
-            "verify-me".into(),
-            vec!["*".into()],
-        )
-        .with_dm_mention_patterns(vec!["@?ZeroClaw".into()])
-    }
 
     // ── compile_mention_patterns ──
 
@@ -1575,23 +1814,41 @@ mod tests {
 
     #[test]
     fn whatsapp_with_group_mention_patterns_compiles() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec![])
-            .with_group_mention_patterns(vec!["@?bot".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(Vec::new),
+        )
+        .with_group_mention_patterns(vec!["@?bot".into()]);
         assert_eq!(ch.group_mention_patterns.len(), 1);
         assert!(ch.dm_mention_patterns.is_empty());
     }
 
     #[test]
     fn whatsapp_with_dm_mention_patterns_compiles() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec![])
-            .with_dm_mention_patterns(vec!["@?bot".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(Vec::new),
+        )
+        .with_dm_mention_patterns(vec!["@?bot".into()]);
         assert_eq!(ch.dm_mention_patterns.len(), 1);
         assert!(ch.group_mention_patterns.is_empty());
     }
 
     #[test]
     fn whatsapp_default_no_mention_patterns() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec![]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(Vec::new),
+        );
         assert!(ch.dm_mention_patterns.is_empty());
         assert!(ch.group_mention_patterns.is_empty());
     }
@@ -1645,7 +1902,14 @@ mod tests {
 
     #[test]
     fn whatsapp_group_mention_rejects_group_message_without_match() {
-        let ch = make_group_mention_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        )
+        .with_group_mention_patterns(vec!["@?ZeroClaw".into()]);
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1665,7 +1929,14 @@ mod tests {
     #[test]
     fn whatsapp_group_mention_dm_passes_through_without_match() {
         // group_mention_patterns configured but DMs should pass through
-        let ch = make_group_mention_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        )
+        .with_group_mention_patterns(vec!["@?ZeroClaw".into()]);
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1686,7 +1957,14 @@ mod tests {
 
     #[test]
     fn whatsapp_group_mention_accepts_and_strips_in_group() {
-        let ch = make_group_mention_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        )
+        .with_group_mention_patterns(vec!["@?ZeroClaw".into()]);
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1703,7 +1981,14 @@ mod tests {
 
     #[test]
     fn whatsapp_group_mention_strips_from_group_content() {
-        let ch = make_group_mention_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        )
+        .with_group_mention_patterns(vec!["@?ZeroClaw".into()]);
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1720,7 +2005,14 @@ mod tests {
 
     #[test]
     fn whatsapp_group_mention_drops_mention_only_group_message() {
-        let ch = make_group_mention_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        )
+        .with_group_mention_patterns(vec!["@?ZeroClaw".into()]);
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1739,7 +2031,14 @@ mod tests {
 
     #[test]
     fn whatsapp_group_mention_case_insensitive_group_match() {
-        let ch = make_group_mention_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        )
+        .with_group_mention_patterns(vec!["@?ZeroClaw".into()]);
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1756,7 +2055,13 @@ mod tests {
 
     #[test]
     fn whatsapp_no_patterns_passes_all_group_messages() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1773,7 +2078,14 @@ mod tests {
 
     #[test]
     fn whatsapp_group_mention_mixed_group_messages() {
-        let ch = make_group_mention_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        )
+        .with_group_mention_patterns(vec!["@?ZeroClaw".into()]);
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1795,8 +2107,14 @@ mod tests {
 
     #[test]
     fn whatsapp_group_mention_phone_pattern_in_group() {
-        let ch = WhatsAppChannel::new("tok".into(), "123".into(), "ver".into(), vec!["*".into()])
-            .with_group_mention_patterns(vec![r"\+?15555550123".into()]);
+        let ch = WhatsAppChannel::new(
+            "tok".into(),
+            "123".into(),
+            "ver".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        )
+        .with_group_mention_patterns(vec![r"\+?15555550123".into()]);
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1814,7 +2132,14 @@ mod tests {
     #[test]
     fn whatsapp_group_mention_dm_not_stripped() {
         // DMs should not have group mention patterns applied
-        let ch = make_group_mention_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        )
+        .with_group_mention_patterns(vec!["@?ZeroClaw".into()]);
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1836,7 +2161,14 @@ mod tests {
 
     #[test]
     fn whatsapp_dm_mention_rejects_dm_without_match() {
-        let ch = make_dm_mention_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        )
+        .with_dm_mention_patterns(vec!["@?ZeroClaw".into()]);
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1852,7 +2184,14 @@ mod tests {
 
     #[test]
     fn whatsapp_dm_mention_accepts_and_strips_in_dm() {
-        let ch = make_dm_mention_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        )
+        .with_dm_mention_patterns(vec!["@?ZeroClaw".into()]);
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1870,7 +2209,14 @@ mod tests {
     #[test]
     fn whatsapp_dm_mention_group_passes_through() {
         // dm_mention_patterns configured but group messages should pass through
-        let ch = make_dm_mention_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        )
+        .with_dm_mention_patterns(vec!["@?ZeroClaw".into()]);
         let payload = serde_json::json!({
             "entry": [{
                 "changes": [{
@@ -1891,7 +2237,13 @@ mod tests {
 
     #[test]
     fn approval_timeout_defaults_to_300_and_is_overridable() {
-        let ch = make_channel();
+        let ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
         assert_eq!(ch.approval_timeout_secs, 300);
         let ch2 = ch.with_approval_timeout_secs(60);
         assert_eq!(ch2.approval_timeout_secs, 60);
@@ -1903,8 +2255,20 @@ mod tests {
         // the gateway's — must see the same pending-approvals map so that a
         // reply intercepted on one instance resolves a token registered on
         // the other. Without the module-level static this test would fail.
-        let orchestrator_ch = make_channel();
-        let gateway_ch = make_channel();
+        let orchestrator_ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
+        let gateway_ch = WhatsAppChannel::new(
+            "test-token".into(),
+            "123456789".into(),
+            "verify-me".into(),
+            "whatsapp_test_alias",
+            Arc::new(|| vec!["+1234567890".into()]),
+        );
 
         let (tx, _rx) = oneshot::channel::<ChannelApprovalResponse>();
         {

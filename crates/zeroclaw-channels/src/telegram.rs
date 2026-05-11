@@ -1,13 +1,11 @@
 use anyhow::Context;
 use async_trait::async_trait;
-use directories::UserDirs;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use reqwest::multipart::{Form, Part};
 use std::fmt::Write as _;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::fs;
 use zeroclaw_api::channel::{Channel, ChannelMessage, SendMessage};
 use zeroclaw_config::schema::{Config, StreamMode};
 use zeroclaw_runtime::security::pairing::PairingGuard;
@@ -365,7 +363,18 @@ const TELEGRAM_MAX_FILE_DOWNLOAD_BYTES: u64 = 20 * 1024 * 1024;
 /// Telegram channel — long-polls the Bot API for updates
 pub struct TelegramChannel {
     bot_token: String,
-    allowed_users: Arc<RwLock<Vec<String>>>,
+    /// The alias key under `[channels.telegram.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    /// Optional pairing-persist handle. `None` in tests and one-shot
+    /// builds (pairing then doesn't survive restart). `Some` in the
+    /// long-running daemon, wired via `.with_persistence(config)`.
+    /// RwLock so concurrent peer reads from sibling channels don't
+    /// serialize; only the rare pairing-write path takes the exclusive lock.
+    persist: Option<Arc<RwLock<Config>>>,
     pairing: Option<PairingGuard>,
     client: reqwest::Client,
     typing_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -414,22 +423,29 @@ enum EditMessageResult {
 }
 
 impl TelegramChannel {
-    pub fn new(bot_token: String, allowed_users: Vec<String>, mention_only: bool) -> Self {
-        let normalized_allowed = Self::normalize_allowed_users(allowed_users);
-        let pairing = if normalized_allowed.is_empty() {
+    pub fn new(
+        bot_token: String,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+        mention_only: bool,
+    ) -> Self {
+        let has_peers = !peer_resolver().is_empty();
+        let pairing = if has_peers {
+            None
+        } else {
             let guard = PairingGuard::new(true, &[]);
             if let Some(code) = guard.pairing_code() {
                 println!("  🔐 Telegram pairing required. One-time bind code: {code}");
                 println!("     Send `{TELEGRAM_BIND_COMMAND} <code>` from your Telegram account.");
             }
             Some(guard)
-        } else {
-            None
         };
 
         Self {
             bot_token,
-            allowed_users: Arc::new(RwLock::new(normalized_allowed)),
+            alias: alias.into(),
+            peer_resolver,
+            persist: None,
             pairing,
             client: reqwest::Client::new(),
             stream_mode: StreamMode::Off,
@@ -599,68 +615,63 @@ impl TelegramChannel {
         value.trim().trim_start_matches('@').to_string()
     }
 
-    fn normalize_allowed_users(allowed_users: Vec<String>) -> Vec<String> {
-        allowed_users
-            .into_iter()
-            .map(|entry| Self::normalize_identity(&entry))
-            .filter(|entry| !entry.is_empty())
-            .collect()
-    }
-
-    async fn load_config_without_env() -> anyhow::Result<Config> {
-        let home = UserDirs::new()
-            .map(|u| u.home_dir().to_path_buf())
-            .context("Could not find home directory")?;
-        let zeroclaw_dir = home.join(".zeroclaw");
-        let config_path = zeroclaw_dir.join("config.toml");
-
-        let contents = fs::read_to_string(&config_path)
-            .await
-            .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
-        let mut config: Config = toml::from_str(&contents).context(
-            "Failed to parse config.toml — check [channels.telegram] section for syntax errors",
-        )?;
-        config.config_path = config_path;
-        config.workspace_dir = zeroclaw_dir.join("workspace");
-        Ok(config)
+    /// Wire the shared Config handle so `persist_allowed_identity` can
+    /// write a paired user into `peer_groups` and save. The long-running
+    /// daemon sets this from the orchestrator; tests and one-shot
+    /// callers leave it unset (pairing works at runtime, doesn't persist).
+    pub fn with_persistence(mut self, config: Arc<RwLock<Config>>) -> Self {
+        self.persist = Some(config);
+        self
     }
 
     async fn persist_allowed_identity(&self, identity: &str) -> anyhow::Result<()> {
-        let mut config = Self::load_config_without_env().await?;
-        let Some(telegram) = config.channels.telegram.get_mut("default") else {
-            anyhow::bail!(
-                "Missing [channels.telegram.default] section in config.toml. \
-                Add bot_token and allowed_users under [channels.telegram.default], \
-                or run `zeroclaw onboard --channels-only` to configure interactively"
-            );
-        };
+        use zeroclaw_config::multi_agent::{PeerExternal, PeerGroupConfig, PeerUsername};
+        use zeroclaw_config::providers::ChannelRef;
 
+        let Some(config) = &self.persist else {
+            tracing::warn!(
+                "Telegram: paired identity {identity} not persisted (no persistence handle wired)"
+            );
+            return Ok(());
+        };
         let normalized = Self::normalize_identity(identity);
         if normalized.is_empty() {
             anyhow::bail!("Cannot persist empty Telegram identity");
         }
-
-        if !telegram.allowed_users.iter().any(|u| u == &normalized) {
-            telegram.allowed_users.push(normalized);
-            config
-                .save()
-                .await
-                .context("Failed to persist Telegram allowlist to config.toml")?;
-        }
-
+        let group_name = format!("telegram_{}", self.alias);
+        let channel_ref = ChannelRef::new(format!("telegram.{}", self.alias));
+        let snapshot = {
+            let mut cfg = config.write();
+            if !cfg.channels.telegram.contains_key(&self.alias) {
+                anyhow::bail!(
+                    "Missing [channels.telegram.{}] section. Run `zeroclaw onboard --channels-only` first",
+                    self.alias
+                );
+            }
+            let group = cfg
+                .peer_groups
+                .entry(group_name)
+                .or_insert_with(|| PeerGroupConfig {
+                    channel: channel_ref,
+                    ..PeerGroupConfig::default()
+                });
+            if group
+                .external_peers
+                .iter()
+                .any(|p| Self::normalize_identity(p.username.as_str()) == normalized)
+            {
+                return Ok(());
+            }
+            group.external_peers.push(PeerExternal {
+                username: PeerUsername::new(normalized),
+            });
+            cfg.clone()
+        };
+        snapshot
+            .save()
+            .await
+            .context("Failed to persist Telegram peer to config.toml")?;
         Ok(())
-    }
-
-    fn add_allowed_identity_runtime(&self, identity: &str) {
-        let normalized = Self::normalize_identity(identity);
-        if normalized.is_empty() {
-            return;
-        }
-        if let Ok(mut users) = self.allowed_users.write()
-            && !users.iter().any(|u| u == &normalized)
-        {
-            users.push(normalized);
-        }
     }
 
     fn extract_bind_code(text: &str) -> Option<&str> {
@@ -959,16 +970,12 @@ impl TelegramChannel {
 
     fn is_user_allowed(&self, username: &str) -> bool {
         let identity = Self::normalize_identity(username);
-        self.allowed_users
-            .read()
-            .map(|users| {
-                crate::allowlist::is_user_allowed(
-                    &users,
-                    &identity,
-                    crate::allowlist::Match::Sensitive,
-                )
-            })
-            .unwrap_or(false)
+        let peers: Vec<String> = (self.peer_resolver)()
+            .into_iter()
+            .map(|p| Self::normalize_identity(&p))
+            .filter(|p| !p.is_empty())
+            .collect();
+        crate::allowlist::is_user_allowed(&peers, &identity, crate::allowlist::Match::Sensitive)
     }
 
     fn is_any_user_allowed<'a, I>(&self, identities: I) -> bool
@@ -1034,7 +1041,6 @@ impl TelegramChannel {
                         });
 
                         if let Some(identity) = bind_identity {
-                            self.add_allowed_identity_runtime(&identity);
                             match Box::pin(self.persist_allowed_identity(&identity)).await {
                                 Ok(()) => {
                                     let _ = self
@@ -1088,7 +1094,7 @@ impl TelegramChannel {
             } else {
                 let _ = self
                     .send(&SendMessage::new(
-                        "ℹ️ Telegram pairing is not active. Ask operator to add your user ID to channels.telegram.allowed_users in config.toml.",
+                        "ℹ️ Telegram pairing is not active. Ask operator to add your user ID to peer_groups.telegram_default.external_peers in config.toml.",
                         &chat_id,
                     ))
                     .await;
@@ -3397,7 +3403,13 @@ mod tests {
 
     #[test]
     fn telegram_channel_name() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         assert_eq!(ch.name(), "telegram");
     }
 
@@ -3434,14 +3446,26 @@ mod tests {
 
     #[test]
     fn typing_handle_starts_as_none() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let guard = ch.typing_handle.lock();
         assert!(guard.is_none());
     }
 
     #[tokio::test]
     async fn stop_typing_clears_handle() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
 
         // Manually insert a dummy handle
         {
@@ -3460,7 +3484,13 @@ mod tests {
 
     #[tokio::test]
     async fn start_typing_replaces_previous_handle() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
 
         // Insert a dummy handle first
         {
@@ -3479,18 +3509,35 @@ mod tests {
 
     #[test]
     fn supports_draft_updates_respects_stream_mode() {
-        let off = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let off = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         assert!(!off.supports_draft_updates());
 
-        let partial = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-            .with_streaming(StreamMode::Partial, 750);
+        let partial = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_streaming(StreamMode::Partial, 750);
         assert!(partial.supports_draft_updates());
         assert_eq!(partial.draft_update_interval_ms, 750);
     }
 
     #[tokio::test]
     async fn send_draft_returns_none_when_stream_mode_off() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let id = ch
             .send_draft(&SendMessage::new("draft", "123"))
             .await
@@ -3500,8 +3547,14 @@ mod tests {
 
     #[tokio::test]
     async fn update_draft_rate_limit_short_circuits_network() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-            .with_streaming(StreamMode::Partial, 60_000);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_streaming(StreamMode::Partial, 60_000);
         ch.last_draft_edit
             .lock()
             .insert("123".to_string(), std::time::Instant::now());
@@ -3512,8 +3565,14 @@ mod tests {
 
     #[tokio::test]
     async fn update_draft_utf8_truncation_is_safe_for_multibyte_text() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-            .with_streaming(StreamMode::Partial, 0);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_streaming(StreamMode::Partial, 0);
         let long_emoji_text = "😀".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 20);
 
         // Invalid message_id returns early after building display_text.
@@ -3526,8 +3585,14 @@ mod tests {
 
     #[tokio::test]
     async fn finalize_draft_invalid_message_id_falls_back_to_chunk_send() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-            .with_streaming(StreamMode::Partial, 0);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_streaming(StreamMode::Partial, 0);
         let long_text = "a".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 64);
 
         // For oversized text + invalid draft message_id, finalize_draft should
@@ -3538,7 +3603,13 @@ mod tests {
 
     #[test]
     fn telegram_api_url() {
-        let ch = TelegramChannel::new("123:ABC".into(), vec![], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "123:ABC".into(),
+            "telegram_test_alias",
+            Arc::new(Vec::new),
+            mention_only,
+        );
         assert_eq!(
             ch.api_url("getMe"),
             "https://api.telegram.org/bot123:ABC/getMe"
@@ -3577,32 +3648,62 @@ mod tests {
 
     #[test]
     fn telegram_user_allowed_wildcard() {
-        let ch = TelegramChannel::new("t".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         assert!(ch.is_user_allowed("anyone"));
     }
 
     #[test]
     fn telegram_user_allowed_specific() {
-        let ch = TelegramChannel::new("t".into(), vec!["alice".into(), "bob".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["alice".into(), "bob".into()]),
+            mention_only,
+        );
         assert!(ch.is_user_allowed("alice"));
         assert!(!ch.is_user_allowed("eve"));
     }
 
     #[test]
     fn telegram_user_allowed_with_at_prefix_in_config() {
-        let ch = TelegramChannel::new("t".into(), vec!["@alice".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["@alice".into()]),
+            mention_only,
+        );
         assert!(ch.is_user_allowed("alice"));
     }
 
     #[test]
     fn telegram_user_denied_empty() {
-        let ch = TelegramChannel::new("t".into(), vec![], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(Vec::new),
+            mention_only,
+        );
         assert!(!ch.is_user_allowed("anyone"));
     }
 
     #[test]
     fn telegram_user_exact_match_not_substring() {
-        let ch = TelegramChannel::new("t".into(), vec!["alice".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["alice".into()]),
+            mention_only,
+        );
         assert!(!ch.is_user_allowed("alice_bot"));
         assert!(!ch.is_user_allowed("alic"));
         assert!(!ch.is_user_allowed("malice"));
@@ -3610,13 +3711,25 @@ mod tests {
 
     #[test]
     fn telegram_user_empty_string_denied() {
-        let ch = TelegramChannel::new("t".into(), vec!["alice".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["alice".into()]),
+            mention_only,
+        );
         assert!(!ch.is_user_allowed(""));
     }
 
     #[test]
     fn telegram_user_case_sensitive() {
-        let ch = TelegramChannel::new("t".into(), vec!["Alice".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["Alice".into()]),
+            mention_only,
+        );
         assert!(ch.is_user_allowed("Alice"));
         assert!(!ch.is_user_allowed("alice"));
         assert!(!ch.is_user_allowed("ALICE"));
@@ -3624,7 +3737,13 @@ mod tests {
 
     #[test]
     fn telegram_wildcard_with_specific_users() {
-        let ch = TelegramChannel::new("t".into(), vec!["alice".into(), "*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["alice".into(), "*".into()]),
+            mention_only,
+        );
         assert!(ch.is_user_allowed("alice"));
         assert!(ch.is_user_allowed("bob"));
         assert!(ch.is_user_allowed("anyone"));
@@ -3632,25 +3751,49 @@ mod tests {
 
     #[test]
     fn telegram_user_allowed_by_numeric_id_identity() {
-        let ch = TelegramChannel::new("t".into(), vec!["123456789".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["123456789".into()]),
+            mention_only,
+        );
         assert!(ch.is_any_user_allowed(["unknown", "123456789"]));
     }
 
     #[test]
     fn telegram_user_denied_when_none_of_identities_match() {
-        let ch = TelegramChannel::new("t".into(), vec!["alice".into(), "987654321".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["alice".into(), "987654321".into()]),
+            mention_only,
+        );
         assert!(!ch.is_any_user_allowed(["unknown", "123456789"]));
     }
 
     #[test]
     fn telegram_pairing_enabled_with_empty_allowlist() {
-        let ch = TelegramChannel::new("t".into(), vec![], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(Vec::new),
+            mention_only,
+        );
         assert!(ch.pairing_code_active());
     }
 
     #[test]
     fn telegram_pairing_disabled_with_nonempty_allowlist() {
-        let ch = TelegramChannel::new("t".into(), vec!["alice".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["alice".into()]),
+            mention_only,
+        );
         assert!(!ch.pairing_code_active());
     }
 
@@ -3726,7 +3869,13 @@ mod tests {
 
     #[test]
     fn parse_update_message_uses_chat_id_as_reply_target() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let update = serde_json::json!({
             "update_id": 1,
             "message": {
@@ -3754,7 +3903,13 @@ mod tests {
 
     #[test]
     fn parse_update_message_allows_numeric_id_without_username() {
-        let ch = TelegramChannel::new("token".into(), vec!["555".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["555".into()]),
+            mention_only,
+        );
         let update = serde_json::json!({
             "update_id": 2,
             "message": {
@@ -3779,7 +3934,13 @@ mod tests {
 
     #[test]
     fn parse_update_message_extracts_thread_id_for_forum_topic() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let update = serde_json::json!({
             "update_id": 3,
             "message": {
@@ -3810,7 +3971,13 @@ mod tests {
 
     #[test]
     fn telegram_api_url_send_document() {
-        let ch = TelegramChannel::new("123:ABC".into(), vec![], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "123:ABC".into(),
+            "telegram_test_alias",
+            Arc::new(Vec::new),
+            mention_only,
+        );
         assert_eq!(
             ch.api_url("sendDocument"),
             "https://api.telegram.org/bot123:ABC/sendDocument"
@@ -3819,7 +3986,13 @@ mod tests {
 
     #[test]
     fn telegram_api_url_send_photo() {
-        let ch = TelegramChannel::new("123:ABC".into(), vec![], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "123:ABC".into(),
+            "telegram_test_alias",
+            Arc::new(Vec::new),
+            mention_only,
+        );
         assert_eq!(
             ch.api_url("sendPhoto"),
             "https://api.telegram.org/bot123:ABC/sendPhoto"
@@ -3828,7 +4001,13 @@ mod tests {
 
     #[test]
     fn telegram_api_url_send_video() {
-        let ch = TelegramChannel::new("123:ABC".into(), vec![], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "123:ABC".into(),
+            "telegram_test_alias",
+            Arc::new(Vec::new),
+            mention_only,
+        );
         assert_eq!(
             ch.api_url("sendVideo"),
             "https://api.telegram.org/bot123:ABC/sendVideo"
@@ -3837,7 +4016,13 @@ mod tests {
 
     #[test]
     fn telegram_api_url_send_audio() {
-        let ch = TelegramChannel::new("123:ABC".into(), vec![], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "123:ABC".into(),
+            "telegram_test_alias",
+            Arc::new(Vec::new),
+            mention_only,
+        );
         assert_eq!(
             ch.api_url("sendAudio"),
             "https://api.telegram.org/bot123:ABC/sendAudio"
@@ -3846,7 +4031,13 @@ mod tests {
 
     #[test]
     fn telegram_api_url_send_voice() {
-        let ch = TelegramChannel::new("123:ABC".into(), vec![], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "123:ABC".into(),
+            "telegram_test_alias",
+            Arc::new(Vec::new),
+            mention_only,
+        );
         assert_eq!(
             ch.api_url("sendVoice"),
             "https://api.telegram.org/bot123:ABC/sendVoice"
@@ -3858,7 +4049,13 @@ mod tests {
     #[tokio::test]
     async fn telegram_send_document_bytes_builds_correct_form() {
         // This test verifies the method doesn't panic and handles bytes correctly
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let file_bytes = b"Hello, this is a test file content".to_vec();
 
         // The actual API call will fail (no real server), but we verify the method exists
@@ -3879,7 +4076,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_photo_bytes_builds_correct_form() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         // Minimal valid PNG header bytes
         let file_bytes = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
@@ -3892,7 +4095,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_document_by_url_builds_correct_json() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
 
         let result = ch
             .send_document_by_url(
@@ -3908,7 +4117,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_photo_by_url_builds_correct_json() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
 
         let result = ch
             .send_photo_by_url("123456", None, "https://example.com/image.jpg", None)
@@ -3921,7 +4136,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_document_nonexistent_file() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let path = Path::new("/nonexistent/path/to/file.txt");
 
         let result = ch.send_document("123456", None, path, None).await;
@@ -3937,7 +4158,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_photo_nonexistent_file() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let path = Path::new("/nonexistent/path/to/photo.jpg");
 
         let result = ch.send_photo("123456", None, path, None).await;
@@ -3947,7 +4174,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_video_nonexistent_file() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let path = Path::new("/nonexistent/path/to/video.mp4");
 
         let result = ch.send_video("123456", None, path, None).await;
@@ -3957,7 +4190,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_audio_nonexistent_file() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let path = Path::new("/nonexistent/path/to/audio.mp3");
 
         let result = ch.send_audio("123456", None, path, None).await;
@@ -3967,7 +4206,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_voice_nonexistent_file() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let path = Path::new("/nonexistent/path/to/voice.ogg");
 
         let result = ch.send_voice("123456", None, path, None).await;
@@ -4055,7 +4300,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_document_bytes_with_caption() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let file_bytes = b"test content".to_vec();
 
         // With caption
@@ -4079,7 +4330,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_photo_bytes_with_caption() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let file_bytes = vec![0x89, 0x50, 0x4E, 0x47];
 
         // With caption
@@ -4105,7 +4362,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_document_bytes_empty_file() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let file_bytes: Vec<u8> = vec![];
 
         let result = ch
@@ -4118,7 +4381,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_document_bytes_empty_filename() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let file_bytes = b"content".to_vec();
 
         let result = ch
@@ -4131,7 +4400,13 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_send_document_bytes_empty_chat_id() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let file_bytes = b"content".to_vec();
 
         let result = ch
@@ -4360,7 +4635,13 @@ mod tests {
 
     #[test]
     fn parse_update_message_mention_only_group_requires_exact_mention() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], true);
+        let mention_only = true;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         {
             let mut cache = ch.bot_username.lock();
             *cache = Some("mybot".to_string());
@@ -4387,7 +4668,13 @@ mod tests {
 
     #[test]
     fn parse_update_message_mention_only_group_strips_mention_and_drops_empty() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], true);
+        let mention_only = true;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         {
             let mut cache = ch.bot_username.lock();
             *cache = Some("mybot".to_string());
@@ -4453,10 +4740,22 @@ mod tests {
 
     #[test]
     fn telegram_mention_only_enabled_by_config() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], true);
+        let mention_only = true;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         assert!(ch.mention_only);
 
-        let ch_disabled = TelegramChannel::new("token".into(), vec!["*".into()], false);
+        let disabled_mention_only = false;
+        let ch_disabled = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            disabled_mention_only,
+        );
         assert!(!ch_disabled.mention_only);
     }
 
@@ -4639,7 +4938,13 @@ mod tests {
 
     #[test]
     fn extract_reply_context_text_message() {
-        let ch = TelegramChannel::new("t".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let msg = serde_json::json!({
             "reply_to_message": {
                 "from": { "username": "alice" },
@@ -4652,7 +4957,13 @@ mod tests {
 
     #[test]
     fn extract_reply_context_voice_message() {
-        let ch = TelegramChannel::new("t".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let msg = serde_json::json!({
             "reply_to_message": {
                 "from": { "username": "bob" },
@@ -4665,7 +4976,13 @@ mod tests {
 
     #[test]
     fn extract_reply_context_no_reply() {
-        let ch = TelegramChannel::new("t".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let msg = serde_json::json!({
             "text": "just a regular message"
         });
@@ -4678,7 +4995,13 @@ mod tests {
         // message on every message in a non-General forum topic. The injected
         // reply's message_id equals the parent's message_thread_id. It is
         // not a real reply and must not produce a blockquote prefix.
-        let ch = TelegramChannel::new("t".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let msg = serde_json::json!({
             "message_thread_id": 42,
             "text": "hello in topic",
@@ -4695,7 +5018,13 @@ mod tests {
     fn extract_reply_context_real_reply_in_topic() {
         // A genuine reply inside a forum topic (reply.message_id differs from
         // the parent's message_thread_id) should still produce a blockquote.
-        let ch = TelegramChannel::new("t".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let msg = serde_json::json!({
             "message_thread_id": 42,
             "text": "I agree",
@@ -4711,7 +5040,13 @@ mod tests {
 
     #[test]
     fn extract_reply_context_no_username_uses_first_name() {
-        let ch = TelegramChannel::new("t".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let msg = serde_json::json!({
             "reply_to_message": {
                 "from": { "id": 999, "first_name": "Charlie" },
@@ -4724,7 +5059,13 @@ mod tests {
 
     #[test]
     fn extract_reply_context_voice_with_cached_transcription() {
-        let ch = TelegramChannel::new("t".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         // Pre-populate transcription cache
         ch.voice_transcriptions
             .lock()
@@ -4743,7 +5084,13 @@ mod tests {
 
     #[test]
     fn parse_update_message_includes_reply_context() {
-        let ch = TelegramChannel::new("t".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let update = serde_json::json!({
             "message": {
                 "message_id": 10,
@@ -4780,8 +5127,14 @@ mod tests {
             ..zeroclaw_config::schema::TranscriptionConfig::default()
         };
 
-        let ch =
-            TelegramChannel::new("token".into(), vec!["*".into()], false).with_transcription(tc);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_transcription(tc);
         assert!(ch.transcription.is_some());
         assert!(ch.transcription_manager.is_some());
     }
@@ -4789,15 +5142,27 @@ mod tests {
     #[test]
     fn with_transcription_skips_when_disabled() {
         let tc = zeroclaw_config::schema::TranscriptionConfig::default(); // enabled = false
-        let ch =
-            TelegramChannel::new("token".into(), vec!["*".into()], false).with_transcription(tc);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_transcription(tc);
         assert!(ch.transcription.is_none());
         assert!(ch.transcription_manager.is_none());
     }
 
     #[tokio::test]
     async fn try_parse_voice_message_returns_none_when_transcription_disabled() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let update = serde_json::json!({
             "message": {
                 "message_id": 1,
@@ -4820,8 +5185,14 @@ mod tests {
             ..Default::default()
         };
 
-        let ch =
-            TelegramChannel::new("token".into(), vec!["*".into()], false).with_transcription(tc);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_transcription(tc);
         let update = serde_json::json!({
             "message": {
                 "message_id": 2,
@@ -4844,8 +5215,14 @@ mod tests {
             ..Default::default()
         };
 
-        let ch = TelegramChannel::new("token".into(), vec!["alice".into()], false)
-            .with_transcription(tc);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["alice".into()]),
+            mention_only,
+        )
+        .with_transcription(tc);
         let update = serde_json::json!({
             "message": {
                 "message_id": 3,
@@ -4917,7 +5294,13 @@ mod tests {
         );
 
         // 4. Create TelegramChannel, insert transcription into voice_transcriptions cache
-        let ch = TelegramChannel::new("test_token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "test_token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let chat_id: i64 = 12345;
         let message_id: i64 = 67;
         let cache_key = format!("{chat_id}:{message_id}");
@@ -5055,8 +5438,14 @@ mod tests {
 
     #[test]
     fn with_workspace_dir_sets_field() {
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-            .with_workspace_dir(std::path::PathBuf::from("/tmp/test_workspace"));
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_workspace_dir(std::path::PathBuf::from("/tmp/test_workspace"));
         assert_eq!(
             ch.workspace_dir.as_deref(),
             Some(std::path::Path::new("/tmp/test_workspace"))
@@ -5361,21 +5750,41 @@ mod tests {
 
     #[test]
     fn ack_reactions_defaults_to_true() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         assert!(ch.ack_reactions);
     }
 
     #[test]
     fn with_ack_reactions_false_disables_reactions() {
-        let ch =
-            TelegramChannel::new("token".into(), vec!["*".into()], false).with_ack_reactions(false);
+        let mention_only = false;
+        let ack_enabled = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_ack_reactions(ack_enabled);
         assert!(!ch.ack_reactions);
     }
 
     #[test]
     fn with_ack_reactions_true_keeps_reactions() {
-        let ch =
-            TelegramChannel::new("token".into(), vec!["*".into()], false).with_ack_reactions(true);
+        let mention_only = false;
+        let ack_enabled = true;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_ack_reactions(ack_enabled);
         assert!(ch.ack_reactions);
     }
 
@@ -5383,7 +5792,13 @@ mod tests {
 
     #[test]
     fn parse_update_message_forwarded_from_user_with_username() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let update = serde_json::json!({
             "update_id": 100,
             "message": {
@@ -5408,7 +5823,13 @@ mod tests {
 
     #[test]
     fn parse_update_message_forwarded_from_channel() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let update = serde_json::json!({
             "update_id": 101,
             "message": {
@@ -5437,7 +5858,13 @@ mod tests {
 
     #[test]
     fn parse_update_message_forwarded_hidden_sender() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let update = serde_json::json!({
             "update_id": 102,
             "message": {
@@ -5458,7 +5885,13 @@ mod tests {
 
     #[test]
     fn parse_update_message_non_forwarded_unaffected() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let update = serde_json::json!({
             "update_id": 103,
             "message": {
@@ -5477,7 +5910,13 @@ mod tests {
 
     #[test]
     fn parse_update_message_forwarded_from_user_no_username() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let update = serde_json::json!({
             "update_id": 104,
             "message": {
@@ -5556,8 +5995,14 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-            .with_api_base(mock_server.uri());
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_api_base(mock_server.uri());
 
         ch.register_bot_commands().await;
 
@@ -5580,8 +6025,14 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-            .with_api_base(mock_server.uri());
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_api_base(mock_server.uri());
 
         // Should not panic — errors are logged, not propagated.
         ch.register_bot_commands().await;
@@ -5706,9 +6157,15 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-            .with_api_base(mock_server.uri())
-            .with_workspace_dir(workspace.path().to_path_buf());
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_api_base(mock_server.uri())
+        .with_workspace_dir(workspace.path().to_path_buf());
 
         ch.register_bot_commands().await;
     }
@@ -5743,9 +6200,15 @@ mod tests {
             .await;
 
         let specs = vec![("test_tool".to_string(), "A test tool".to_string())];
-        let ch = TelegramChannel::new("fake-token".into(), vec!["*".into()], false)
-            .with_api_base(mock_server.uri())
-            .with_tool_command_specs(specs);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "fake-token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        )
+        .with_api_base(mock_server.uri())
+        .with_tool_command_specs(specs);
 
         ch.register_bot_commands().await;
     }
@@ -5754,7 +6217,13 @@ mod tests {
 
     #[test]
     fn pending_approvals_map_is_initially_empty() {
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -5767,7 +6236,13 @@ mod tests {
 
     #[test]
     fn approval_timeout_defaults_to_120_and_is_overridable() {
-        let ch = TelegramChannel::new("t".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "t".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         assert_eq!(ch.approval_timeout_secs, 120);
         let ch = ch.with_approval_timeout_secs(30);
         assert_eq!(ch.approval_timeout_secs, 30);
@@ -5777,7 +6252,13 @@ mod tests {
     async fn pending_approval_oneshot_delivers_response() {
         use zeroclaw_api::channel::ChannelApprovalResponse;
 
-        let ch = TelegramChannel::new("token".into(), vec!["*".into()], false);
+        let mention_only = false;
+        let ch = TelegramChannel::new(
+            "token".into(),
+            "telegram_test_alias",
+            Arc::new(|| vec!["*".into()]),
+            mention_only,
+        );
         let approval_id = "test-approval-123".to_string();
         let (tx, rx) = tokio::sync::oneshot::channel();
 

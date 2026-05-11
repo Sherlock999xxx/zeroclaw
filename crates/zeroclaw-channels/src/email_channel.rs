@@ -40,36 +40,58 @@ type ImapSession = Session<TlsStream<TcpStream>>;
 
 /// Email channel — IMAP IDLE for instant push notifications, SMTP for outbound.
 ///
-/// `peer_group_members` is the resolved list of authorized senders for
-/// this channel alias, sourced from `peer_groups.<alias>.external_peers`
-/// by the orchestrator at construction. Inbound peer authorization
-/// lives in `peer_groups` in V3; this channel doesn't read a per-channel
-/// `allowed_senders` field (it no longer exists on `EmailConfig`).
+/// Inbound sender authorization lives in `peer_groups` in V3; this channel
+/// resolves the authorized senders at message-time via [`Self::peer_resolver`]
+/// rather than reading a per-channel `allowed_senders` field (it no longer
+/// exists on `EmailConfig`).
 pub struct EmailChannel {
     pub config: EmailConfig,
-    pub peer_group_members: Vec<String>,
+    /// The alias key under `[channels.email.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    pub alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    pub peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     seen_messages: Arc<Mutex<HashSet<String>>>,
 }
 
 impl EmailChannel {
-    pub fn new(config: EmailConfig, peer_group_members: Vec<String>) -> Self {
+    pub fn new(
+        config: EmailConfig,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    ) -> Self {
         Self {
             config,
-            peer_group_members,
+            alias: alias.into(),
+            peer_resolver,
             seen_messages: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
     /// Check if a sender email is in the allowlist (peer group).
+    ///
+    /// Email allowlist entries support three syntaxes — preserved from
+    /// the legacy `EmailConfig::allowed_senders` semantics:
+    /// - `*`                wildcard, allow anyone.
+    /// - `user@host`        full address, case-insensitive.
+    /// - `@host` / `host`   domain match, case-insensitive.
     pub fn is_sender_allowed(&self, email: &str) -> bool {
-        if self.peer_group_members.is_empty() {
+        let peers = (self.peer_resolver)();
+        Self::is_email_sender_allowed(&peers, email)
+    }
+
+    /// Pure, testable predicate that applies the email-allowlist match
+    /// semantics against an already-resolved peer list.
+    fn is_email_sender_allowed(peers: &[String], email: &str) -> bool {
+        if peers.is_empty() {
             return false; // Empty = deny all
         }
-        if self.peer_group_members.iter().any(|a| a == "*") {
+        if peers.iter().any(|a| a == "*") {
             return true; // Wildcard = allow all
         }
         let email_lower = email.to_lowercase();
-        self.peer_group_members.iter().any(|allowed| {
+        peers.iter().any(|allowed| {
             if allowed.starts_with('@') {
                 // Domain match with @ prefix: "@example.com"
                 email_lower.ends_with(&allowed.to_lowercase())
@@ -708,14 +730,16 @@ mod tests {
 
     #[tokio::test]
     async fn seen_messages_starts_empty() {
-        let channel = EmailChannel::new(EmailConfig::default(), Vec::new());
+        let channel =
+            EmailChannel::new(EmailConfig::default(), "email_test_alias", empty_resolver());
         let seen = channel.seen_messages.lock().await;
         assert!(seen.is_empty());
     }
 
     #[tokio::test]
     async fn seen_messages_tracks_unique_ids() {
-        let channel = EmailChannel::new(EmailConfig::default(), Vec::new());
+        let channel =
+            EmailChannel::new(EmailConfig::default(), "email_test_alias", empty_resolver());
         let mut seen = channel.seen_messages.lock().await;
 
         assert!(seen.insert("first-id".to_string()));
@@ -744,14 +768,21 @@ mod tests {
     // EmailChannel tests
     //
     // Inbound peer authorization lives in `peer_groups` in V3; the
-    // channel receives the resolved member list at construction. Tests
-    // pass the list directly to `EmailChannel::new` rather than threading
-    // a synthetic Config through.
+    // channel resolves the authorized senders via a peer_resolver
+    // closure provided at construction.
+
+    fn empty_resolver() -> Arc<dyn Fn() -> Vec<String> + Send + Sync> {
+        Arc::new(Vec::new)
+    }
+
+    fn resolver_from(peers: Vec<String>) -> Arc<dyn Fn() -> Vec<String> + Send + Sync> {
+        Arc::new(move || peers.clone())
+    }
 
     #[tokio::test]
     async fn email_channel_new() {
         let config = EmailConfig::default();
-        let channel = EmailChannel::new(config.clone(), Vec::new());
+        let channel = EmailChannel::new(config.clone(), "email_test_alias", empty_resolver());
         assert_eq!(channel.config.imap_host, config.imap_host);
 
         let seen_guard = channel.seen_messages.lock().await;
@@ -760,7 +791,8 @@ mod tests {
 
     #[test]
     fn email_channel_name() {
-        let channel = EmailChannel::new(EmailConfig::default(), Vec::new());
+        let channel =
+            EmailChannel::new(EmailConfig::default(), "email_test_alias", empty_resolver());
         assert_eq!(channel.name(), "email");
     }
 
@@ -768,14 +800,19 @@ mod tests {
 
     #[test]
     fn is_sender_allowed_empty_list_denies_all() {
-        let channel = EmailChannel::new(EmailConfig::default(), Vec::new());
+        let channel =
+            EmailChannel::new(EmailConfig::default(), "email_test_alias", empty_resolver());
         assert!(!channel.is_sender_allowed("anyone@example.com"));
         assert!(!channel.is_sender_allowed("user@test.com"));
     }
 
     #[test]
     fn is_sender_allowed_wildcard_allows_all() {
-        let channel = EmailChannel::new(EmailConfig::default(), vec!["*".to_string()]);
+        let channel = EmailChannel::new(
+            EmailConfig::default(),
+            "email_test_alias",
+            resolver_from(vec!["*".to_string()]),
+        );
         assert!(channel.is_sender_allowed("anyone@example.com"));
         assert!(channel.is_sender_allowed("user@test.com"));
         assert!(channel.is_sender_allowed("random@domain.org"));
@@ -785,7 +822,8 @@ mod tests {
     fn is_sender_allowed_specific_email() {
         let channel = EmailChannel::new(
             EmailConfig::default(),
-            vec!["allowed@example.com".to_string()],
+            "email_test_alias",
+            resolver_from(vec!["allowed@example.com".to_string()]),
         );
         assert!(channel.is_sender_allowed("allowed@example.com"));
         assert!(!channel.is_sender_allowed("other@example.com"));
@@ -794,7 +832,11 @@ mod tests {
 
     #[test]
     fn is_sender_allowed_domain_with_at_prefix() {
-        let channel = EmailChannel::new(EmailConfig::default(), vec!["@example.com".to_string()]);
+        let channel = EmailChannel::new(
+            EmailConfig::default(),
+            "email_test_alias",
+            resolver_from(vec!["@example.com".to_string()]),
+        );
         assert!(channel.is_sender_allowed("user@example.com"));
         assert!(channel.is_sender_allowed("admin@example.com"));
         assert!(!channel.is_sender_allowed("user@other.com"));
@@ -802,7 +844,11 @@ mod tests {
 
     #[test]
     fn is_sender_allowed_domain_without_at_prefix() {
-        let channel = EmailChannel::new(EmailConfig::default(), vec!["example.com".to_string()]);
+        let channel = EmailChannel::new(
+            EmailConfig::default(),
+            "email_test_alias",
+            resolver_from(vec!["example.com".to_string()]),
+        );
         assert!(channel.is_sender_allowed("user@example.com"));
         assert!(channel.is_sender_allowed("admin@example.com"));
         assert!(!channel.is_sender_allowed("user@other.com"));
@@ -812,7 +858,8 @@ mod tests {
     fn is_sender_allowed_case_insensitive() {
         let channel = EmailChannel::new(
             EmailConfig::default(),
-            vec!["Allowed@Example.COM".to_string()],
+            "email_test_alias",
+            resolver_from(vec!["Allowed@Example.COM".to_string()]),
         );
         assert!(channel.is_sender_allowed("allowed@example.com"));
         assert!(channel.is_sender_allowed("ALLOWED@EXAMPLE.COM"));
@@ -821,15 +868,15 @@ mod tests {
 
     #[test]
     fn is_sender_allowed_multiple_senders() {
-        let config = EmailConfig {
-            allowed_senders: vec![
+        let channel = EmailChannel::new(
+            EmailConfig::default(),
+            "email_test_alias",
+            resolver_from(vec![
                 "user1@example.com".to_string(),
                 "user2@test.com".to_string(),
                 "@allowed.com".to_string(),
-            ],
-            ..Default::default()
-        };
-        let channel = EmailChannel::new(config);
+            ]),
+        );
         assert!(channel.is_sender_allowed("user1@example.com"));
         assert!(channel.is_sender_allowed("user2@test.com"));
         assert!(channel.is_sender_allowed("anyone@allowed.com"));
@@ -838,22 +885,22 @@ mod tests {
 
     #[test]
     fn is_sender_allowed_wildcard_with_specific() {
-        let config = EmailConfig {
-            allowed_senders: vec!["*".to_string(), "specific@example.com".to_string()],
-            ..Default::default()
-        };
-        let channel = EmailChannel::new(config);
+        let channel = EmailChannel::new(
+            EmailConfig::default(),
+            "email_test_alias",
+            resolver_from(vec!["*".to_string(), "specific@example.com".to_string()]),
+        );
         assert!(channel.is_sender_allowed("anyone@example.com"));
         assert!(channel.is_sender_allowed("specific@example.com"));
     }
 
     #[test]
     fn is_sender_allowed_empty_sender() {
-        let config = EmailConfig {
-            allowed_senders: vec!["@example.com".to_string()],
-            ..Default::default()
-        };
-        let channel = EmailChannel::new(config);
+        let channel = EmailChannel::new(
+            EmailConfig::default(),
+            "email_test_alias",
+            resolver_from(vec!["@example.com".to_string()]),
+        );
         assert!(!channel.is_sender_allowed(""));
         // "@example.com" ends with "@example.com" so it's allowed
         assert!(channel.is_sender_allowed("@example.com"));
@@ -966,7 +1013,6 @@ mod tests {
             from_address: "bot@example.com".to_string(),
             idle_timeout_secs: 1740,
             poll_interval_secs: 60,
-            allowed_senders: vec!["allowed@example.com".to_string()],
             default_subject: "Serialization Test".to_string(),
             max_attachment_bytes: default_max_attachment_bytes(),
             excluded_tools: vec![],
@@ -977,7 +1023,6 @@ mod tests {
 
         assert_eq!(deserialized.imap_host, config.imap_host);
         assert_eq!(deserialized.smtp_port, config.smtp_port);
-        assert_eq!(deserialized.allowed_senders, config.allowed_senders);
         assert_eq!(deserialized.default_subject, config.default_subject);
     }
 
@@ -1051,7 +1096,7 @@ mod tests {
             idle_timeout_secs: 600,
             ..Default::default()
         };
-        let channel = EmailChannel::new(config);
+        let channel = EmailChannel::new(config, "email_test_alias", empty_resolver());
         assert_eq!(channel.config.idle_timeout_secs, 600);
     }
 

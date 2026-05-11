@@ -3,6 +3,7 @@ use hmac::{Hmac, Mac};
 use parking_lot::Mutex;
 use sha2::Sha256;
 use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
 use zeroclaw_api::channel::{Channel, ChannelMessage, SendMessage};
 use zeroclaw_config::schema::StreamMode;
@@ -22,7 +23,12 @@ pub struct NextcloudTalkChannel {
     base_url: String,
     app_token: String,
     bot_name: String,
-    allowed_users: Vec<String>,
+    /// The alias key under `[channels.nextcloud_talk.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     client: reqwest::Client,
     /// Controls whether and how streaming draft updates are delivered.
     stream_mode: StreamMode,
@@ -37,23 +43,26 @@ impl NextcloudTalkChannel {
         base_url: String,
         app_token: String,
         bot_name: String,
-        allowed_users: Vec<String>,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     ) -> Self {
-        Self::new_with_proxy(base_url, app_token, bot_name, allowed_users, None)
+        Self::new_with_proxy(base_url, app_token, bot_name, alias, peer_resolver, None)
     }
 
     pub fn new_with_proxy(
         base_url: String,
         app_token: String,
         bot_name: String,
-        allowed_users: Vec<String>,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
         proxy_url: Option<String>,
     ) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             app_token,
             bot_name: bot_name.to_ascii_lowercase(),
-            allowed_users,
+            alias: alias.into(),
+            peer_resolver,
             client: zeroclaw_config::schema::build_channel_proxy_client(
                 "channel.nextcloud_talk",
                 proxy_url.as_deref(),
@@ -62,6 +71,12 @@ impl NextcloudTalkChannel {
             draft_update_interval_ms: DEFAULT_DRAFT_UPDATE_INTERVAL_MS,
             last_draft_edit: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Return the alias under `[channels.nextcloud_talk.<alias>]` that this
+    /// channel handle is bound to.
+    pub fn alias(&self) -> &str {
+        &self.alias
     }
 
     /// Configure streaming draft-update behaviour.
@@ -75,11 +90,8 @@ impl NextcloudTalkChannel {
     }
 
     fn is_user_allowed(&self, actor_id: &str) -> bool {
-        crate::allowlist::is_user_allowed(
-            &self.allowed_users,
-            actor_id,
-            crate::allowlist::Match::Sensitive,
-        )
+        let peers = (self.peer_resolver)();
+        crate::allowlist::is_user_allowed(&peers, actor_id, crate::allowlist::Match::Sensitive)
     }
 
     /// Returns true if the given name/id belongs to this bot itself.
@@ -733,32 +745,42 @@ pub fn verify_nextcloud_talk_signature(
 mod tests {
     use super::*;
 
-    fn make_channel() -> NextcloudTalkChannel {
-        NextcloudTalkChannel::new(
+    #[test]
+    fn nextcloud_talk_channel_name() {
+        let channel = NextcloudTalkChannel::new(
             "https://cloud.example.com".into(),
             "app-token".into(),
             "zeroclaw".into(),
-            vec!["user_a".into()],
-        )
-    }
-
-    #[test]
-    fn nextcloud_talk_channel_name() {
-        let channel = make_channel();
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["user_a".into()]),
+        );
         assert_eq!(channel.name(), "nextcloud_talk");
     }
 
     #[test]
     fn supports_draft_updates_off_by_default() {
         // Default construction uses StreamMode::Off → draft updates disabled.
-        let channel = make_channel();
+        let channel = NextcloudTalkChannel::new(
+            "https://cloud.example.com".into(),
+            "app-token".into(),
+            "zeroclaw".into(),
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["user_a".into()]),
+        );
         assert!(!channel.supports_draft_updates());
     }
 
     #[test]
     fn supports_draft_updates_true_when_partial() {
         use zeroclaw_config::schema::StreamMode;
-        let channel = make_channel().with_streaming(StreamMode::Partial, 800);
+        let channel = NextcloudTalkChannel::new(
+            "https://cloud.example.com".into(),
+            "app-token".into(),
+            "zeroclaw".into(),
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["user_a".into()]),
+        )
+        .with_streaming(StreamMode::Partial, 800);
         assert!(channel.supports_draft_updates());
     }
 
@@ -796,7 +818,14 @@ mod tests {
     async fn update_draft_rate_limit_short_circuits_network() {
         use zeroclaw_config::schema::StreamMode;
         // Use a large interval (60 s) so the rate-limit always fires immediately.
-        let channel = make_channel().with_streaming(StreamMode::Partial, 60_000);
+        let channel = NextcloudTalkChannel::new(
+            "https://cloud.example.com".into(),
+            "app-token".into(),
+            "zeroclaw".into(),
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["user_a".into()]),
+        )
+        .with_streaming(StreamMode::Partial, 60_000);
         channel
             .last_draft_edit
             .lock()
@@ -813,7 +842,13 @@ mod tests {
     async fn send_draft_returns_none_when_stream_mode_off() {
         use zeroclaw_api::channel::SendMessage;
         // Default mode is Off — send_draft must short-circuit.
-        let channel = make_channel();
+        let channel = NextcloudTalkChannel::new(
+            "https://cloud.example.com".into(),
+            "app-token".into(),
+            "zeroclaw".into(),
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["user_a".into()]),
+        );
         let result = channel
             .send_draft(&SendMessage::new("...", "room-token-123"))
             .await;
@@ -823,7 +858,13 @@ mod tests {
 
     #[test]
     fn nextcloud_talk_user_allowlist_exact_and_wildcard() {
-        let channel = make_channel();
+        let channel = NextcloudTalkChannel::new(
+            "https://cloud.example.com".into(),
+            "app-token".into(),
+            "zeroclaw".into(),
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["user_a".into()]),
+        );
         assert!(channel.is_user_allowed("user_a"));
         assert!(!channel.is_user_allowed("user_b"));
 
@@ -831,14 +872,21 @@ mod tests {
             "https://cloud.example.com".into(),
             "app-token".into(),
             "zeroclaw".into(),
-            vec!["*".into()],
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["*".into()]),
         );
         assert!(wildcard.is_user_allowed("any_user"));
     }
 
     #[test]
     fn nextcloud_talk_parse_valid_message_payload() {
-        let channel = make_channel();
+        let channel = NextcloudTalkChannel::new(
+            "https://cloud.example.com".into(),
+            "app-token".into(),
+            "zeroclaw".into(),
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["user_a".into()]),
+        );
         let payload = serde_json::json!({
             "type": "message",
             "object": {
@@ -876,7 +924,8 @@ mod tests {
             "https://cloud.example.com".into(),
             "app-token".into(),
             "zeroclaw".into(),
-            vec!["*".into()],
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["*".into()]),
         );
         // Real payload format sent by Nextcloud Talk bot webhooks.
         let payload = serde_json::json!({
@@ -915,7 +964,8 @@ mod tests {
             "https://cloud.example.com".into(),
             "app-token".into(),
             "zeroclaw".into(),
-            vec!["*".into()],
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["*".into()]),
         );
         let payload = serde_json::json!({
             "type": "Create",
@@ -949,7 +999,8 @@ mod tests {
             "https://cloud.example.com".into(),
             "app-token".into(),
             "zeroclaw".into(),
-            vec!["*".into()],
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["*".into()]),
         );
         let payload = serde_json::json!({
             "type": "Create",
@@ -985,7 +1036,8 @@ mod tests {
             "https://cloud.example.com".into(),
             "app-token".into(),
             "zeroclaw".into(),
-            vec!["*".into()],
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["*".into()]),
         );
         let payload = serde_json::json!({
             "type": "message",
@@ -1010,7 +1062,8 @@ mod tests {
             "https://cloud.example.com".into(),
             "app-token".into(),
             "zeroclaw".into(),
-            vec!["*".into()],
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["*".into()]),
         );
         let payload = serde_json::json!({
             "type": "Create",
@@ -1025,7 +1078,13 @@ mod tests {
 
     #[test]
     fn nextcloud_talk_parse_skips_non_message_events() {
-        let channel = make_channel();
+        let channel = NextcloudTalkChannel::new(
+            "https://cloud.example.com".into(),
+            "app-token".into(),
+            "zeroclaw".into(),
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["user_a".into()]),
+        );
         let payload = serde_json::json!({
             "type": "room",
             "object": {"token": "room-token-123"},
@@ -1046,7 +1105,8 @@ mod tests {
             "https://cloud.example.com".into(),
             "app-token".into(),
             "zeroclaw".into(),
-            vec!["*".into()],
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["*".into()]),
         );
         let payload = serde_json::json!({
             "type": "message",
@@ -1064,7 +1124,13 @@ mod tests {
 
     #[test]
     fn nextcloud_talk_parse_skips_unauthorized_sender() {
-        let channel = make_channel();
+        let channel = NextcloudTalkChannel::new(
+            "https://cloud.example.com".into(),
+            "app-token".into(),
+            "zeroclaw".into(),
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["user_a".into()]),
+        );
         let payload = serde_json::json!({
             "type": "message",
             "object": {"token": "room-token-123"},
@@ -1085,7 +1151,8 @@ mod tests {
             "https://cloud.example.com".into(),
             "app-token".into(),
             "zeroclaw".into(),
-            vec!["*".into()],
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["*".into()]),
         );
         let payload = serde_json::json!({
             "type": "message",
@@ -1109,7 +1176,8 @@ mod tests {
             "https://cloud.example.com".into(),
             "app-token".into(),
             "zeroclaw".into(),
-            vec!["*".into()],
+            "nextcloud_talk_test_alias",
+            Arc::new(|| vec!["*".into()]),
         );
         let payload = serde_json::json!({
             "type": "message",

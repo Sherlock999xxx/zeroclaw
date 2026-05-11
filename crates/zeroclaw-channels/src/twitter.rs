@@ -12,7 +12,12 @@ const TWITTER_API_BASE: &str = "https://api.x.com/2";
 /// for sending tweets/DMs and filtered stream for receiving mentions.
 pub struct TwitterChannel {
     bearer_token: String,
-    allowed_users: Vec<String>,
+    /// The alias key under `[channels.twitter.<alias>]` this handle is
+    /// bound to. Used to scope peer-group writes and resolver lookups.
+    alias: String,
+    /// Resolves inbound external peers from canonical state at message-time.
+    /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
+    peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     /// Message deduplication set.
     dedup: Arc<RwLock<HashSet<String>>>,
 }
@@ -21,12 +26,23 @@ pub struct TwitterChannel {
 const DEDUP_CAPACITY: usize = 10_000;
 
 impl TwitterChannel {
-    pub fn new(bearer_token: String, allowed_users: Vec<String>) -> Self {
+    pub fn new(
+        bearer_token: String,
+        alias: impl Into<String>,
+        peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    ) -> Self {
         Self {
             bearer_token,
-            allowed_users,
+            alias: alias.into(),
+            peer_resolver,
             dedup: Arc::new(RwLock::new(HashSet::new())),
         }
+    }
+
+    /// Return the alias under `[channels.twitter.<alias>]` that this
+    /// channel handle is bound to.
+    pub fn alias(&self) -> &str {
+        &self.alias
     }
 
     fn http_client(&self) -> reqwest::Client {
@@ -34,11 +50,8 @@ impl TwitterChannel {
     }
 
     fn is_user_allowed(&self, user_id: &str) -> bool {
-        crate::allowlist::is_user_allowed(
-            &self.allowed_users,
-            user_id,
-            crate::allowlist::Match::Sensitive,
-        )
+        let peers = (self.peer_resolver)();
+        crate::allowlist::is_user_allowed(&peers, user_id, crate::allowlist::Match::Sensitive)
     }
 
     /// Check and insert tweet ID for deduplication.
@@ -387,32 +400,40 @@ mod tests {
 
     #[test]
     fn test_name() {
-        let ch = TwitterChannel::new("token".into(), vec![]);
+        let ch = TwitterChannel::new("token".into(), "twitter_test_alias", Arc::new(Vec::new));
         assert_eq!(ch.name(), "twitter");
     }
 
     #[test]
     fn test_user_allowed_wildcard() {
-        let ch = TwitterChannel::new("token".into(), vec!["*".into()]);
+        let ch = TwitterChannel::new(
+            "token".into(),
+            "twitter_test_alias",
+            Arc::new(|| vec!["*".into()]),
+        );
         assert!(ch.is_user_allowed("anyone"));
     }
 
     #[test]
     fn test_user_allowed_specific() {
-        let ch = TwitterChannel::new("token".into(), vec!["user123".into()]);
+        let ch = TwitterChannel::new(
+            "token".into(),
+            "twitter_test_alias",
+            Arc::new(|| vec!["user123".into()]),
+        );
         assert!(ch.is_user_allowed("user123"));
         assert!(!ch.is_user_allowed("other"));
     }
 
     #[test]
     fn test_user_denied_empty() {
-        let ch = TwitterChannel::new("token".into(), vec![]);
+        let ch = TwitterChannel::new("token".into(), "twitter_test_alias", Arc::new(Vec::new));
         assert!(!ch.is_user_allowed("anyone"));
     }
 
     #[tokio::test]
     async fn test_dedup() {
-        let ch = TwitterChannel::new("token".into(), vec![]);
+        let ch = TwitterChannel::new("token".into(), "twitter_test_alias", Arc::new(Vec::new));
         assert!(!ch.is_duplicate("tweet1").await);
         assert!(ch.is_duplicate("tweet1").await);
         assert!(!ch.is_duplicate("tweet2").await);
@@ -420,7 +441,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dedup_empty_id() {
-        let ch = TwitterChannel::new("token".into(), vec![]);
+        let ch = TwitterChannel::new("token".into(), "twitter_test_alias", Arc::new(Vec::new));
         assert!(!ch.is_duplicate("").await);
         assert!(!ch.is_duplicate("").await);
     }
@@ -473,11 +494,9 @@ mod tests {
     fn test_config_serde() {
         let toml_str = r#"
 bearer_token = "AAAA"
-allowed_users = ["user1"]
 "#;
         let config: zeroclaw_config::schema::TwitterConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.bearer_token, "AAAA");
-        assert_eq!(config.allowed_users, vec!["user1"]);
     }
 
     #[test]
@@ -486,6 +505,6 @@ allowed_users = ["user1"]
 bearer_token = "tok"
 "#;
         let config: zeroclaw_config::schema::TwitterConfig = toml::from_str(toml_str).unwrap();
-        assert!(config.allowed_users.is_empty());
+        assert_eq!(config.bearer_token, "tok");
     }
 }

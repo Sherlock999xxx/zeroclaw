@@ -105,7 +105,7 @@ pub async fn handle_api_status(
         return e.into_response();
     }
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     let health = zeroclaw_runtime::health::snapshot();
 
     let mut channels = serde_json::Map::new();
@@ -170,7 +170,7 @@ pub async fn handle_api_cron_list(
         return e.into_response();
     }
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     match zeroclaw_runtime::cron::list_jobs(&config) {
         Ok(jobs) => Json(serde_json::json!({"jobs": jobs})).into_response(),
         Err(e) => (
@@ -205,7 +205,7 @@ pub async fn handle_api_cron_add(
         delete_after_run,
     } = body;
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     if config.agent(&agent_alias).is_none() {
         return (
             StatusCode::BAD_REQUEST,
@@ -307,7 +307,7 @@ pub async fn handle_api_cron_runs(
     }
 
     let limit = params.limit.unwrap_or(20).clamp(1, 100) as usize;
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
 
     // Verify the job exists before listing runs.
     if let Err(e) = zeroclaw_runtime::cron::get_job(&config, &id) {
@@ -354,7 +354,7 @@ pub async fn handle_api_cron_run(
         return e.into_response();
     }
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
 
     let job = match zeroclaw_runtime::cron::get_job(&config, &id) {
         Ok(job) => job,
@@ -457,7 +457,7 @@ pub async fn handle_api_cron_patch(
         return e.into_response();
     }
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     if config.agent(&body.agent).is_none() {
         return (
             StatusCode::BAD_REQUEST,
@@ -533,7 +533,7 @@ pub async fn handle_api_cron_delete(
         return e.into_response();
     }
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     match zeroclaw_runtime::cron::remove_job(&config, &id) {
         Ok(()) => Json(serde_json::json!({"status": "ok"})).into_response(),
         Err(e) => (
@@ -553,7 +553,7 @@ pub async fn handle_api_cron_settings_get(
         return e.into_response();
     }
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     Json(serde_json::json!({
         "enabled": config.scheduler.enabled,
         "catch_up_on_startup": config.scheduler.catch_up_on_startup,
@@ -572,7 +572,7 @@ pub async fn handle_api_cron_settings_patch(
         return e.into_response();
     }
 
-    let mut config = state.config.lock().clone();
+    let mut config = state.config.read().clone();
 
     if let Some(v) = body.get("enabled").and_then(|v| v.as_bool()) {
         config.scheduler.enabled = v;
@@ -592,7 +592,7 @@ pub async fn handle_api_cron_settings_patch(
             .into_response();
     }
 
-    *state.config.lock() = config.clone();
+    *state.config.write() = config.clone();
 
     Json(serde_json::json!({
         "status": "ok",
@@ -612,7 +612,7 @@ pub async fn handle_api_integrations(
         return e.into_response();
     }
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     let entries = zeroclaw_runtime::integrations::registry::all_integrations(&config);
 
     let integrations: Vec<serde_json::Value> = entries
@@ -639,7 +639,7 @@ pub async fn handle_api_integrations_settings(
         return e.into_response();
     }
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     let entries = zeroclaw_runtime::integrations::registry::all_integrations(&config);
 
     let mut settings = serde_json::Map::new();
@@ -670,7 +670,7 @@ pub async fn handle_api_doctor(
         return e.into_response();
     }
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     let results = zeroclaw_runtime::doctor::diagnose(&config);
 
     let ok_count = results
@@ -853,7 +853,7 @@ pub async fn handle_api_channels(
         return e.into_response();
     }
 
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     let channels: Vec<serde_json::Value> = config
         .channels
         .channels()
@@ -1222,7 +1222,7 @@ mod tests {
     use async_trait::async_trait;
     use axum::response::IntoResponse;
     use http_body_util::BodyExt;
-    use parking_lot::Mutex;
+    use parking_lot::RwLock;
     use std::sync::Arc;
     use std::time::Duration;
     use zeroclaw_memory::{Memory, MemoryCategory, MemoryEntry};
@@ -1349,7 +1349,7 @@ mod tests {
 
     fn test_state(config: zeroclaw_config::schema::Config) -> AppState {
         AppState {
-            config: Arc::new(Mutex::new(config)),
+            config: Arc::new(RwLock::new(config)),
             model_provider: Arc::new(MockModelProvider),
             model: "test-model".into(),
             temperature: 0.0,
@@ -1482,7 +1482,7 @@ mod tests {
         let json = response_json(response).await;
         assert_eq!(json["status"], "ok");
 
-        let config = state.config.lock().clone();
+        let config = state.config.read().clone();
         let jobs = zeroclaw_runtime::cron::list_jobs(&config).unwrap();
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].job_type, zeroclaw_runtime::cron::JobType::Agent);
@@ -1529,7 +1529,7 @@ mod tests {
                 .contains("delivery.to is required")
         );
 
-        let config = state.config.lock().clone();
+        let config = state.config.read().clone();
         assert!(
             zeroclaw_runtime::cron::list_jobs(&config)
                 .unwrap()
@@ -1578,7 +1578,7 @@ mod tests {
                 .contains("unsupported delivery channel")
         );
 
-        let config = state.config.lock().clone();
+        let config = state.config.read().clone();
         assert!(
             zeroclaw_runtime::cron::list_jobs(&config)
                 .unwrap()
@@ -1598,7 +1598,7 @@ mod tests {
         let state = test_state(with_test_agent(config));
 
         let job = zeroclaw_runtime::cron::add_shell_job_with_approval(
-            &state.config.lock().clone(),
+            &state.config.read().clone(),
             "test-agent",
             None,
             zeroclaw_runtime::cron::Schedule::Cron {
@@ -1618,7 +1618,7 @@ mod tests {
         // follow-up.)
         state
             .config
-            .lock()
+            .write()
             .agents
             .get_mut("test-agent")
             .expect("test-agent configured by with_test_agent")
@@ -1642,7 +1642,7 @@ mod tests {
                 .contains("hello-from-manual-trigger")
         );
 
-        let runs = zeroclaw_runtime::cron::list_runs(&state.config.lock().clone(), &job.id, 10)
+        let runs = zeroclaw_runtime::cron::list_runs(&state.config.read().clone(), &job.id, 10)
             .expect("runs listed");
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].status, "ok");

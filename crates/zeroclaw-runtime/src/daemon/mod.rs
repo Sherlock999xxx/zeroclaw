@@ -1317,6 +1317,9 @@ mod tests {
 
     #[test]
     fn auto_detect_telegram_when_configured() {
+        use zeroclaw_config::multi_agent::{PeerExternal, PeerGroupConfig, PeerUsername};
+        use zeroclaw_config::providers::ChannelRef;
+
         let mut config = Config::default();
         config.channels.telegram.insert(
             "default".to_string(),
@@ -1330,6 +1333,19 @@ mod tests {
                 proxy_url: None,
                 approval_timeout_secs: 120,
                 excluded_tools: vec![],
+            },
+        );
+        // Inbound peer authorization lives in peer_groups in V3.
+        // Auto-detect picks the first external peer of the synthesized
+        // `telegram_default` group as the heartbeat target.
+        config.peer_groups.insert(
+            "telegram_default".to_string(),
+            PeerGroupConfig {
+                channel: ChannelRef::new("telegram.default"),
+                external_peers: vec![PeerExternal {
+                    username: PeerUsername::new("user123"),
+                }],
+                ..PeerGroupConfig::default()
             },
         );
 

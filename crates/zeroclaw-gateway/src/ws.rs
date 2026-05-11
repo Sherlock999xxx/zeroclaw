@@ -210,7 +210,7 @@ pub async fn handle_ws_chat(
             .into_response();
     };
     {
-        let cfg = state.config.lock();
+        let cfg = state.config.read();
         if cfg.agent(&agent_alias).is_none() {
             return (
                 axum::http::StatusCode::BAD_REQUEST,
@@ -259,7 +259,7 @@ async fn handle_socket(
     // Hydrate session metadata from persistence (if available). Agent
     // construction is deferred until after the optional `connect` frame so the
     // client can provide a per-session cwd for the security sandbox root.
-    let config = state.config.lock().clone();
+    let config = state.config.read().clone();
     let mut resumed = false;
     let mut message_count: usize = 0;
     let mut effective_name: Option<String> = None;
@@ -503,7 +503,7 @@ async fn handle_socket(
                 #[cfg(feature = "gateway-voice-duplex")]
                 {
                     // Multi-instance shape: presence in the map = enabled.
-                    let duplex_enabled = !state.config.lock().channels.voice_duplex.is_empty();
+                    let duplex_enabled = !state.config.read().channels.voice_duplex.is_empty();
                     if duplex_enabled {
                         if let Some(voice_event) = crate::voice_duplex::try_parse_voice_event(&msg) {
                             if let Some(error_frame) = crate::voice_duplex::handle_voice_event(voice_event) {
@@ -683,7 +683,7 @@ async fn process_chat_message(
 
     let provider_label = state
         .config
-        .lock()
+        .read()
         .first_model_provider_type()
         .unwrap_or("unknown")
         .to_string();
@@ -1121,7 +1121,7 @@ fn record_turn_cost(
     // pricing map by `<type>.<alias>`. The streaming and non-streaming
     // paths derive identical costs because both bottom out in the same
     // `<type>.<alias>` key shape.
-    let config = state.config.lock();
+    let config = state.config.read();
     let pricing_map = config
         .model_providers
         .iter_entries()
