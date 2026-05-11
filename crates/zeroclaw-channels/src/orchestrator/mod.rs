@@ -4517,11 +4517,7 @@ fn build_channel_by_id(
                     let alias = alias.clone();
                     Arc::new(move || cfg_arc.read().channel_external_peers("lark", &alias))
                 };
-                Ok(Arc::new(LarkChannel::from_config(
-                    lk,
-                    alias,
-                    peer_resolver,
-                )))
+                Ok(Arc::new(LarkChannel::from_config(lk, alias, peer_resolver)))
             }
             #[cfg(not(feature = "channel-lark"))]
             {

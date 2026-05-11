@@ -1072,10 +1072,7 @@ app_secret = "feishu_secret"
         .lark
         .get("default")
         .expect("lark.default survives the conflict");
-    assert_eq!(
-        lark.app_id, "lark_survives",
-        "lark wins on app_id conflict"
-    );
+    assert_eq!(lark.app_id, "lark_survives", "lark wins on app_id conflict");
     assert!(
         !lark.use_feishu,
         "use_feishu stays false because the feishu block was dropped, not merged"

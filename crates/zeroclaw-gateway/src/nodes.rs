@@ -167,11 +167,11 @@ enum NodeMessage {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum GatewayMessage {
+    #[allow(dead_code)] // Wire-format ack; only the test constructs it today.
     Registered {
         node_id: String,
         capabilities_count: usize,
     },
-    Error { message: String },
     Invoke {
         call_id: String,
         capability: String,

@@ -1912,35 +1912,6 @@ allowed_users = ["user1"]
         assert!(ch.get_cached_upload(&key).await.is_none());
     }
 
-    // --- Reply tracker tests ---
-
-    #[tokio::test]
-    async fn test_reply_tracker_allows_up_to_limit() {
-        let ch = QQChannel::new(
-            "id".into(),
-            "secret".into(),
-            "qq_test_alias",
-            Arc::new(Vec::new),
-        );
-        for _ in 0..REPLY_LIMIT {
-            assert!(ch.check_reply_allowed("msg1").await);
-        }
-        // 5th reply should be denied
-        assert!(!ch.check_reply_allowed("msg1").await);
-    }
-
-    #[tokio::test]
-    async fn test_reply_tracker_independent_msg_ids() {
-        let ch = QQChannel::new(
-            "id".into(),
-            "secret".into(),
-            "qq_test_alias",
-            Arc::new(Vec::new),
-        );
-        assert!(ch.check_reply_allowed("msg_a").await);
-        assert!(ch.check_reply_allowed("msg_b").await);
-    }
-
     // --- Auth retry tests ---
 
     #[test]

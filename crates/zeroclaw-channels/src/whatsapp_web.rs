@@ -686,7 +686,6 @@ impl WhatsAppWebChannel {
             Some(normalized)
         }
     }
-
 }
 
 /// Decide whether a `fromMe` message outside the operator's self-chat is an

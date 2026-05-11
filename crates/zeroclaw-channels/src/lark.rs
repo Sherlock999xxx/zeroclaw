@@ -3082,11 +3082,8 @@ mod tests {
             excluded_tools: vec![],
         };
 
-        let ch = LarkChannel::from_config(
-            &cfg,
-            "feishu_test_alias",
-            resolver_from(vec!["*".into()]),
-        );
+        let ch =
+            LarkChannel::from_config(&cfg, "feishu_test_alias", resolver_from(vec!["*".into()]));
 
         assert_eq!(ch.api_base(), FEISHU_BASE_URL);
         assert_eq!(ch.ws_base(), FEISHU_WS_BASE_URL);

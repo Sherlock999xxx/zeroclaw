@@ -512,7 +512,6 @@ impl SseTransport {
         }
         Ok((derived, false))
     }
-
 }
 
 #[derive(Default)]

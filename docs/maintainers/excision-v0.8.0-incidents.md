@@ -4,6 +4,17 @@ Working audit trail for the v0.8.0 excision pass. Each entry records a deletion 
 
 Format: site, decision (deleted / kept / kept-with-narrow), reason.
 
+## Pre-existing test failures (not introduced by the excision pass)
+
+Two failing onboard tests on the branch — fail with the excision pass applied AND reproduce on the pre-excision commit. The wizard's quick-mode prompts for the per-channel `excluded-tools` field, but neither test provides an answer for that prompt:
+
+- `crates/zeroclaw-runtime/src/onboard/mod.rs::onboard::tests::channels_telegram_selection_writes_entry` (line 2138)
+- `crates/zeroclaw-runtime/src/onboard/mod.rs::onboard::tests::channels_mochat_selection_persists_url_and_token` (line 2174)
+
+Failure: `quick mode: no answer or default provided for prompt "excluded-tools"`.
+
+Out of scope for the excision pass; the right fix is either (a) extend `QuickUi` answers in each test to include `with("excluded-tools", "")`, or (b) fix the wizard to skip prompting when a `Vec<String>` field carries `#[serde(default)]`. Belongs to the wizard maintainers, not this excision.
+
 ## Phase 1 — Orphaned files
 
 - `v3.toml` (785 lines, repo root) — **deleted**. Zero references in code, docs, tests, scripts, .gitignore, CI. Residue from the scrapped `zeroclaw config generate` (commit 73f906474).

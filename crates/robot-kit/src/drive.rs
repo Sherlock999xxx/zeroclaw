@@ -119,7 +119,6 @@ impl DriveBackend for Ros2Drive {
             .await?;
         Ok(())
     }
-
 }
 
 /// Serial backend - sends commands to Arduino/motor controller
