@@ -294,7 +294,7 @@ impl WhatsAppWebChannel {
     /// Only meaningful inside an actual rejection branch (`normalized.is_none()`
     /// under `Allowlist` policy); outside that branch the LID resolution
     /// state is not the operator's concern, since the message is being
-    /// processed normally (#6354 review).
+    /// processed normally.
     #[cfg(feature = "whatsapp-web")]
     fn lid_rejection_diagnostic(
         sender: &wa_rs_binary::jid::Jid,
@@ -1720,7 +1720,7 @@ mod tests {
         assert!(candidates.contains(&"+15551234567".to_string()));
     }
 
-    // ── lid_rejection_diagnostic: scoped LID warning (#6354 review) ────
+    // ── lid_rejection_diagnostic: scoped LID warning ────
     //
     // The diagnostic fires only inside the `Allowlist::normalized.is_none()`
     // branch. These tests pin the three shapes the function returns; the
@@ -2130,7 +2130,7 @@ mod tests {
         assert_eq!(*ch.bot_phone.lock(), None);
     }
 
-    // ── fromme_outside_self_chat_is_operator_trigger (#6351) ───────────
+    // ── fromme_outside_self_chat_is_operator_trigger ───────────
 
     #[test]
     #[cfg(feature = "whatsapp-web")]

@@ -740,7 +740,7 @@ struct NativeChatRequest {
     /// streaming requests omit `stream_options.include_usage` and OpenAI-
     /// compatible providers never send the final `usage` SSE event — leaving
     /// `/ws/chat` with no token-usage signal whenever native tools are active
-    /// (which is the normal gateway path). See #6001 / #6159.
+    /// (which is the normal gateway path). / #6159.
     #[serde(skip_serializing_if = "Option::is_none")]
     stream_options: Option<StreamOptionsBody>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1535,7 +1535,7 @@ impl OpenAiCompatibleModelProvider {
     /// messages with `tool_calls` JSON from previous sessions or from
     /// model_provider switches.  Sending these to a non-native-tool model_provider
     /// causes hard API errors like MiniMax's
-    /// "tool result's tool id not found" (#5743).
+    /// "tool result's tool id not found".
     ///
     /// - **tool-role messages** are dropped entirely.
     /// - **assistant messages with `tool_calls`** are converted to plain
@@ -1576,7 +1576,7 @@ impl OpenAiCompatibleModelProvider {
         // messages in a row. Providers targeted by the `native_tool_calling =
         // false` path (Anthropic upstream, MiniMax, and other OpenAI-compat
         // wrappers) reject consecutive same-role messages with HTTP 400, so we
-        // merge them here. See #5825.
+        // merge them here.
         let mut coalesced: Vec<ChatMessage> = Vec::with_capacity(messages.len());
         for msg in intermediate {
             match coalesced.last_mut() {
@@ -1845,7 +1845,7 @@ impl ModelProvider for OpenAiCompatibleModelProvider {
 
         let merge = self.effective_merge_system(model);
         let effective_messages = Self::flatten_system_messages(messages, merge);
-        // Strip native tool constructs for non-native-tool model_providers (#5743).
+        // Strip native tool constructs for non-native-tool model_providers.
         let effective_messages = self.strip_native_tool_messages(&effective_messages);
         let api_messages: Vec<Message> = effective_messages
             .iter()

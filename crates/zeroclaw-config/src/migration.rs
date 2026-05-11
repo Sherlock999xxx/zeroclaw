@@ -145,7 +145,7 @@ pub fn migrate_to_current(input: &str) -> Result<Config> {
 ///
 /// Backup file is `<config_filename>.backup` (joined cross-platform via
 /// `Path` ops). The write path mirrors `Config::save()` so the documented
-/// durability guarantee holds end-to-end (#6266 review):
+/// durability guarantee holds end-to-end:
 ///
 /// 1. Write the migrated content to `<path>.tmp-<uuid>` and fsync it.
 /// 2. Copy the original to `<path>.backup` (existing behavior; recovery
@@ -618,7 +618,7 @@ mod tests {
         assert!(detect_version(&v).is_err());
     }
 
-    // ── migrate_file_in_place atomic-write semantics (#6266 review) ──
+    // ── migrate_file_in_place atomic-write semantics ──
 
     fn setup_temp_config_dir() -> tempfile::TempDir {
         tempfile::TempDir::new().expect("temp dir")

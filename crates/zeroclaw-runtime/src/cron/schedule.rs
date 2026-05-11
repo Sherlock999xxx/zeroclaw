@@ -21,7 +21,7 @@ pub fn next_run_for_schedule(schedule: &Schedule, from: DateTime<Utc>) -> Result
                 Ok(next_local.with_timezone(&Utc))
             } else {
                 // Default to OS local timezone so schedules match user
-                // expectations instead of always using UTC (#5220).
+                // expectations instead of always using UTC.
                 let local_from = from.with_timezone(&chrono::Local);
                 let next_local = cron.after(&local_from).next().ok_or_else(|| {
                     anyhow::anyhow!("No future occurrence for expression: {expr}")

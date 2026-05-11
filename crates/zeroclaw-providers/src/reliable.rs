@@ -140,7 +140,7 @@ pub fn is_non_retryable(err: &anyhow::Error) -> bool {
 
 /// Check if an error indicates an authentication/authorization failure.
 /// Used by channels to evict cached model_providers whose OAuth tokens may have
-/// expired so the next request triggers a fresh credential resolution (#5219).
+/// expired so the next request triggers a fresh credential resolution.
 pub fn is_auth_error(err: &anyhow::Error) -> bool {
     if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>()
         && let Some(status) = reqwest_err.status()

@@ -12679,7 +12679,7 @@ impl Config {
             // `serde_ignored` silently drops field values inside nested
             // structs that carry `#[serde(default)]` (e.g. the entire
             // `[autonomy]` table), causing user-supplied values to be
-            // replaced by defaults.  See #4171.
+            // replaced by defaults.
             //
             // We now deserialize with `toml::from_str` (which is correct)
             // and run `serde_ignored` separately just for diagnostics.
@@ -12719,7 +12719,7 @@ impl Config {
             // custom tool), serde replaces the default list instead of
             // merging — this re-adds the framework defaults so safe
             // tools like `weather` and `calculator` keep their
-            // auto-approve status. See #4247.
+            // auto-approve status.
             //
             // Users who want to require approval for a default tool can
             // add it to `always_ask`, which takes precedence over
@@ -19701,7 +19701,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
 
     #[test]
     async fn env_override_save_cycle_preserves_on_disk_secret() {
-        // Regression bar for the data-loss bug identified in PR #6523
+        // Regression bar for the data-loss bug identified in PR
         // review: an operator with a real on-disk credential who sets a
         // `ZEROCLAW_*` env override for the same path and triggers any
         // save (dashboard auto-save, CLI `config set` for an unrelated

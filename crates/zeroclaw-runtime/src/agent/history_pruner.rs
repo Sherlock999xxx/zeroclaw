@@ -100,7 +100,7 @@ pub fn remove_orphaned_tool_messages(messages: &mut Vec<ChatMessage>) -> usize {
     // A substring match on the assistant's *text* is NOT sufficient —
     // compaction summaries are instructed to preserve identifiers, so an
     // id can appear in prose without an actual tool_use block backing it
-    // (see #5813).
+    //.
     i = 0;
     while i < messages.len() {
         if messages[i].role != "tool" {
@@ -188,7 +188,7 @@ pub fn prune_history(messages: &mut Vec<ChatMessage>, config: &HistoryPrunerConf
     // An assistant message followed by one or more consecutive tool messages
     // forms an atomic group (tool_use + tool_result pairing). Collapsing only
     // part of the group would orphan tool_use blocks, causing API 400 errors
-    // from model_providers that enforce pairing (e.g., Anthropic). See #4810.
+    // from model_providers that enforce pairing (e.g., Anthropic).
     //
     // The group is collapsed only when *every* tool in it is unprotected —
     // the same all-or-nothing rule Phase 2 uses. If `keep_recent` protects
@@ -241,7 +241,7 @@ pub fn prune_history(messages: &mut Vec<ChatMessage>, config: &HistoryPrunerConf
 
     // Phase 2 – budget enforcement: drop messages to fit token budget.
     // Tool groups (assistant + consecutive tool messages) are dropped
-    // atomically to preserve tool_use/tool_result pairing. See #4810.
+    // atomically to preserve tool_use/tool_result pairing.
     let mut dropped_messages: usize = 0;
     while estimate_tokens(messages) > config.max_tokens {
         let protected = protected_indices(messages, config.keep_recent);

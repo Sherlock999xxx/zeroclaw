@@ -608,7 +608,7 @@ fn load_skill_toml(path: &Path) -> Result<Skill> {
     // Merge prompts from both locations: inside the [skill] table (natural
     // location for per-skill prompts) and at the manifest root (historical
     // location). Previously, prompts placed inside [skill] were silently
-    // dropped because SkillMeta had no `prompts` field. Fixes #5721.
+    // dropped because SkillMeta had no `prompts` field.
     let mut prompts = manifest.skill.prompts;
     prompts.extend(manifest.prompts);
 

@@ -3407,7 +3407,7 @@ impl Channel for SlackChannel {
 
             // Add rich formatting blocks, split into chunks for the per-block limit.
             // The newer `markdown` block type (12k chars) offers richer formatting but
-            // isn't available on all workspaces, causing `invalid_blocks` errors (#4563).
+            // isn't available on all workspaces, causing `invalid_blocks` errors.
             // Default to the universally supported `section` block with `mrkdwn`.
             let block_limit = if self.use_markdown_blocks {
                 SLACK_MARKDOWN_BLOCK_MAX_CHARS

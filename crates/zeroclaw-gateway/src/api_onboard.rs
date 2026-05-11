@@ -7,7 +7,7 @@
 //! model_provider fetches from models.dev (cached) or the model_provider's own /models
 //! endpoint. Same code paths as the CLI wizard.
 //!
-//! Issue #6175.
+//!
 
 use axum::{
     extract::{Query, State},

@@ -1628,7 +1628,7 @@ struct GatewayChatOutcome {
 /// or whitespace-only, otherwise `None`. Empty model means the gateway
 /// booted with nothing configured (fresh install). Callers refuse the
 /// dispatch with this marker instead of calling the provider with an
-/// empty model id. Mirrors `agent::Agent::from_config` (#6099) at
+/// empty model id. Mirrors `agent::Agent::from_config` at
 /// request-time so `/onboard` stays reachable.
 fn needs_onboarding_for(model: &str) -> Option<anyhow::Error> {
     if model.trim().is_empty() {

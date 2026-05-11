@@ -341,7 +341,7 @@ fn autosave_memory_key(prefix: &str) -> String {
 /// `exclude_conversation` skips `MemoryCategory::Conversation` entries
 /// regardless of their key shape. Set to `true` for autonomous/scheduled
 /// runs (cron, daemon heartbeat) so chat memory cannot leak into prompts
-/// the user did not initiate. See #5415 / #5456.
+/// the user did not initiate. / #5456.
 async fn build_context(
     mem: &dyn Memory,
     user_msg: &str,
@@ -371,7 +371,7 @@ async fn build_context(
                 // memories. The autosave-key checks below catch the agent's
                 // own autosaves but miss Conversation entries written by
                 // channel handlers (Discord, gateway, WhatsApp, …) under
-                // their own keys. See #5415 / #5456.
+                // their own keys. / #5456.
                 if exclude_conversation && matches!(entry.category, MemoryCategory::Conversation) {
                     continue;
                 }
@@ -570,7 +570,7 @@ struct StreamedChatOutcome {
     /// `AssistantToolCalls` history entry. Required for model_providers like
     /// DeepSeek V4 that reject follow-up requests when the assistant's
     /// prior `reasoning_content` is missing from replayed tool-call turns
-    /// (see issue #6059).
+    ///.
     reasoning_content: String,
     tool_calls: Vec<ToolCall>,
     forwarded_live_deltas: bool,
@@ -1942,7 +1942,7 @@ pub async fn run_tool_call_loop(
                 }
             }
             let mut result_output = truncate_tool_result(&outcome.output, max_tool_result_chars);
-            // Append HMAC receipt to tool result when receipts are enabled (#4830)
+            // Append HMAC receipt to tool result when receipts are enabled
             if let Some(ref receipt) = outcome.receipt {
                 tracing::debug!(tool = %tool_name, receipt = %receipt, "Tool receipt generated");
                 result_output = format!("{result_output}\n\n[receipt: {receipt}]");
@@ -2682,7 +2682,7 @@ pub async fn run(
         // Inject memory + hardware RAG context into user message.
         // For non-interactive runs (cron, daemon heartbeat), exclude
         // Conversation-category memories so chat history does not leak
-        // into autonomous executions. See #5415 / #5456.
+        // into autonomous executions. / #5456.
         let mem_context = build_context(
             mem.as_ref(),
             &effective_msg,
@@ -6622,7 +6622,7 @@ mod tests {
     /// Regression: cron / heartbeat runs must not surface chat-origin
     /// `Conversation` memories — the leak path the #5456 prefix filter
     /// missed because `agent::run` performs a second, unfiltered recall
-    /// inside `build_context`. See #5415.
+    /// inside `build_context`.
     #[tokio::test]
     async fn build_context_excludes_conversation_when_flag_set() {
         let tmp = TempDir::new().unwrap();

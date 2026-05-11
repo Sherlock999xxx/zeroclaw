@@ -248,7 +248,7 @@ fn check_version() -> CheckResult {
 /// loopback target so the probe can actually connect — and report the
 /// configured value alongside so the user isn't confused about why the
 /// output says `127.0.0.1` when their `config.toml` says `0.0.0.0`
-/// (#6051). Returns `(probe_host, display_host)` where `display_host`
+///. Returns `(probe_host, display_host)` where `display_host`
 /// is `Some(_)` only when a rewrite happened.
 fn resolve_probe_host(configured: &str) -> (&str, Option<&str>) {
     match configured {

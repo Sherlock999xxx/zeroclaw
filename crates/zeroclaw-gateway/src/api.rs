@@ -989,7 +989,7 @@ pub async fn handle_api_session_delete(
     // post-`tokio::join!` cleanup (`ws.rs:535`) as the only path. Without
     // this, deleting a session mid-turn leaks the map entry until the
     // streaming task happens to wake up — and on a process crash the
-    // entry is lost entirely (#5835).
+    // entry is lost entirely.
     let token = state
         .cancel_tokens
         .lock()

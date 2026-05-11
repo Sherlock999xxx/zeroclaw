@@ -1413,7 +1413,7 @@ impl SecurityPolicy {
                 // NOTE: `-c` (lowercase) is compared case-sensitively against
                 // `args_cased` because git's `-C` (uppercase, change directory)
                 // is a distinct, benign option that must not be conflated with
-                // `-c` (set config override). See #5809.
+                // `-c` (set config override).
                 !args_cased.iter().any(|arg| arg == "-c")
                     && !args.iter().any(|arg| {
                         arg == "config"
@@ -1583,7 +1583,7 @@ impl SecurityPolicy {
         // root.  The workspace/allowed-root check runs BEFORE the forbidden
         // prefix list so that workspace paths under broad defaults like
         // "/home" are not rejected.  This mirrors the priority order in
-        // `is_resolved_path_allowed`.  See #2880.
+        // `is_resolved_path_allowed`.
         if expanded_path.is_absolute() {
             let in_workspace = expanded_path.starts_with(&self.workspace_dir);
             let in_allowed_root = self
@@ -2760,7 +2760,7 @@ mod tests {
 
     #[test]
     fn from_config_full_autonomy_overrides_workspace_only() {
-        // Issue #5463: Full autonomy should disable workspace_only even if the
+        //: Full autonomy should disable workspace_only even if the
         // config default keeps it true.
         let autonomy_config = crate::schema::RiskProfileConfig {
             level: AutonomyLevel::Full,
@@ -3031,7 +3031,7 @@ mod tests {
         assert!(!p.is_command_allowed("echo>/dev/stdout.bak"));
     }
 
-    // ── Interpreter argument injection (#5698) ────────────────────
+    // ── Interpreter argument injection ────────────────────
 
     #[test]
     fn interpreter_inline_eval_blocked() {

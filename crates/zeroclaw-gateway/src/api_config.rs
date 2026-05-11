@@ -9,7 +9,7 @@
 //! write-only over HTTP per the secrets-handling boundary defined in
 //! the issue body.
 //!
-//! See #6175 for the full surface and acceptance checklist.
+//! for the full surface and acceptance checklist.
 
 use axum::{
     extract::{Query, State},
@@ -1218,7 +1218,7 @@ pub async fn handle_migrate(State(state): State<AppState>, headers: HeaderMap) -
     match migrated {
         Some(new_content) => {
             // Atomic write path mirrors `Config::save()` and `migration::migrate_file_in_place`
-            // (#6266 review): write temp + fsync → backup → atomic rename → fsync directory.
+            //: write temp + fsync → backup → atomic rename → fsync directory.
             // Without this sequence the documented durability guarantee on the comment above
             // doesn't hold: a copy-then-write window leaves both the original and the new
             // content vulnerable to power loss.

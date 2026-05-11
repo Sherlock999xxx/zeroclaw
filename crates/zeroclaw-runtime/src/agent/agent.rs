@@ -898,7 +898,7 @@ impl Agent {
 
         // ── Hook: before_tool_call (modifying) ──────────────────
         // Mirrors the hook pipeline in run_tool_call_loop (loop_.rs) so that
-        // library-integrated runs honour the same hook chain.  See #5462.
+        // library-integrated runs honour the same hook chain.
         let mut tool_name = call.name.clone();
         let mut tool_args = call.arguments.clone();
         if let Some(ref hooks) = self.hook_runner {

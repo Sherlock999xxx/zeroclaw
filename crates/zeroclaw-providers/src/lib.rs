@@ -602,7 +602,7 @@ impl Default for ModelProviderRuntimeOptions {
 /// entry plus the global config's process-wide settings (zeroclaw_dir,
 /// secrets, runtime). Splits out the per-entry resolution so callers with
 /// agent context can pass in the alias-resolved entry instead of hitting
-/// `first_model_provider()` (#6266 review).
+/// `first_model_provider()`.
 ///
 /// Pass `None` when no model_provider entry is resolvable (e.g. tests or fresh
 /// config with no models configured); falls back to safe defaults.
@@ -2553,7 +2553,7 @@ mod tests {
         assert!(model_provider.is_ok());
     }
 
-    // ── Per-alias provider_runtime_options resolution (#6266 review) ──
+    // ── Per-alias provider_runtime_options resolution ──
 
     /// Build a `Config` with two `anthropic` aliases at different base_urls
     /// so the test can prove `provider_runtime_options_for_agent` selects

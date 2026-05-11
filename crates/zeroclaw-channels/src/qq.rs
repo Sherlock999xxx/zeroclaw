@@ -380,7 +380,7 @@ impl QQChannel {
     /// can cause the entire recovery loop to fail. This method retries up to
     /// `AUTH_RETRY_MAX_ATTEMPTS` times with exponential backoff + jitter so
     /// that a single transient error doesn't permanently break the reconnect
-    /// flow (see issue #4745).
+    /// flow.
     async fn fetch_access_token_with_retry(&self) -> anyhow::Result<(String, u64)> {
         let mut backoff_ms = AUTH_RETRY_INITIAL_BACKOFF_MS;
         let mut last_err = None;

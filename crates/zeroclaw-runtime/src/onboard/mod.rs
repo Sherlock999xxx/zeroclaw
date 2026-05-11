@@ -5,7 +5,7 @@
 //! just one slice (`zeroclaw onboard channels`) or the whole flow.
 //!
 //! Everything writes through `Config::set_prop` (or its helpers); direct
-//! struct-field assignment is off-limits per the DRY contract (#5951).
+//! struct-field assignment is off-limits per the DRY contract.
 
 use std::time::Duration;
 

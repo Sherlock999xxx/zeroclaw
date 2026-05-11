@@ -10,7 +10,7 @@
 //!
 //! Cached behind a `OnceCell` because the spec is static per build.
 //!
-//! See #6175.
+//!
 
 use axum::{
     http::{HeaderValue, StatusCode, header},

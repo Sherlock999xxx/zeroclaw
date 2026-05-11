@@ -183,7 +183,7 @@ impl PromptSection for SafetySection {
         let mut out = String::from("## Safety\n\n- Do not exfiltrate private data.\n");
 
         // Omit "ask before acting" instructions when autonomy is Full —
-        // mirrors build_system_prompt_with_mode_and_autonomy. See #3952.
+        // mirrors build_system_prompt_with_mode_and_autonomy.
         if ctx.autonomy_level != AutonomyLevel::Full {
             out.push_str(
                 "- Do not run destructive commands without asking.\n\
@@ -209,7 +209,7 @@ impl PromptSection for SafetySection {
             }
         });
 
-        // Append concrete security policy constraints when available (#2404).
+        // Append concrete security policy constraints when available.
         // This tells the LLM exactly what commands are allowed, which paths
         // are off-limits, etc. — preventing wasteful trial-and-error.
         if let Some(ref summary) = ctx.security_summary {

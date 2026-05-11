@@ -1889,7 +1889,7 @@ Done."#;
 
     #[test]
     fn parse_tool_calls_handles_tool_name_fence_format() {
-        // Issue #1420: xAI grok models use ```tool <name> format
+        //: xAI grok models use ```tool <name> format
         let response = r#"I'll write a test file.
 ```tool file_write
 {"path": "/home/user/test.txt", "content": "Hello world"}
@@ -1909,7 +1909,7 @@ Done."#;
 
     #[test]
     fn parse_tool_calls_handles_tool_name_fence_shell() {
-        // Issue #1420: Test shell command in ```tool shell format
+        //: Test shell command in ```tool shell format
         let response = r#"```tool shell
 {"command": "ls -la"}
 ```"#;

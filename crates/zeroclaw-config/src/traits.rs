@@ -31,7 +31,7 @@ pub enum PropKind {
     /// on the wire as a JSON object; the dashboard renders a sub-form for the
     /// inner fields using the JSON Schema from `OPTIONS /api/config`. Distinct
     /// from `String`, which inserts the raw value as a TOML string and breaks
-    /// the serde round-trip for typed structs (#6357 review).
+    /// the serde round-trip for typed structs.
     Object,
 }
 

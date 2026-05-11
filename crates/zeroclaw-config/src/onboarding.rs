@@ -45,7 +45,7 @@ pub enum SectionShape {
 ///
 /// * `wizard_steps` — the ordered initial-setup flow walked by `/onboard`.
 ///   Order in this group is the canonical wizard order — structural
-///   sections first, agents last (RFC #5890). [`ONBOARDING_WIZARD`] is
+///   sections first, agents last. [`ONBOARDING_WIZARD`] is
 ///   generated from this group only.
 /// * `explorer_only` — map-keyed sections that operators discover via
 ///   `/config/<key>` or `zeroclaw onboard <key>` after the wizard
@@ -251,7 +251,7 @@ sections! {
         },
         // Personality is intentionally NOT a wizard section in v0.8.0 —
         // markdown personality files live per-agent and surface inside the
-        // agent edit form (RFC #5890).
+        // agent edit form.
         Agents => {
             key:   "agents",
             shape: OneTierAliasMap,

@@ -1870,7 +1870,7 @@ async fn main() -> Result<()> {
             // surface and the channel-server agents so canvas frames pushed
             // from Telegram / Discord / Slack reach the same subscribers the
             // web UI serves. Without this, channels build an orphaned
-            // CanvasStore::default() and frames are silently dropped (#5356).
+            // CanvasStore::default() and frames are silently dropped.
             let canvas_store = zeroclaw_runtime::tools::CanvasStore::new();
             let canvas_store_for_gateway = canvas_store.clone();
             let canvas_store_for_channels = canvas_store.clone();

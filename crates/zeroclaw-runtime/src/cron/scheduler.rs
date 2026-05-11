@@ -328,7 +328,7 @@ async fn run_agent_job(
     // Recall relevant memories so cron jobs have context awareness.
     // Skipped when `job.uses_memory` is false (e.g. stateless digest jobs).
     // Exclude `Conversation` memories to prevent chat context from
-    // leaking into scheduled executions (see #5415). Routes through
+    // leaking into scheduled executions. Routes through
     // the cron-owning agent's per-agent memory wrapper so the
     // recall is scoped to that agent's bound + allowlisted rows.
     let memory_context = if !job.uses_memory {

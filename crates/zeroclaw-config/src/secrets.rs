@@ -485,7 +485,7 @@ mod tests {
         // container migration, backup-restore without the key file) need the
         // error message to point at the root cause. Otherwise the failure
         // cascades into a misleading "All providers/models failed" message
-        // with no diagnostic for the underlying decrypt failure (#6205).
+        // with no diagnostic for the underlying decrypt failure.
         let tmp1 = TempDir::new().unwrap();
         let tmp2 = TempDir::new().unwrap();
         let store1 = SecretStore::new(tmp1.path(), true);
@@ -913,7 +913,7 @@ mod tests {
     ///
     /// Without `takeown`, the file owner may be an invalid SID, causing `icacls`
     /// grants to succeed against an unowned file that later becomes unreadable.
-    /// This test verifies the code structure expectation (see issue #4532).
+    /// This test verifies the code structure expectation.
     #[test]
     fn takeown_runs_before_icacls_on_windows() {
         // Read the source to confirm `takeown` appears before `icacls` in the

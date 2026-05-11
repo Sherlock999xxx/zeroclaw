@@ -750,7 +750,7 @@ impl ModelProvider for OpenRouterModelProvider {
         // the consumer is gone, holding a connection-pool slot and
         // consuming OpenRouter quota for a request the caller no longer
         // wants. `AbortHandle::abort` is a no-op if the task has already
-        // finished, so the happy path is unaffected. See #5822.
+        // finished, so the happy path is unaffected.
         let guard = AbortOnDrop(handle.abort_handle());
 
         stream::unfold((rx, guard), |(mut rx, guard)| async move {

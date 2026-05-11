@@ -710,7 +710,7 @@ fn normalize_cached_channel_turns(turns: Vec<ChatMessage>) -> Vec<ChatMessage> {
     for turn in turns {
         match (expecting_user, turn.role.as_str()) {
             // Pass through tool-role messages preserved by
-            // keep_tool_context_turns (#4827).  After a tool result the
+            // keep_tool_context_turns.  After a tool result the
             // next expected message is an assistant response, same as
             // after a user message.
             (_, "tool") | (true, "user") => {
@@ -874,7 +874,7 @@ fn resolved_default_model(config: &Config) -> anyhow::Result<String> {
 
 /// Resolve runtime defaults from `config` against a specific dotted
 /// `model_provider` reference (`"<type>.<alias>"`) — the per-agent
-/// resolution path (#6266 review). Falls back to `first_model_provider()` when
+/// resolution path. Falls back to `first_model_provider()` when
 /// the reference is empty or doesn't resolve, preserving the conservative
 /// legacy behavior so misconfigured callsites still get safe defaults.
 fn runtime_defaults_from_config(
@@ -2331,7 +2331,7 @@ fn sanitize_channel_response(response: &str, tools: &[Box<dyn Tool>]) -> String 
         .map(|tool| tool.name().to_ascii_lowercase())
         .collect();
     // Strip any [Used tools: ...] prefix that the LLM may have echoed from
-    // history context (#4400). Trim first to handle leading/trailing whitespace.
+    // history context. Trim first to handle leading/trailing whitespace.
     let trimmed_response = response.trim();
     let stripped_summary = strip_tool_summary_prefix(trimmed_response);
     // Strip XML-style tool-call tags (e.g. <tool_call>...</tool_call>)
@@ -2931,7 +2931,7 @@ async fn process_channel_message(
     }
 
     // Strip [Used tools: ...] prefixes from cached assistant turns so the
-    // LLM never sees (and reproduces) this internal summary format (#4400).
+    // LLM never sees (and reproduces) this internal summary format.
     for turn in &mut prior_turns {
         if turn.role == "assistant" && turn.content.starts_with("[Used tools:") {
             turn.content = strip_tool_summary_prefix(&turn.content);
@@ -3315,7 +3315,7 @@ async fn process_channel_message(
     // `<tool_name>: <receipt>` here whenever a receipt is generated, so the
     // orchestrator can render the trailing `Tool receipts:` block after the
     // loop returns. Wrapped in `Arc` so the same handle can be shared into
-    // `TOOL_LOOP_RECEIPT_CONTEXT` for subagent forwarding (#6182). Inert when
+    // `TOOL_LOOP_RECEIPT_CONTEXT` for subagent forwarding. Inert when
     // `receipt_generator` is `None`.
     let tool_receipts_collector: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
         std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -3613,7 +3613,7 @@ async fn process_channel_message(
 
             // Persist intermediate tool-call/result messages from this turn
             // so the model retains concrete "I used tools" examples in
-            // context, preventing drift toward tool-less responses (#4827).
+            // context, preventing drift toward tool-less responses.
             let keep_tool_turns = ctx.agent_cfg.keep_tool_context_turns;
             if keep_tool_turns > 0 {
                 // Find tool messages for the current turn: everything after
@@ -3669,7 +3669,7 @@ async fn process_channel_message(
             // collector. Empty when receipts are disabled or no tool ran.
             // Includes receipts from delegate sub-agents because the same
             // `Arc<Mutex<Vec<String>>>` is forwarded via
-            // `TOOL_LOOP_RECEIPT_CONTEXT` into sub-loops (see #6182).
+            // `TOOL_LOOP_RECEIPT_CONTEXT` into sub-loops.
             let receipts_block = if ctx.show_receipts_in_response {
                 let receipts = tool_receipts_collector
                     .lock()
@@ -3807,7 +3807,7 @@ async fn process_channel_message(
                 );
 
                 // Evict cached model_provider on auth errors so the next request
-                // re-creates it with fresh OAuth credentials (#5219).
+                // re-creates it with fresh OAuth credentials.
                 if zeroclaw_providers::reliable::is_auth_error(&e) {
                     let cache_key =
                         provider_cache_key(&route.model_provider, route.api_key.as_deref());
@@ -5872,7 +5872,7 @@ pub async fn start_channels(
         })?
         .clone();
 
-    // Per-agent model_provider resolution (#6266 review). Each channel-server
+    // Per-agent model_provider resolution. Each channel-server
     // starts under a known `agent_alias`, so the correct model_provider entry is
     // the one named by `agents.<alias>.model_provider`, not whatever
     // happens to come first in `providers.models` iteration order. Falls
@@ -5987,7 +5987,7 @@ pub async fn start_channels(
         &config,
         // Share the gateway's canvas store so frames pushed from
         // channel-side agents reach the same WebSocket subscribers and
-        // REST snapshots the gateway serves (#5356). When `None`, the
+        // REST snapshots the gateway serves. When `None`, the
         // tool registry creates an orphaned store that nothing can
         // observe — the original silent-failure shape.
         canvas_store,
@@ -6529,7 +6529,7 @@ pub async fn start_channels(
             // future trim step inserted above is covered by the same guard.
             // Without this, the session is bricked until the file is deleted
             // because every API call fails with 400 "unexpected tool_use_id
-            // in tool_result blocks". See #5813.
+            // in tool_result blocks".
             zeroclaw_runtime::agent::history_pruner::remove_orphaned_tool_messages(&mut msgs);
             hydrated += 1;
             histories.push(key, msgs);
@@ -6964,7 +6964,7 @@ mod tests {
         assert!(!should_skip_memory_context_entry("telegram_123_45", "hi"));
 
         // Entries containing image markers must be skipped to prevent
-        // auto-saved photo messages from duplicating image blocks (#2403).
+        // auto-saved photo messages from duplicating image blocks.
         assert!(should_skip_memory_context_entry(
             "telegram_user_msg_99",
             "[IMAGE:/tmp/workspace/photo_1_2.jpg]"
@@ -6979,7 +6979,7 @@ mod tests {
             "Please describe the image"
         ));
 
-        // Entries containing tool_result blocks must be skipped (#3402).
+        // Entries containing tool_result blocks must be skipped.
         assert!(should_skip_memory_context_entry(
             "telegram_user_msg_200",
             r#"[Tool results]
@@ -7060,7 +7060,7 @@ mod tests {
     #[test]
     fn sanitize_channel_response_strips_used_tools_with_leading_whitespace() {
         let tools: Vec<Box<dyn Tool>> = Vec::new();
-        // Issue #4478: response with leading whitespace before [Used tools: ...]
+        //: response with leading whitespace before [Used tools: ...]
         let input = "  [Used tools: web_search_tool]\nHere is the search result.";
 
         let result = sanitize_channel_response(input, &tools);
@@ -11412,7 +11412,7 @@ BTC is currently around $65,000 based on latest tool output."#
     }
 
     /// Auto-saved photo messages must not surface through memory context,
-    /// otherwise the image marker gets duplicated in the model_provider request (#2403).
+    /// otherwise the image marker gets duplicated in the model_provider request.
     #[tokio::test]
     async fn build_memory_context_excludes_image_marker_entries() {
         let tmp = TempDir::new().unwrap();
