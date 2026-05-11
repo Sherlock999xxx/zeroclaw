@@ -254,11 +254,6 @@
       - any-glob-to-any-file:
           - "src/providers/bedrock.rs"
 
-"provider:claude-code":
-  - changed-files:
-      - any-glob-to-any-file:
-          - "src/providers/claude_code.rs"
-
 "provider:compatible":
   - changed-files:
       - any-glob-to-any-file:

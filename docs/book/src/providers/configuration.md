@@ -30,7 +30,7 @@ Run `cargo doc --open -p zeroclaw-config` (or read [`crates/zeroclaw-config/src/
 
 | Slot | Notes |
 |---|---|
-| `anthropic` | API key or OAuth (`sk-ant-oat-*`); supports Claude Code via the `claude_code` slot |
+| `anthropic` | API key or OAuth (`sk-ant-oat-*`) |
 | `openai` | GPT, o-series; OpenAI Codex variants live on `openai_codex` |
 | `azure` | Typed: `resource`, `deployment`, `api_version`. Env-var read path is gone — values must live in config |
 | `gemini` | Google's API; `gemini_cli` is the CLI-shells-out variant |

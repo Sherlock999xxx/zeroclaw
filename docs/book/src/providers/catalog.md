@@ -102,14 +102,6 @@ model = "gpt-4o"
 
 Uses a GitHub Copilot subscription for agent inference.
 
-### Claude Code — slot `claude_code`
-
-```toml
-[providers.models.claude_code.default]
-```
-
-Delegates turns to a Claude Code session over MCP. Useful for code-heavy workflows; inherits Claude Code's tool allow-lists and project context.
-
 ### Telnyx — slot `telnyx`
 
 ```toml
