@@ -531,20 +531,9 @@ pub async fn handle_section_picker(
         );
     };
     let help = section_help(section_enum.as_str()).to_string();
-    let items = match section_enum {
-        Section::ModelProviders => providers_picker(&cfg),
-        // TTS / transcription share the typed-family two-tier shape. Each
-        // family enumerates its picker via `schema_walk_picker(<family>)`
-        // — the same machinery channels uses, so no per-section catalog
-        // table to drift.
-        Section::TtsProviders | Section::TranscriptionProviders => {
-            schema_walk_picker(&cfg, section_enum.as_str())
-        }
-        Section::Memory => memory_picker(&cfg),
-        Section::Channels => schema_walk_picker(&cfg, "channels"),
-        Section::Tunnel => schema_walk_picker_with_none(&cfg, "tunnel", "tunnel.model_provider"),
-        Section::Agents => agents_picker(&cfg),
-        Section::Workspace | Section::Hardware => {
+    let items = match picker_items_for(section_enum, &cfg) {
+        PickerDispatch::Items(items) => items,
+        PickerDispatch::DirectForm => {
             return error_response(
                 ConfigApiError::new(
                     ConfigApiCode::PathNotFound,
@@ -564,6 +553,63 @@ pub async fn handle_section_picker(
         help,
     })
     .into_response()
+}
+
+/// Result of picker dispatch for a [`Section`]. `Items` carries the
+/// list rendered into the dashboard / CLI picker UI; `DirectForm`
+/// signals a section without a picker step (the caller falls through
+/// to `/api/config/list?prefix=<section>` for direct field rendering).
+///
+/// Splitting this out from `handle_section_picker` keeps the per-Section
+/// dispatch a pure function — testable without an `AppState` mock and
+/// exhaustively coverable by iterating every variant.
+enum PickerDispatch {
+    Items(Vec<PickerItem>),
+    DirectForm,
+}
+
+/// Per-section picker dispatch. Exhaustive over [`Section`] so adding a
+/// variant fails to compile until it gets a routing arm. The DRY
+/// version of what the dashboard's per-section view boils down to.
+fn picker_items_for(
+    section: zeroclaw_config::onboarding::Section,
+    cfg: &zeroclaw_config::schema::Config,
+) -> PickerDispatch {
+    use zeroclaw_config::onboarding::Section;
+    match section {
+        Section::ModelProviders => PickerDispatch::Items(providers_picker(cfg)),
+        // TTS / transcription share the typed-family two-tier shape. Each
+        // family enumerates its picker via `schema_walk_picker(<family>)`
+        // — the same machinery channels uses, so no per-section catalog
+        // table to drift.
+        Section::TtsProviders | Section::TranscriptionProviders => {
+            PickerDispatch::Items(schema_walk_picker(cfg, section.as_str()))
+        }
+        Section::Memory => PickerDispatch::Items(memory_picker(cfg)),
+        Section::Channels => PickerDispatch::Items(schema_walk_picker(cfg, "channels")),
+        Section::Tunnel => PickerDispatch::Items(schema_walk_picker_with_none(
+            cfg,
+            "tunnel",
+            "tunnel.model_provider",
+        )),
+        Section::Agents => PickerDispatch::Items(agents_picker(cfg)),
+        // Storage is two-tier (`storage.<kind>.<alias>`) — same shape
+        // and walker as channels and the typed-provider families.
+        Section::Storage => PickerDispatch::Items(schema_walk_picker(cfg, "storage")),
+        // OneTierAliasMap explorer sections: pick a key from the live
+        // HashMap. Generic walker covers every section whose schema is
+        // `<section>.<alias>` (operator-named keys, no closed kind set).
+        Section::PeerGroups
+        | Section::Cron
+        | Section::McpBundles
+        | Section::KnowledgeBundles
+        | Section::SkillBundles
+        | Section::RiskProfiles
+        | Section::RuntimeProfiles => {
+            PickerDispatch::Items(one_tier_alias_map_picker(cfg, section.as_str()))
+        }
+        Section::Workspace | Section::Hardware | Section::Mcp => PickerDispatch::DirectForm,
+    }
 }
 
 fn providers_picker(cfg: &zeroclaw_config::schema::Config) -> Vec<PickerItem> {
@@ -651,6 +697,41 @@ fn schema_walk_picker(cfg: &zeroclaw_config::schema::Config, section: &str) -> V
                 description: None,
                 badge,
             }
+        })
+        .collect()
+}
+
+/// Generic picker for `OneTierAliasMap` sections — walks the live
+/// `prop_fields()` for the section prefix and returns one PickerItem
+/// per operator-defined alias. The closed-kind enumeration that
+/// [`schema_walk_picker`] does via `Config::map_key_sections()` doesn't
+/// apply here: aliases under `peer_groups`, `cron`, `risk_profiles`,
+/// etc. are operator-named, with no statically-known catalog. Every
+/// existing alias is reported `configured`; the dashboard's `+ Add`
+/// affordance handles new-key creation through
+/// [`handle_select_item`].
+fn one_tier_alias_map_picker(
+    cfg: &zeroclaw_config::schema::Config,
+    section: &str,
+) -> Vec<PickerItem> {
+    let prefix_with_dot = format!("{section}.");
+    let mut keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for field in cfg.prop_fields() {
+        let Some(suffix) = field.name.strip_prefix(&prefix_with_dot) else {
+            continue;
+        };
+        let head = suffix.split_once('.').map_or(suffix, |(h, _)| h);
+        if head.is_empty() {
+            continue;
+        }
+        keys.insert(head.to_string());
+    }
+    keys.into_iter()
+        .map(|key| PickerItem {
+            key: key.clone(),
+            label: key,
+            description: None,
+            badge: Some("configured".to_string()),
         })
         .collect()
 }
@@ -819,24 +900,57 @@ pub async fn handle_section_select(
             };
             (format!("channels.{key}.{alias}"), created)
         }
-        Section::Agents => {
-            // Agents are flat (one level): the URL path key IS the alias.
-            // create_map_key is idempotent, so selecting an existing alias
-            // just returns the form prefix without modifying anything.
-            let created = working.create_map_key("agents", &key).map_err(|msg| {
+        Section::Agents
+        | Section::PeerGroups
+        | Section::Cron
+        | Section::McpBundles
+        | Section::KnowledgeBundles
+        | Section::SkillBundles
+        | Section::RiskProfiles
+        | Section::RuntimeProfiles => {
+            // OneTierAliasMap: the URL path key IS the alias. One
+            // `create_map_key("<section>", &key)` call works for every
+            // operator-named HashMap section; create_map_key is
+            // idempotent, so selecting an existing alias just returns
+            // the form prefix without modifying anything.
+            let section_key = section_enum.as_str();
+            let created = working.create_map_key(section_key, &key).map_err(|msg| {
                 error_response(
                     ConfigApiError::new(
                         ConfigApiCode::PathNotFound,
-                        format!("could not select agent alias `{key}`: {msg}"),
+                        format!("could not select {section_key} alias `{key}`: {msg}"),
                     )
-                    .with_path("agents"),
+                    .with_path(section_key),
                 )
             });
             let created = match created {
                 Ok(c) => c,
                 Err(resp) => return resp,
             };
-            (format!("agents.{key}"), created)
+            (format!("{section_key}.{key}"), created)
+        }
+        Section::Storage => {
+            // Two-tier typed-family (`storage.<kind>.<alias>`) — same
+            // shape and selection flow as model_providers / tts_providers /
+            // transcription_providers. Outer bucket is the storage kind
+            // (sqlite, postgres, qdrant, markdown, lucid); inner key is
+            // the operator-named alias.
+            let created = working
+                .create_map_key(&format!("storage.{key}"), &alias)
+                .map_err(|msg| {
+                    error_response(
+                        ConfigApiError::new(
+                            ConfigApiCode::PathNotFound,
+                            format!("could not select storage `{key}` alias `{alias}`: {msg}"),
+                        )
+                        .with_path(format!("storage.{key}")),
+                    )
+                });
+            let created = match created {
+                Ok(c) => c,
+                Err(resp) => return resp,
+            };
+            (format!("storage.{key}.{alias}"), created)
         }
         Section::Memory => {
             // Set memory.backend to the picked key. Fields_prefix points at
@@ -872,7 +986,7 @@ pub async fn handle_section_select(
             };
             (prefix, true)
         }
-        Section::Workspace | Section::Hardware => {
+        Section::Workspace | Section::Hardware | Section::Mcp => {
             return error_response(
                 ConfigApiError::new(
                     ConfigApiCode::PathNotFound,
@@ -1113,5 +1227,155 @@ mod tests {
         );
         // `none` is the active default for a fresh config.
         assert_eq!(items[0].badge.as_deref(), Some("active"));
+    }
+
+    /// Empty OneTierAliasMap section yields zero picker items. No
+    /// closed-kind catalog applies for these sections — only operator-defined
+    /// aliases populate the picker. Section wire keys are kebab-case
+    /// because the Configurable derive runs each field name through
+    /// `snake_to_kebab` when registering map-key paths.
+    #[test]
+    fn one_tier_alias_map_picker_is_empty_for_unconfigured_section() {
+        let cfg = empty_cfg();
+        for section in [
+            "peer-groups",
+            "cron",
+            "mcp-bundles",
+            "knowledge-bundles",
+            "skill-bundles",
+            "risk-profiles",
+            "runtime-profiles",
+        ] {
+            let items = one_tier_alias_map_picker(&cfg, section);
+            assert!(
+                items.is_empty(),
+                "`{section}` picker must be empty on a fresh config, got: {:?}",
+                items.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(),
+            );
+        }
+    }
+
+    /// After `create_map_key("<kebab-section>", "<alias>")`, the picker
+    /// surfaces the alias as a `configured` entry. Same shape applies
+    /// to every OneTierAliasMap section — the picker is generic over
+    /// the prefix.
+    #[test]
+    fn one_tier_alias_map_picker_surfaces_created_aliases() {
+        let cases: &[(&str, &str)] = &[
+            ("peer-groups", "team_chat"),
+            ("cron", "daily_brief"),
+            ("mcp-bundles", "core_tools"),
+            ("knowledge-bundles", "house_docs"),
+            ("skill-bundles", "ops_skills"),
+            ("risk-profiles", "tight"),
+            ("runtime-profiles", "fast_model"),
+        ];
+        for (section, alias) in cases {
+            let mut cfg = empty_cfg();
+            cfg.create_map_key(section, alias)
+                .unwrap_or_else(|e| panic!("create_map_key({section}, {alias}) failed: {e}"));
+            let items = one_tier_alias_map_picker(&cfg, section);
+            assert!(
+                items.iter().any(|i| i.key == *alias),
+                "`{section}` picker should surface `{alias}` after create_map_key; got: {:?}",
+                items.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(),
+            );
+            let entry = items.iter().find(|i| i.key == *alias).unwrap();
+            assert_eq!(
+                entry.badge.as_deref(),
+                Some("configured"),
+                "`{section}.{alias}` should be badged `configured`",
+            );
+        }
+    }
+
+    /// Exhaustive picker dispatch: every [`Section`] variant must
+    /// resolve through `picker_items_for` without panic. DirectForm
+    /// sections (Workspace, Hardware, Mcp) return the
+    /// `PickerDispatch::DirectForm` sentinel; every other section
+    /// returns at least zero items. Loops over the wizard order plus
+    /// every explorer-only variant — adding a new Section variant
+    /// fails to compile until it gets a routing arm in
+    /// `picker_items_for`.
+    #[test]
+    fn picker_dispatch_covers_every_section_variant() {
+        use zeroclaw_config::onboarding::Section;
+        let cfg = empty_cfg();
+        // The full Section surface = wizard steps + explorer-only.
+        // Spelling them out here pins both groups, so adding a row to
+        // the `sections!` macro forces an update here too.
+        let all: &[Section] = &[
+            Section::Workspace,
+            Section::ModelProviders,
+            Section::TtsProviders,
+            Section::TranscriptionProviders,
+            Section::Channels,
+            Section::Memory,
+            Section::Hardware,
+            Section::Tunnel,
+            Section::Agents,
+            Section::PeerGroups,
+            Section::Storage,
+            Section::Cron,
+            Section::Mcp,
+            Section::McpBundles,
+            Section::KnowledgeBundles,
+            Section::SkillBundles,
+            Section::RiskProfiles,
+            Section::RuntimeProfiles,
+        ];
+        let direct_form = [Section::Workspace, Section::Hardware, Section::Mcp];
+        for section in all {
+            match picker_items_for(*section, &cfg) {
+                PickerDispatch::Items(_items) => {
+                    assert!(
+                        !direct_form.contains(section),
+                        "{section:?} is marked DirectForm but dispatched to Items",
+                    );
+                }
+                PickerDispatch::DirectForm => {
+                    assert!(
+                        direct_form.contains(section),
+                        "{section:?} returned DirectForm but is not in the DirectForm set; \
+                         either give it a picker arm or add it to the DirectForm list",
+                    );
+                }
+            }
+        }
+    }
+
+    /// Storage is `[storage.<kind>.<alias>]` — two-tier typed-family
+    /// shape, served by the existing `schema_walk_picker`. The picker
+    /// surfaces the 5 storage kinds (sqlite, postgres, qdrant,
+    /// markdown, lucid) regardless of which aliases exist, and badges
+    /// the kind `configured` once any alias under it is created.
+    #[test]
+    fn storage_picker_lists_all_kinds_and_marks_configured() {
+        let cfg = empty_cfg();
+        let items = schema_walk_picker(&cfg, "storage");
+        let keys: Vec<&str> = items.iter().map(|i| i.key.as_str()).collect();
+        for expected in ["sqlite", "postgres", "qdrant", "markdown", "lucid"] {
+            assert!(
+                keys.contains(&expected),
+                "storage picker must list `{expected}`, got: {keys:?}",
+            );
+        }
+        // Fresh config — no kind should be badged.
+        assert!(
+            items.iter().all(|i| i.badge.is_none()),
+            "fresh config: no storage kind should be marked configured",
+        );
+
+        // Create a sqlite instance; the sqlite row should flip to configured.
+        let mut cfg2 = empty_cfg();
+        cfg2.create_map_key("storage.sqlite", "primary")
+            .expect("create_map_key(storage.sqlite, primary) must succeed");
+        let items = schema_walk_picker(&cfg2, "storage");
+        let sqlite = items.iter().find(|i| i.key == "sqlite").unwrap();
+        assert_eq!(
+            sqlite.badge.as_deref(),
+            Some("configured"),
+            "storage.sqlite should be marked configured after adding an alias",
+        );
     }
 }

@@ -132,6 +132,28 @@ async fn dispatch_section(
         Section::Hardware => hardware(cfg, ui, flags).await,
         Section::Tunnel => tunnel(cfg, ui, flags).await,
         Section::Agents => agents(cfg, ui, flags).await,
+        // Explorer-only sections — reachable via the dashboard's
+        // `/config/<section>` page or the gateway picker API. No
+        // interactive CLI wizard yet; operators discover them after
+        // the initial setup flow. Listing them here keeps the match
+        // exhaustive so adding a new wizard step is a compile error
+        // until it gets a real arm.
+        Section::PeerGroups
+        | Section::Storage
+        | Section::Cron
+        | Section::Mcp
+        | Section::McpBundles
+        | Section::KnowledgeBundles
+        | Section::SkillBundles
+        | Section::RiskProfiles
+        | Section::RuntimeProfiles => {
+            ui.note(&format!(
+                "`{section}` is configured via the dashboard at /config/{section} \
+                 or `zeroclaw config set {section}.<alias>.<field> <value>` \
+                 (not part of the initial wizard)."
+            ));
+            Ok(Nav::Done)
+        }
     }
 }
 
@@ -535,6 +557,19 @@ fn section_has_signal(cfg: &Config, section: Section) -> bool {
         | Section::Memory
         | Section::Tunnel
         | Section::Agents => false,
+        // Explorer-only sections are never part of the wizard signal
+        // table — they're reached through `/config/<section>` and don't
+        // gate the initial setup flow. Returning false keeps the
+        // section_has_signal contract scoped to wizard variants.
+        Section::PeerGroups
+        | Section::Storage
+        | Section::Cron
+        | Section::Mcp
+        | Section::McpBundles
+        | Section::KnowledgeBundles
+        | Section::SkillBundles
+        | Section::RiskProfiles
+        | Section::RuntimeProfiles => false,
     }
 }
 

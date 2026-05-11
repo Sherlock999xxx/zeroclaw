@@ -34,27 +34,51 @@ pub enum SectionShape {
     BackendPicker,
 }
 
-/// Single source of truth for every onboarding section. Each row maps
-/// 1:1 to a wizard step; adding/removing a section is one row here and
-/// every consumer's `match` either compiles cleanly or fails with an
-/// exhaustiveness error pointing at exactly what needs an arm.
+/// Single source of truth for every pickable config section. Each row
+/// maps 1:1 to a dashboard `/config/<key>` page, a CLI
+/// `zeroclaw onboard <key>` subcommand, and the gateway picker handler.
+/// Adding/removing a section is one row here and every consumer's
+/// `match` either compiles cleanly or fails with an exhaustiveness
+/// error pointing at exactly what needs an arm.
 ///
-/// Order in this invocation is the canonical wizard order — structural
-/// sections first, agents last (RFC #5890).
+/// Rows are split into two groups:
+///
+/// * `wizard_steps` — the ordered initial-setup flow walked by `/onboard`.
+///   Order in this group is the canonical wizard order — structural
+///   sections first, agents last (RFC #5890). [`ONBOARDING_WIZARD`] is
+///   generated from this group only.
+/// * `explorer_only` — map-keyed sections that operators discover via
+///   `/config/<key>` or `zeroclaw onboard <key>` after the wizard
+///   completes. Not part of the initial wizard order; never auto-prompted.
+///
+/// Both groups feed the [`Section`] enum, its clap subcommand surface,
+/// and every per-variant `match` helper — so any consumer that already
+/// matched on a wizard variant will fail to compile until it adds arms
+/// for the explorer variants too.
 macro_rules! sections {
     (
-        $(
-            $variant:ident => {
-                key:   $key:literal,
-                shape: $shape:ident,
-                help:  $help:expr $(,)?
-            }
-        ),+ $(,)?
+        wizard_steps: {
+            $(
+                $wvar:ident => {
+                    key:   $wkey:literal,
+                    shape: $wshape:ident,
+                    help:  $whelp:expr $(,)?
+                }
+            ),+ $(,)?
+        },
+        explorer_only: {
+            $(
+                $evar:ident => {
+                    key:   $ekey:literal,
+                    shape: $eshape:ident,
+                    help:  $ehelp:expr $(,)?
+                }
+            ),+ $(,)?
+        } $(,)?
     ) => {
-        /// One onboarding step. The variant ordering follows the
-        /// `sections!` macro invocation, which is the canonical wizard
-        /// order; [`ONBOARDING_WIZARD`] is generated from the same
-        /// table, so the two can never drift.
+        /// One pickable section. The variant ordering follows the
+        /// `sections!` macro invocation: wizard_steps first (canonical
+        /// wizard order), then explorer_only.
         ///
         /// With the `clap` feature on, this enum doubles as the
         /// `zeroclaw onboard <section>` clap subcommand — no separate
@@ -68,10 +92,15 @@ macro_rules! sections {
                 // Both clap (`--help`) and our runtime `help()` method
                 // need the same blurb; emit it once as a doc comment so
                 // the two surfaces share a single string per variant.
-                #[doc = $help]
-                #[cfg_attr(feature = "clap", command(name = $key))]
-                $variant
-            ),+
+                #[doc = $whelp]
+                #[cfg_attr(feature = "clap", command(name = $wkey))]
+                $wvar,
+            )+
+            $(
+                #[doc = $ehelp]
+                #[cfg_attr(feature = "clap", command(name = $ekey))]
+                $evar,
+            )+
         }
 
         impl Section {
@@ -81,7 +110,10 @@ macro_rules! sections {
             /// field returned by the gateway.
             #[must_use]
             pub const fn as_str(self) -> &'static str {
-                match self { $( Self::$variant => $key ),+ }
+                match self {
+                    $( Self::$wvar => $wkey, )+
+                    $( Self::$evar => $ekey, )+
+                }
             }
 
             /// Editor shape — the dashboard and the wizard both
@@ -89,7 +121,10 @@ macro_rules! sections {
             /// the same section in both surfaces.
             #[must_use]
             pub const fn shape(self) -> SectionShape {
-                match self { $( Self::$variant => SectionShape::$shape ),+ }
+                match self {
+                    $( Self::$wvar => SectionShape::$wshape, )+
+                    $( Self::$evar => SectionShape::$eshape, )+
+                }
             }
 
             /// Per-section help blurb — single source of truth for
@@ -98,92 +133,199 @@ macro_rules! sections {
             /// dashboard `SectionInfo.help`).
             #[must_use]
             pub const fn help(self) -> &'static str {
-                match self { $( Self::$variant => $help ),+ }
+                match self {
+                    $( Self::$wvar => $whelp, )+
+                    $( Self::$evar => $ehelp, )+
+                }
             }
 
-            /// Parse a stable wire key. Returns `None` for keys that
-            /// aren't part of the onboarding wizard. Named `from_key`
-            /// rather than `from_str` so clippy doesn't flag it as
-            /// confusable with `std::str::FromStr` (parse failure is
-            /// `None`, not `Err(_)`).
+            /// True when this section is part of the initial-setup
+            /// wizard (`/onboard` and its CLI counterpart). False for
+            /// explorer-only sections that operators reach via
+            /// `/config/<key>` after the wizard completes.
+            #[must_use]
+            pub const fn is_wizard_step(self) -> bool {
+                match self {
+                    $( Self::$wvar => true, )+
+                    $( Self::$evar => false, )+
+                }
+            }
+
+            /// Parse a stable wire key, tolerating both the snake and
+            /// kebab spellings of any section. The schema mixes the two:
+            /// `model_providers` (snake) and `peer-groups` (kebab) are
+            /// both valid wire forms produced elsewhere in the codebase.
+            /// Callers (dashboard URL routing, gateway picker dispatch,
+            /// CLI clap subcommands) can pass either form; `from_key`
+            /// resolves to the same variant. Returns `None` for keys
+            /// outside the known section table. Named `from_key` rather
+            /// than `from_str` so clippy doesn't flag it as confusable
+            /// with `std::str::FromStr` (parse failure is `None`, not
+            /// `Err(_)`).
             #[must_use]
             pub fn from_key(s: &str) -> Option<Self> {
-                match s {
-                    $( $key => Some(Self::$variant), )+
-                    _ => None,
+                let try_match = |s: &str| -> Option<Self> {
+                    match s {
+                        $( $wkey => Some(Self::$wvar), )+
+                        $( $ekey => Some(Self::$evar), )+
+                        _ => None,
+                    }
+                };
+                if let Some(v) = try_match(s) {
+                    return Some(v);
                 }
+                if s.contains('_')
+                    && let Some(v) = try_match(&s.replace('_', "-"))
+                {
+                    return Some(v);
+                }
+                if s.contains('-')
+                    && let Some(v) = try_match(&s.replace('-', "_"))
+                {
+                    return Some(v);
+                }
+                None
             }
         }
 
         /// The onboarding wizard: an ordered slice of [`Section`]s
-        /// walked during `/onboard`. Generated from the same `sections!`
-        /// table that defines the enum, so the order encodes
-        /// dependencies (structural sections first, agents last) and
-        /// the variant list can never drift from the const list.
-        pub const ONBOARDING_WIZARD: &[Section] = &[ $( Section::$variant ),+ ];
+        /// walked during `/onboard`. Generated from the `wizard_steps`
+        /// group only — explorer_only variants are deliberately
+        /// excluded so the initial-setup flow stays focused on
+        /// must-configure-first sections.
+        pub const ONBOARDING_WIZARD: &[Section] = &[ $( Section::$wvar ),+ ];
     };
 }
 
 sections! {
-    Workspace => {
-        key:   "workspace",
-        shape: DirectForm,
-        help:  "Where ZeroClaw stores config, memory, and per-agent state. \
-                The default install dir is fine for most setups.",
+    wizard_steps: {
+        Workspace => {
+            key:   "workspace",
+            shape: DirectForm,
+            help:  "Where ZeroClaw stores config, memory, and per-agent state. \
+                    The default install dir is fine for most setups.",
+        },
+        ModelProviders => {
+            key:   "model_providers",
+            shape: TypedFamilyMap,
+            help:  "Paste an API key (e.g. `sk-ant-...` for Anthropic, `sk-...` for \
+                    OpenAI) when prompted. For OAuth-based providers run: \
+                    `zeroclaw auth login --model-provider <name>`.",
+        },
+        TtsProviders => {
+            key:   "tts_providers",
+            shape: TypedFamilyMap,
+            help:  "Text-to-speech providers (OpenAI, ElevenLabs, Google, Edge, Piper). \
+                    Configure one per voice / language; agents reference them by alias.",
+        },
+        TranscriptionProviders => {
+            key:   "transcription_providers",
+            shape: TypedFamilyMap,
+            help:  "Speech-to-text providers (OpenAI Whisper, Groq, Deepgram, AssemblyAI, \
+                    Google, local Whisper). Configure one per pipeline; agents reference \
+                    them by alias.",
+        },
+        Channels => {
+            key:   "channels",
+            shape: TypedFamilyMap,
+            help:  "Pick which chat platforms ZeroClaw should listen on. You can \
+                    configure multiple — each channel gets its own alias.",
+        },
+        Memory => {
+            key:   "memory",
+            shape: BackendPicker,
+            help:  "Persistent memory backend. SQLite is the default; pick `none` to \
+                    disable long-term recall entirely.",
+        },
+        Hardware => {
+            key:   "hardware",
+            shape: DirectForm,
+            help:  "Optional: hardware peripherals (Arduino, STM32, GPIO, etc.). \
+                    Skip if you don't need them.",
+        },
+        Tunnel => {
+            key:   "tunnel",
+            shape: BackendPicker,
+            help:  "Optional: expose your gateway over the public internet via Cloudflare \
+                    or ngrok. Pick `none` to keep it localhost-only.",
+        },
+        // Personality is intentionally NOT a wizard section in v0.8.0 —
+        // markdown personality files live per-agent and surface inside the
+        // agent edit form (RFC #5890).
+        Agents => {
+            key:   "agents",
+            shape: OneTierAliasMap,
+            help:  "An agent binds a model provider, profiles, bundles, and channels \
+                    into one dispatchable unit. Add one per persona; reuse the same \
+                    alias across channels to share state.",
+        },
     },
-    ModelProviders => {
-        key:   "model_providers",
-        shape: TypedFamilyMap,
-        help:  "Paste an API key (e.g. `sk-ant-...` for Anthropic, `sk-...` for \
-                OpenAI) when prompted. For OAuth-based providers run: \
-                `zeroclaw auth login --model-provider <name>`.",
-    },
-    TtsProviders => {
-        key:   "tts_providers",
-        shape: TypedFamilyMap,
-        help:  "Text-to-speech providers (OpenAI, ElevenLabs, Google, Edge, Piper). \
-                Configure one per voice / language; agents reference them by alias.",
-    },
-    TranscriptionProviders => {
-        key:   "transcription_providers",
-        shape: TypedFamilyMap,
-        help:  "Speech-to-text providers (OpenAI Whisper, Groq, Deepgram, AssemblyAI, \
-                Google, local Whisper). Configure one per pipeline; agents reference \
-                them by alias.",
-    },
-    Channels => {
-        key:   "channels",
-        shape: TypedFamilyMap,
-        help:  "Pick which chat platforms ZeroClaw should listen on. You can \
-                configure multiple — each channel gets its own alias.",
-    },
-    Memory => {
-        key:   "memory",
-        shape: BackendPicker,
-        help:  "Persistent memory backend. SQLite is the default; pick `none` to \
-                disable long-term recall entirely.",
-    },
-    Hardware => {
-        key:   "hardware",
-        shape: DirectForm,
-        help:  "Optional: hardware peripherals (Arduino, STM32, GPIO, etc.). \
-                Skip if you don't need them.",
-    },
-    Tunnel => {
-        key:   "tunnel",
-        shape: BackendPicker,
-        help:  "Optional: expose your gateway over the public internet via Cloudflare \
-                or ngrok. Pick `none` to keep it localhost-only.",
-    },
-    // Personality is intentionally NOT a wizard section in v0.8.0 —
-    // markdown personality files live per-agent and surface inside the
-    // agent edit form (RFC #5890).
-    Agents => {
-        key:   "agents",
-        shape: OneTierAliasMap,
-        help:  "An agent binds a model provider, profiles, bundles, and channels \
-                into one dispatchable unit. Add one per persona; reuse the same \
-                alias across channels to share state.",
+    explorer_only: {
+        // Wire keys MUST match the schema's `Config::map_key_sections()`
+        // output verbatim. The Configurable derive runs the field name
+        // through `snake_to_kebab`, so any field with an underscore in
+        // its Rust name (peer_groups, risk_profiles, ...) registers as
+        // kebab in the map-key section table. `Section::as_str()` is
+        // used as the section_path argument to `create_map_key`, so it
+        // must match the registered form. `from_key` normalizes either
+        // form on input so dashboard URLs and CLI invocations work for
+        // both spellings.
+        PeerGroups => {
+            key:   "peer-groups",
+            shape: OneTierAliasMap,
+            help:  "Named groups binding a channel, member agents, and external peers. \
+                    Mutual opt-in: two agents become peers only when both appear in the \
+                    same group's `agents` list.",
+        },
+        Storage => {
+            key:   "storage",
+            shape: TypedFamilyMap,
+            help:  "Storage backend instances (sqlite, postgres, qdrant, markdown, lucid). \
+                    Each backend can have multiple aliased instances; agents reference \
+                    them via `memory.storage_ref`.",
+        },
+        Cron => {
+            key:   "cron",
+            shape: OneTierAliasMap,
+            help:  "Scheduled tasks. Each cron entry binds a schedule expression to a \
+                    prompt, channel, and target.",
+        },
+        Mcp => {
+            key:   "mcp",
+            shape: DirectForm,
+            help:  "Model Context Protocol settings. Toggle `enabled` and pick deferred \
+                    or eager loading. Individual MCP servers live under `mcp.servers[]`.",
+        },
+        McpBundles => {
+            key:   "mcp-bundles",
+            shape: OneTierAliasMap,
+            help:  "Named bundles of MCP servers. Agents reference a bundle to pull in \
+                    a set of MCP tools as one unit.",
+        },
+        KnowledgeBundles => {
+            key:   "knowledge-bundles",
+            shape: OneTierAliasMap,
+            help:  "Named bundles of knowledge sources (RAG indexes, doc folders). Agents \
+                    reference a bundle to surface relevant snippets at inference time.",
+        },
+        SkillBundles => {
+            key:   "skill-bundles",
+            shape: OneTierAliasMap,
+            help:  "Named bundles of skill files. Agents reference a bundle to load a \
+                    set of capabilities at startup.",
+        },
+        RiskProfiles => {
+            key:   "risk-profiles",
+            shape: OneTierAliasMap,
+            help:  "Named risk profiles binding allowlists, denylists, and approval \
+                    thresholds. Agents reference one via `agents.<alias>.risk_profile`.",
+        },
+        RuntimeProfiles => {
+            key:   "runtime-profiles",
+            shape: OneTierAliasMap,
+            help:  "Named runtime tuning profiles (token limits, retry policy, timeouts). \
+                    Agents reference one via `agents.<alias>.runtime_profile`.",
+        },
     },
 }
 
@@ -235,5 +377,96 @@ mod tests {
         }
         assert_eq!(Section::from_key("gateway"), None);
         assert_eq!(Section::from_key("not_a_section"), None);
+    }
+
+    /// Every section the dashboard URL surface points at must resolve
+    /// through `Section::from_key`. The dashboard URL form is kebab-case
+    /// (`peer-groups`), the canonical wire form is snake_case
+    /// (`peer_groups`); both must parse to the same variant.
+    #[test]
+    fn dashboard_url_sections_round_trip_kebab_and_snake() {
+        let kebab_then_snake: &[(&str, &str, Section)] = &[
+            ("peer-groups", "peer_groups", Section::PeerGroups),
+            ("mcp-bundles", "mcp_bundles", Section::McpBundles),
+            (
+                "knowledge-bundles",
+                "knowledge_bundles",
+                Section::KnowledgeBundles,
+            ),
+            ("skill-bundles", "skill_bundles", Section::SkillBundles),
+            ("risk-profiles", "risk_profiles", Section::RiskProfiles),
+            (
+                "runtime-profiles",
+                "runtime_profiles",
+                Section::RuntimeProfiles,
+            ),
+            ("storage", "storage", Section::Storage),
+            ("cron", "cron", Section::Cron),
+            ("mcp", "mcp", Section::Mcp),
+        ];
+        for (kebab, snake, expected) in kebab_then_snake {
+            assert_eq!(
+                Section::from_key(kebab),
+                Some(*expected),
+                "kebab `{kebab}` should resolve to {expected:?}",
+            );
+            assert_eq!(
+                Section::from_key(snake),
+                Some(*expected),
+                "snake `{snake}` should resolve to {expected:?}",
+            );
+            // Explorer-only sections must NOT appear in the wizard order.
+            assert!(
+                !expected.is_wizard_step(),
+                "{expected:?} is explorer-only and must not be marked wizard_step",
+            );
+            assert!(
+                !ONBOARDING_WIZARD.contains(expected),
+                "{expected:?} must not appear in ONBOARDING_WIZARD",
+            );
+        }
+    }
+
+    /// Wizard sections keep their `is_wizard_step() == true` contract.
+    /// Together with the explorer-only assertion above, this pins the
+    /// macro's wizard / explorer split.
+    #[test]
+    fn wizard_sections_are_marked_as_wizard_steps() {
+        for s in ONBOARDING_WIZARD {
+            assert!(
+                s.is_wizard_step(),
+                "{s:?} is in ONBOARDING_WIZARD but is_wizard_step() returned false",
+            );
+        }
+    }
+
+    /// Every explorer_only OneTierAliasMap section's wire key must
+    /// appear verbatim in `Config::map_key_sections()`. That table is
+    /// what `Config::create_map_key` dispatches off, so a mismatch
+    /// silently breaks the dashboard's `+ Add` affordance. Asserts that
+    /// `Section::as_str()` for each explorer variant matches the
+    /// schema's registered path.
+    #[test]
+    fn explorer_only_section_wire_keys_match_map_key_sections() {
+        use crate::schema::Config;
+        let sections = Config::map_key_sections();
+        let paths: std::collections::BTreeSet<&str> = sections.iter().map(|s| s.path).collect();
+        let explorer = [
+            Section::PeerGroups,
+            Section::Cron,
+            Section::McpBundles,
+            Section::KnowledgeBundles,
+            Section::SkillBundles,
+            Section::RiskProfiles,
+            Section::RuntimeProfiles,
+        ];
+        for section in explorer {
+            assert!(
+                paths.contains(section.as_str()),
+                "`Section::{section:?}.as_str() = {}` is not in map_key_sections; the \
+                 picker's create_map_key call site will fail. Registered paths: {paths:?}",
+                section.as_str(),
+            );
+        }
     }
 }
