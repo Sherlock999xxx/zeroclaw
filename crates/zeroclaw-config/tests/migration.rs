@@ -984,14 +984,15 @@ channel_ids = ["aaaa"]
 }
 
 // ─────────────────────────────────────────────────────────────
-// Feishu fold — V3 collapses `[channels.feishu]` into
-// `[channels.lark]` with `use_feishu = true` so a single channel type
-// covers both endpoints. Conflicting `app_id` between blocks drops the
-// feishu side with a WARN; matching ids merge.
+// Feishu rename — V3 collapses Feishu and Lark to one channel type.
+// V2 [channels.feishu] becomes V3 [channels.lark.feishu] (alias name
+// is "feishu", not "default") so two-bot deployments with both
+// [channels.lark] AND [channels.feishu] survive as two distinct V3
+// aliases without losing data.
 // ─────────────────────────────────────────────────────────────
 
 #[test]
-fn feishu_only_block_folds_into_lark_with_use_feishu_true() {
+fn feishu_only_block_folds_into_lark_feishu_alias() {
     let raw = r#"
 default_provider = "openai"
 default_model = "gpt-4o-mini"
@@ -1004,10 +1005,14 @@ mention_only = true
 "#;
     let cfg = migrate_to_current(raw).expect("Feishu-only fold migration succeeds");
     assert!(
-        cfg.channels.lark.contains_key("default"),
-        "[channels.feishu] must surface as [channels.lark.default] after fold"
+        cfg.channels.lark.contains_key("feishu"),
+        "[channels.feishu] must surface as [channels.lark.feishu] after fold"
     );
-    let lark = &cfg.channels.lark["default"];
+    assert!(
+        !cfg.channels.lark.contains_key("default"),
+        "no spurious lark.default alias when only [channels.feishu] was set"
+    );
+    let lark = &cfg.channels.lark["feishu"];
     assert!(
         lark.use_feishu,
         "use_feishu must be set true on the folded entry so the runtime routes to open.feishu.cn"
@@ -1017,65 +1022,77 @@ mention_only = true
 }
 
 #[test]
-fn feishu_and_lark_with_matching_app_id_merges() {
+fn feishu_and_lark_blocks_become_two_aliases() {
     let raw = r#"
 default_provider = "openai"
 default_model = "gpt-4o-mini"
 
 [channels_config.lark]
 enabled = true
-app_id = "shared_app_id"
+app_id = "lark_intl_app"
 app_secret = "lark_secret"
 
 [channels_config.feishu]
 enabled = true
-app_id = "shared_app_id"
+app_id = "feishu_cn_app"
+app_secret = "feishu_secret"
 encrypt_key = "feishu_encrypt"
 "#;
-    let cfg = migrate_to_current(raw).expect("matching-app_id fold succeeds");
-    let lark = cfg
+    let cfg = migrate_to_current(raw).expect("two-bot migration succeeds without drops");
+
+    let lark_default = cfg
         .channels
         .lark
         .get("default")
-        .expect("merged lark.default present");
-    assert!(lark.use_feishu, "use_feishu flips to true on the merge");
-    assert_eq!(
-        lark.app_secret, "lark_secret",
-        "existing lark fields win over feishu fields"
+        .expect("lark.default carries the V2 [channels.lark] block");
+    assert_eq!(lark_default.app_id, "lark_intl_app");
+    assert!(
+        !lark_default.use_feishu,
+        "lark.default keeps Lark international routing"
     );
-    assert_eq!(
-        lark.encrypt_key.as_deref(),
-        Some("feishu_encrypt"),
-        "feishu fields fill gaps the lark block did not set"
+
+    let lark_feishu = cfg
+        .channels
+        .lark
+        .get("feishu")
+        .expect("lark.feishu carries the V2 [channels.feishu] block");
+    assert_eq!(lark_feishu.app_id, "feishu_cn_app");
+    assert!(
+        lark_feishu.use_feishu,
+        "lark.feishu routes to Feishu (open.feishu.cn) via use_feishu = true"
     );
+    assert_eq!(lark_feishu.encrypt_key.as_deref(), Some("feishu_encrypt"));
 }
 
 #[test]
-fn feishu_and_lark_with_different_app_id_drops_feishu() {
+fn feishu_block_with_same_app_id_as_lark_still_lands_under_feishu_alias() {
+    // Even when both blocks share an app_id (uncommon — operator double-
+    // configured the same bot), the migration preserves both rows. The
+    // operator can dedupe post-migration with full visibility; the
+    // migration never silently merges or drops.
     let raw = r#"
 default_provider = "openai"
 default_model = "gpt-4o-mini"
 
 [channels_config.lark]
 enabled = true
-app_id = "lark_survives"
+app_id = "shared_app_id"
 app_secret = "lark_secret"
 
 [channels_config.feishu]
 enabled = true
-app_id = "feishu_dropped"
+app_id = "shared_app_id"
 app_secret = "feishu_secret"
+encrypt_key = "feishu_encrypt"
 "#;
-    let cfg = migrate_to_current(raw).expect("conflict fold succeeds with WARN");
-    let lark = cfg
-        .channels
-        .lark
-        .get("default")
-        .expect("lark.default survives the conflict");
-    assert_eq!(lark.app_id, "lark_survives", "lark wins on app_id conflict");
-    assert!(
-        !lark.use_feishu,
-        "use_feishu stays false because the feishu block was dropped, not merged"
+    let cfg = migrate_to_current(raw).expect("same-app_id migration preserves both aliases");
+    assert_eq!(cfg.channels.lark["default"].app_id, "shared_app_id");
+    assert!(!cfg.channels.lark["default"].use_feishu);
+    assert_eq!(cfg.channels.lark["feishu"].app_id, "shared_app_id");
+    assert!(cfg.channels.lark["feishu"].use_feishu);
+    assert_eq!(
+        cfg.channels.lark["feishu"].encrypt_key.as_deref(),
+        Some("feishu_encrypt")
     );
 }
 

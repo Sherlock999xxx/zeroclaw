@@ -68,7 +68,7 @@ Defer to v0.9.0 along with the broader trait/macro consolidation of orchestrator
 
 Followed the DiscordHistory fold pattern:
 
-1. New V2→V3 migration step `fold_feishu_into_lark` in `crates/zeroclaw-config/src/schema/v2.rs` — runs before the channel alias-wrap loop, takes any `[channels.feishu]` block and merges into `[channels.lark]` with `use_feishu = true`. Conflict semantics mirror `fold_discord_history`: differing `app_id` between blocks drops the feishu side with a WARN; matching ids merge with existing lark fields winning. Three new migration tests cover feishu-only, matching-id merge, and conflict-drop.
+1. New V2→V3 migration step (split into `strip_feishu_block` pre-wrap + `inject_feishu_as_lark_alias` post-wrap) in `crates/zeroclaw-config/src/schema/v2.rs`. The V2 `[channels.feishu]` block lands as **`[channels.lark.feishu]`** (alias `feishu`, not `default`) with `use_feishu = true`. Two-bot V2 deployments with both `[channels.lark]` and `[channels.feishu]` survive as two distinct V3 aliases — `lark.default` and `lark.feishu` — without any merge, drop, or operator intervention. Three migration tests cover feishu-only, two-bot, and same-app_id scenarios.
 2. `FeishuConfig` struct + `impl ChannelConfig for FeishuConfig` deleted from schema.
 3. `pub feishu: HashMap<String, FeishuConfig>` field deleted from `ChannelsConfig`.
 4. `"feishu"` removed from the V3_CHANNEL_TYPES alias-wrap list (the fold has already run by then).

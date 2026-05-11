@@ -1038,11 +1038,14 @@ fn alias_wrap_channels(channels_value: toml::Value, peer_groups: &mut toml::Tabl
     // discord_history-only user with `enabled=true` survives into V3.
     fold_discord_history(&mut channels_table);
 
-    // Fold V2 [channels.feishu] into [channels.lark] with use_feishu=true.
     // V3 collapses Feishu and Lark to one channel type — they share the same
     // bot framework, only the API endpoint differs (Feishu = open.feishu.cn
-    // for China, Lark = open.larksuite.com for international).
-    fold_feishu_into_lark(&mut channels_table);
+    // for China, Lark = open.larksuite.com for international). Stash the V2
+    // [channels.feishu] block here so the alias-wrap loop processes the V2
+    // [channels.lark] block normally; the stash is re-injected after the loop
+    // as [channels.lark.feishu] (NOT lark.default) so two-bot deployments
+    // survive without operator intervention.
+    let stashed_feishu_v2 = strip_feishu_block(&mut channels_table);
 
     // Per-channel-type processing: T3–T6 container folds, peer-auth →
     // peer_groups, T7 enabled filter, alias-wrap.
@@ -1085,74 +1088,75 @@ fn alias_wrap_channels(channels_value: toml::Value, peer_groups: &mut toml::Tabl
         }
     }
 
+    // Re-inject the stashed V2 [channels.feishu] block as [channels.lark.feishu]
+    // with use_feishu = true. The alias name is "feishu" — not "default" — so a
+    // two-bot deployment with both [channels.lark] (international) AND
+    // [channels.feishu] (CN) survives as [channels.lark.default] +
+    // [channels.lark.feishu]; both bots remain reachable post-migration.
+    inject_feishu_as_lark_alias(&mut new_channels, stashed_feishu_v2);
+
     new_channels
 }
 
-/// Fold V2 `[channels.feishu]` into `[channels.lark]` in place, setting
-/// `use_feishu = true` so the runtime routes to the open.feishu.cn endpoint.
-/// V3 collapses both into one channel type.
-///
-/// When both `[channels.feishu]` and `[channels.lark]` exist with different
-/// `app_id` values, the lark block wins and feishu is dropped with a WARN —
-/// two-bot deployments must reconfigure manually (recover the dropped value
-/// from the pre-migration `<config>.backup` adjacent to the migrated file).
-fn fold_feishu_into_lark(channels: &mut toml::Table) {
-    let feishu_value = match channels.remove("feishu") {
-        Some(v) => v,
-        None => return,
-    };
-    let toml::Value::Table(mut feishu_table) = feishu_value else {
-        tracing::warn!(
-            target: "migration",
-            "[channels.feishu] is not a table; dropping during fold to lark"
-        );
-        return;
-    };
-
-    // Capture the conflict signal before mutation.
-    let lark_app_id = channels
-        .get("lark")
-        .and_then(toml::Value::as_table)
-        .and_then(|t| t.get("app_id"))
-        .and_then(toml::Value::as_str)
-        .map(ToString::to_string);
-    let feishu_app_id = feishu_table
-        .get("app_id")
-        .and_then(toml::Value::as_str)
-        .map(ToString::to_string);
-    let app_id_conflict = match (&lark_app_id, &feishu_app_id) {
-        (Some(l), Some(f)) => l != f,
-        _ => false,
-    };
-
-    if app_id_conflict {
-        tracing::warn!(
-            target: "migration",
-            "[channels.feishu].app_id differed from [channels.lark].app_id; \
-             the feishu block was dropped and the lark block survives. \
-             Two-bot deployments must reconfigure manually — recover the \
-             dropped value from the pre-migration <config>.backup file \
-             adjacent to the migrated config."
-        );
-        return;
-    }
-
-    // Mark the merged block as Feishu-routed.
-    feishu_table.insert("use_feishu".to_string(), toml::Value::Boolean(true));
-
-    let lark_entry = channels
-        .entry("lark".to_string())
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-    if let Some(lark_table) = lark_entry.as_table_mut() {
-        // Existing lark keys win; feishu fills any gaps. Same precedence
-        // as fold_discord_history.
-        for (k, v) in feishu_table {
-            lark_table.entry(k).or_insert(v);
+/// Pre-alias-wrap: remove the V2 `[channels.feishu]` block from `channels`
+/// (so the alias-wrap loop doesn't process it) and return its body for
+/// post-wrap injection as `[channels.lark.feishu]`.
+fn strip_feishu_block(channels: &mut toml::Table) -> Option<toml::Table> {
+    let feishu_value = channels.remove("feishu")?;
+    match feishu_value {
+        toml::Value::Table(t) => Some(t),
+        _ => {
+            tracing::warn!(
+                target: "migration",
+                "[channels.feishu] is not a table; dropping during fold to lark"
+            );
+            None
         }
     }
+}
+
+/// Post-alias-wrap: insert the stashed V2 feishu block as
+/// `[channels.lark.feishu]` with `use_feishu = true`. The alias name is
+/// `feishu` (not `default`) so a two-bot V2 deployment with both
+/// `[channels.lark]` (international) AND `[channels.feishu]` (CN) survives as
+/// two distinct V3 aliases — `lark.default` and `lark.feishu` — without
+/// losing data or requiring operator intervention.
+///
+/// If a `lark.feishu` alias already exists in `new_channels` (impossible
+/// from V2 input but cheap to defend), we do not overwrite — the existing
+/// entry wins and a WARN names the dropped source.
+fn inject_feishu_as_lark_alias(new_channels: &mut toml::Table, feishu_table: Option<toml::Table>) {
+    let Some(mut feishu_table) = feishu_table else {
+        return;
+    };
+
+    feishu_table.insert("use_feishu".to_string(), toml::Value::Boolean(true));
+
+    let lark_entry = new_channels
+        .entry("lark".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    let Some(lark_aliases) = lark_entry.as_table_mut() else {
+        tracing::warn!(
+            target: "migration",
+            "[channels.lark] is not a table; cannot inject feishu alias"
+        );
+        return;
+    };
+
+    if lark_aliases.contains_key("feishu") {
+        tracing::warn!(
+            target: "migration",
+            "[channels.lark.feishu] already exists; the V2 [channels.feishu] \
+             block was dropped to avoid clobbering it. Recover the dropped \
+             value from the pre-migration <config>.backup if needed."
+        );
+        return;
+    }
+
+    lark_aliases.insert("feishu".to_string(), toml::Value::Table(feishu_table));
     tracing::info!(
         target: "migration",
-        "[channels.feishu] folded into [channels.lark] (use_feishu=true)"
+        "[channels.feishu] folded into [channels.lark.feishu] (use_feishu=true)"
     );
 }
 
