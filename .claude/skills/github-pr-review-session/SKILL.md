@@ -143,14 +143,14 @@ the handoff.
    - **Break-fix** — commit title prefix is `fix:` (any scope, e.g. `fix(agent):`) **or** the PR carries a `bug` label. The commit prefix is the primary signal; the label is a secondary confirmation.
    - **Docs** — commit title prefix is `docs:` (any scope). Treated identically to break-fix for milestone purposes: scope-match first, then fall back to earliest open milestone by version. Documentation supports ongoing milestone work and should ship with it, not queue Jordan.
    - **Feature** — commit title prefix is `feat:` and no `bug` label.
+   - **Other** — any other conventional type (`refactor:`, `perf:`, `test:`, `ci:`, `build:`, etc.). Treat as break-fix for milestone routing: scope-match first, then fall back to the earliest open milestone. Do not route to @JordanTheJet.
    - When the prefix and label contradict (e.g. `fix(agent):` title + `enhancement` label), the commit prefix wins.
 
 3. **Compare scope against every open milestone.** Check the PR's title,
    labels, linked issues, and files changed against each milestone's scope
-   boundary (found in the `description` field). Run this step for **both**
-   break-fix and feature PRs — a fix that repairs something introduced by a
-   specific milestone's work belongs in that milestone, not automatically in
-   the earliest one.
+   boundary (found in the `description` field). Run this step for **all
+   classified PR types** — a fix or doc that's tied to a specific milestone's
+   work belongs there, not automatically in the earliest one.
 
    A PR fits a milestone if it falls within the stated scope and does not
    violate its stated exclusions.
