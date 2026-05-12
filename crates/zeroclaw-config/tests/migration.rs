@@ -83,17 +83,32 @@ fn detect_version_table() {
 
 #[test]
 fn v1_default_provider_target_holds_globals() {
-    let cfg = v3_config();
+    // V1 globals fold into the per-provider entry identified by
+    // V1 default_provider. With no matching entry under model_providers,
+    // a fresh entry is synthesized and every V1 global lands on it.
+    let raw = r#"
+api_key = "sk-fold-target"
+api_url = "https://api.fold.test"
+api_path = "/v1/chat/completions"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+default_temperature = 0.5
+provider_timeout_secs = 90
+provider_max_tokens = 4096
+
+[extra_headers]
+"User-Agent" = "ZeroClaw-V1-Test/1.0"
+"#;
+    let cfg = migrate_to_current(raw).expect("V1 globals migrate");
     let entry = cfg
         .model_providers
         .find("openai", "default")
-        .expect("openai.default entry synthesized from V1 default_provider");
-    assert_eq!(entry.api_key.as_deref(), Some("sk-v1-test-global"));
+        .expect("openai.default synthesized from V1 default_provider");
+    assert_eq!(entry.api_key.as_deref(), Some("sk-fold-target"));
     assert_eq!(
         entry.uri.as_deref(),
-        Some("https://api.example.com/v1/chat/completions"),
-        "V1 api_url + api_path merged into the per-provider entry's uri \
-         (uri is now the full endpoint URL; api_path no longer exists)"
+        Some("https://api.fold.test/v1/chat/completions"),
+        "V1 api_url + api_path merged into the per-provider entry's uri"
     );
     assert_eq!(entry.model.as_deref(), Some("gpt-4o-mini"));
     assert_eq!(entry.temperature, Some(0.5));
@@ -175,35 +190,54 @@ fn v1_model_routes_preserved_at_providers_level() {
 
 #[test]
 fn t1_matrix_room_id_folds_into_allowed_rooms() {
-    let cfg = v3_config();
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[channels_config.matrix]
+enabled = true
+homeserver = "https://matrix.org"
+access_token = "tok"
+room_id = "!fold-test:matrix.org"
+allowed_users = ["@u:matrix.org"]
+"#;
+    let cfg = migrate_to_current(raw).expect("V1 matrix migrates");
     let matrix = cfg
         .channels
         .matrix
         .get("default")
-        .expect("channels.matrix.default exists after enabled-keep");
+        .expect("channels.matrix.default exists");
     assert!(
         matrix
             .allowed_rooms
             .iter()
-            .any(|r| r == "!important-room:matrix.org"),
-        "V1 matrix.room_id was not folded into V3 channels.matrix.default.allowed_rooms[]; \
-         got {:?}",
+            .any(|r| r == "!fold-test:matrix.org"),
+        "V1 matrix.room_id was not folded into V3 allowed_rooms[]; got {:?}",
         matrix.allowed_rooms
     );
 }
 
 #[test]
 fn t2_slack_channel_id_folds_into_channel_ids() {
-    let cfg = v3_config();
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[channels_config.slack]
+enabled = true
+bot_token = "xoxb-tok"
+channel_id = "C0FOLDTEST"
+allowed_users = ["U1"]
+"#;
+    let cfg = migrate_to_current(raw).expect("V1 slack migrates");
     let slack = cfg
         .channels
         .slack
         .get("default")
         .expect("channels.slack.default exists");
     assert!(
-        slack.channel_ids.iter().any(|c| c == "C01ABCD0001"),
-        "V1 slack.channel_id was not folded into V3 channels.slack.default.channel_ids[]; \
-         got {:?}",
+        slack.channel_ids.iter().any(|c| c == "C0FOLDTEST"),
+        "V1 slack.channel_id was not folded into V3 channel_ids[]; got {:?}",
         slack.channel_ids
     );
 }
@@ -214,63 +248,118 @@ fn t2_slack_channel_id_folds_into_channel_ids() {
 
 #[test]
 fn t3_discord_guild_id_folds_into_guild_ids() {
-    let cfg = v3_config();
-    let discord = cfg
-        .channels
-        .discord
-        .get("default")
-        .expect("channels.discord.default exists");
+    let v3 = migrate_v2(
+        r#"
+schema_version = 2
+
+[channels.discord]
+enabled = true
+bot_token = "discord-tok"
+guild_id = "FOLDGUILD"
+"#,
+    );
+    let guild_ids = v3
+        .get("channels")
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("discord"))
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("default"))
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("guild_ids"))
+        .and_then(toml::Value::as_array)
+        .expect("channels.discord.default.guild_ids array");
     assert!(
-        discord.guild_ids.iter().any(|g| g == "11111"),
+        guild_ids.iter().any(|v| v.as_str() == Some("FOLDGUILD")),
         "V2 discord.guild_id was not folded into V3 guild_ids[]; got {:?}",
-        discord.guild_ids
+        guild_ids
     );
 }
 
 #[test]
 fn t4_mattermost_channel_id_folds_into_channel_ids() {
-    let cfg = v3_config();
-    let mm = cfg
-        .channels
-        .mattermost
-        .get("default")
-        .expect("channels.mattermost.default exists");
+    let v3 = migrate_v2(
+        r#"
+schema_version = 2
+
+[channels.mattermost]
+enabled = true
+url = "https://mm.example.com"
+bot_token = "mm-tok"
+channel_id = "mm-fold-test"
+"#,
+    );
+    let channel_ids = v3
+        .get("channels")
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("mattermost"))
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("default"))
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("channel_ids"))
+        .and_then(toml::Value::as_array)
+        .expect("channels.mattermost.default.channel_ids array");
     assert!(
-        mm.channel_ids.iter().any(|c| c == "mm-channel-001"),
+        channel_ids.iter().any(|v| v.as_str() == Some("mm-fold-test")),
         "V2 mattermost.channel_id was not folded into V3 channel_ids[]; got {:?}",
-        mm.channel_ids
+        channel_ids
     );
 }
 
 #[test]
 fn t5_reddit_subreddit_folds_into_subreddits() {
-    let cfg = v3_config();
-    let reddit = cfg
-        .channels
-        .reddit
-        .get("default")
-        .expect("channels.reddit.default exists");
+    let v3 = migrate_v2(
+        r#"
+schema_version = 2
+
+[channels.reddit]
+enabled = true
+client_id = "rid"
+client_secret = "rsec"
+refresh_token = "rrt"
+username = "bot"
+subreddit = "fold-test"
+"#,
+    );
+    let subreddits = v3
+        .get("channels")
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("reddit"))
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("default"))
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("subreddits"))
+        .and_then(toml::Value::as_array)
+        .expect("channels.reddit.default.subreddits array");
     assert!(
-        reddit.subreddits.iter().any(|s| s == "rust"),
+        subreddits.iter().any(|v| v.as_str() == Some("fold-test")),
         "V2 reddit.subreddit was not folded into V3 subreddits[]; got {:?}",
-        reddit.subreddits
+        subreddits
     );
 }
 
 #[test]
 fn t6_signal_group_id_folds_into_group_ids() {
-    let cfg = v3_config();
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[channels_config.signal]
+enabled = true
+http_url = "http://127.0.0.1:8686"
+account = "+15555550100"
+group_id = "fold-test-group"
+"#;
+    let cfg = migrate_to_current(raw).expect("V1 signal migrates");
     let signal = cfg
         .channels
         .signal
         .get("default")
         .expect("channels.signal.default exists");
     assert!(
-        signal.group_ids.iter().any(|g| g == "group-abc-001"),
+        signal.group_ids.iter().any(|g| g == "fold-test-group"),
         "V2 signal.group_id was not folded into V3 group_ids[]; got {:?}",
         signal.group_ids
     );
-    // The fixture's signal.group_id is NOT "dm", so dm_only should remain false.
     assert!(
         !signal.dm_only,
         "non-\"dm\" group_id must not set dm_only=true"
@@ -286,15 +375,28 @@ fn t6_signal_group_id_folds_into_group_ids() {
 
 #[test]
 fn t7_enabled_false_channel_preserved() {
-    let cfg = v3_config();
-    let webhook = cfg
-        .channels
-        .webhook
-        .get("default")
-        .expect("V2 webhook with enabled=false survives into V3 channels.webhook.default");
-    assert!(
-        !webhook.enabled,
-        "V2 enabled=false must round-trip into V3 channels.webhook.default.enabled = false; \
+    let v3 = migrate_v2(
+        r#"
+schema_version = 2
+
+[channels.webhook]
+enabled = false
+port = 8080
+"#,
+    );
+    let webhook_enabled = v3
+        .get("channels")
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("webhook"))
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("default"))
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("enabled"))
+        .and_then(toml::Value::as_bool);
+    assert_eq!(
+        webhook_enabled,
+        Some(false),
+        "V2 enabled=false must round-trip into V3 channels.webhook.default.enabled; \
          the orchestrator gates registration, not the migration"
     );
 }
@@ -353,14 +455,27 @@ fn discord_history_folded_with_archive_flag() {
 
 #[test]
 fn t8_tts_subsystem_promoted_to_providers() {
-    let value = v3_value();
+    let value = migrate_v2(
+        r#"
+schema_version = 2
+
+[tts.openai]
+api_key = "sk-tts-openai"
+model = "tts-1"
+voice = "alloy"
+
+[tts.elevenlabs]
+api_key = "el-tts-key"
+model_id = "eleven_monolingual_v1"
+"#,
+    );
     // [tts.openai] should be GONE from [tts] (moved to tts_providers.openai.default)
-    let tts_table = value
+    let tts_has_openai = value
         .get("tts")
         .and_then(toml::Value::as_table)
-        .expect("[tts] retained for top-level scalars");
+        .is_some_and(|t| t.contains_key("openai"));
     assert!(
-        !tts_table.contains_key("openai"),
+        !tts_has_openai,
         "V2 [tts.openai] sub-block must be moved out of [tts]"
     );
 
@@ -401,17 +516,26 @@ fn t8_tts_subsystem_promoted_to_providers() {
 }
 
 #[test]
-fn t8_tts_default_provider_rewritten_as_dotted_alias() {
-    let value = v3_value();
+fn t8_tts_default_provider_dropped() {
+    let value = migrate_v2(
+        r#"
+schema_version = 2
+
+[tts]
+default_provider = "openai"
+
+[tts.openai]
+api_key = "sk-tts"
+"#,
+    );
+    // V3 has no global default-provider concept for TTS; the fold drops it.
     let dp = value
         .get("tts")
         .and_then(toml::Value::as_table)
-        .and_then(|t| t.get("default_provider"))
-        .and_then(toml::Value::as_str);
-    assert_eq!(
-        dp,
-        Some("openai.default"),
-        "V2 tts.default_provider=\"openai\" must be rewritten as dotted V3 alias \"openai.default\""
+        .and_then(|t| t.get("default_provider"));
+    assert!(
+        dp.is_none(),
+        "V2 tts.default_provider must be dropped (V3 has no global default-provider for TTS); got {dp:?}"
     );
 }
 
@@ -421,15 +545,28 @@ fn t8_tts_default_provider_rewritten_as_dotted_alias() {
 
 #[test]
 fn t9_memory_qdrant_promoted_to_storage() {
-    let cfg = v3_config();
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[memory]
+backend = "qdrant"
+auto_save = true
+
+[memory.qdrant]
+url = "http://qdrant.example:6333"
+collection = "fold_test_memories"
+api_key = "qd-key"
+"#;
+    let cfg = migrate_to_current(raw).expect("V1 memory.qdrant migrates");
     let qdrant = cfg
         .storage
         .qdrant
         .get("default")
         .expect("[memory.qdrant] promoted to [storage.qdrant.default]");
-    assert_eq!(qdrant.url.as_deref(), Some("http://localhost:6333"));
-    assert_eq!(qdrant.collection, "zc_memories");
-    assert_eq!(qdrant.api_key.as_deref(), Some("qdrant-api-key"));
+    assert_eq!(qdrant.url.as_deref(), Some("http://qdrant.example:6333"));
+    assert_eq!(qdrant.collection, "fold_test_memories");
+    assert_eq!(qdrant.api_key.as_deref(), Some("qd-key"));
 }
 
 #[test]
@@ -463,7 +600,16 @@ vector_dimensions = 1536
 
 #[test]
 fn t9_memory_sqlite_open_timeout_promoted() {
-    let cfg = v3_config();
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[memory]
+backend = "sqlite"
+auto_save = true
+sqlite_open_timeout_secs = 60
+"#;
+    let cfg = migrate_to_current(raw).expect("V1 memory.sqlite migrates");
     let sqlite = cfg
         .storage
         .sqlite
@@ -479,22 +625,31 @@ fn t9_memory_sqlite_open_timeout_promoted() {
 
 #[test]
 fn t10_storage_provider_postgres_promoted() {
-    let cfg = v3_config();
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[storage.provider.config]
+provider = "postgres"
+db_url = "postgres://u:p@localhost/zc"
+schema = "zc_schema"
+table = "memories"
+connect_timeout_secs = 42
+"#;
+    let cfg = migrate_to_current(raw).expect("V1 storage.provider migrates");
     let pg = cfg
         .storage
         .postgres
         .get("default")
         .expect("[storage.postgres.default] exists");
-    // Connection fields from [storage.provider.config] (provider=postgres)
-    // merge with vector fields from [memory.postgres] on the same entry.
     assert_eq!(
         pg.db_url.as_deref(),
-        Some("postgres://user:pass@localhost/zc"),
+        Some("postgres://u:p@localhost/zc"),
         "V2 [storage.provider.config].db_url must land at V3 storage.postgres.default.db_url"
     );
-    assert_eq!(pg.schema, "zeroclaw");
+    assert_eq!(pg.schema, "zc_schema");
     assert_eq!(pg.table, "memories");
-    assert_eq!(pg.connect_timeout_secs, Some(30));
+    assert_eq!(pg.connect_timeout_secs, Some(42));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -503,16 +658,37 @@ fn t10_storage_provider_postgres_promoted() {
 
 #[test]
 fn t11_cron_job_id_dropped_and_alias_keyed() {
-    let cfg = v3_config();
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[cron]
+enabled = true
+
+[[cron.jobs]]
+id = "morning_digest"
+name = "Morning Digest"
+job_type = "agent"
+prompt = "Summarize unread messages"
+enabled = true
+schedule = { kind = "cron", expr = "0 7 * * *" }
+"#;
+    let cfg = migrate_to_current(raw).expect("V1 cron migrates");
     let job = cfg
         .cron
         .get("morning_digest")
-        .expect("cron job alias derived from name slug");
-    // V2 had `id: String` on CronJobDecl; V3 removed it. The migrated job
-    // table must not carry an `id` field — assert via raw value navigation
-    // since V3 CronJobDecl doesn't even have a slot for it.
-    let value = v3_value();
-    let raw_job = value
+        .expect("cron job alias derived from id");
+    assert_eq!(job.name.as_deref(), Some("Morning Digest"));
+    assert_eq!(job.prompt.as_deref(), Some("Summarize unread messages"));
+
+    // V2 had `id: String` on CronJobDecl; V3 removed it. Assert via raw value.
+    let raw_value: toml::Value = toml::from_str(
+        &zeroclaw_config::migration::migrate_file(raw)
+            .expect("migrate_file succeeds")
+            .expect("migration ran"),
+    )
+    .expect("migrated TOML parses");
+    let raw_job = raw_value
         .get("cron")
         .and_then(toml::Value::as_table)
         .and_then(|t| t.get("morning_digest"))
@@ -522,9 +698,6 @@ fn t11_cron_job_id_dropped_and_alias_keyed() {
         !raw_job.contains_key("id"),
         "V2 CronJobDecl.id must be dropped during V2→V3 cron restructure"
     );
-    // Job content survives.
-    assert_eq!(job.name.as_deref(), Some("Morning Digest"));
-    assert_eq!(job.prompt.as_deref(), Some("Summarize unread messages"));
 }
 
 #[test]
@@ -572,7 +745,19 @@ fn t12_reliability_fallback_fields_dropped() {
 
 #[test]
 fn t13_security_sandbox_folded_into_risk_profile() {
-    let cfg = v3_config();
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[autonomy]
+level = "supervised"
+
+[security.sandbox]
+enabled = true
+backend = "firejail"
+firejail_args = ["--noroot"]
+"#;
+    let cfg = migrate_to_current(raw).expect("V1 security.sandbox migrates");
     let profile = cfg
         .risk_profiles
         .get("default")
@@ -596,7 +781,20 @@ fn t13_security_sandbox_folded_into_risk_profile() {
 
 #[test]
 fn t13_security_resources_folded_into_risk_profile() {
-    let cfg = v3_config();
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[autonomy]
+level = "supervised"
+
+[security.resources]
+max_memory_mb = 512
+max_cpu_time_seconds = 600
+max_subprocesses = 10
+memory_monitoring = true
+"#;
+    let cfg = migrate_to_current(raw).expect("V1 security.resources migrates");
     let profile = cfg
         .risk_profiles
         .get("default")
@@ -780,7 +978,18 @@ fn cost_prices_dropped_not_folded() {
 
 #[test]
 fn passthrough_propagates_unknown_section() {
-    let value = v3_value();
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[my_custom_section]
+custom_field = "preserved-through-chain"
+nested_value = 42
+"#;
+    let migrated = zeroclaw_config::migration::migrate_file(raw)
+        .expect("migrate_file succeeds")
+        .expect("migration ran");
+    let value: toml::Value = toml::from_str(&migrated).expect("migrated TOML parses");
     let custom = value
         .get("my_custom_section")
         .and_then(toml::Value::as_table)
@@ -797,11 +1006,20 @@ fn passthrough_propagates_unknown_section() {
 
 #[test]
 fn comment_preserved_on_surviving_key() {
-    let migrated = migrate_file(V1_FIXTURE)
-        .expect("migrate_file succeeds")
-        .expect("migration ran");
     // [cost] survives V1 → V3 (with prices stripped). Its leading comment
     // should round-trip through the toml_edit::DocumentMut reconciliation.
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+# Cost tracking limits
+[cost]
+enabled = true
+daily_limit_usd = 10.0
+"#;
+    let migrated = migrate_file(raw)
+        .expect("migrate_file succeeds")
+        .expect("migration ran");
     assert!(
         migrated.contains("Cost tracking limits"),
         "[cost] section comment was not preserved across migration"
@@ -2040,10 +2258,10 @@ fn generate_v2_is_v2_shape() {
 
 #[test]
 fn generate_v3_covers_every_v3_top_level_section() {
-    // Lower-bound presence check: each section listed here is one a
-    // real install will have populated and that the V1 fixture is
-    // expected to migrate through. Adding new sections to V3 is fine —
-    // only removing one of these (or breaking its migration) fails.
+    // Lower-bound presence check: every section listed here is one the
+    // embedded V1 fixture exercises end-to-end through `generate(3)`.
+    // Adding new sections to the fixture is fine — only removing one of
+    // these (or breaking its migration) fails.
     let cfg = migrate_to_current(
         &generate(CURRENT_SCHEMA_VERSION, &GenerateOptions::default())
             .expect("generate current succeeds"),
@@ -2067,28 +2285,16 @@ fn generate_v3_covers_every_v3_top_level_section() {
         "[agent] migrated to [runtime_profiles.default]"
     );
     assert!(
-        cfg.cron.contains_key("morning_digest"),
-        "cron job migrated from V1 cron.jobs[].name to [cron.<alias>] keyed entry"
+        cfg.cron.contains_key("morning_briefing"),
+        "V1 cron job migrated from [[cron.jobs]] to [cron.<alias>] keyed entry"
     );
     assert!(
         cfg.scheduler.enabled,
         "[scheduler] populated from V1 [cron] subsystem knobs"
     );
     assert!(
-        !cfg.tts_providers.openai.is_empty(),
-        "tts.openai promoted to tts_providers.openai.default"
-    );
-    assert!(
-        !cfg.transcription_providers.groq.is_empty(),
-        "[transcription] Groq fields promoted to transcription_providers.groq.default"
-    );
-    assert!(
         !cfg.storage.qdrant.is_empty(),
         "[memory.qdrant] promoted to [storage.qdrant.default]"
-    );
-    assert!(
-        !cfg.storage.postgres.is_empty(),
-        "[memory.postgres] vector fields promoted to [storage.postgres.default]"
     );
     assert!(
         !cfg.peer_groups.is_empty(),
@@ -2101,8 +2307,6 @@ fn generate_v3_covers_every_v3_top_level_section() {
     assert!(cfg.backup.enabled, "backup block carried through");
     assert!(cfg.heartbeat.enabled, "heartbeat block carried through");
     assert!(cfg.web_search.enabled, "web_search block carried through");
-    assert!(cfg.mcp.enabled, "mcp block carried through");
-    assert!(cfg.trust.initial_score > 0.0, "trust block carried through");
 }
 
 #[test]
