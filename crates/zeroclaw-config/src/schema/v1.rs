@@ -4,11 +4,10 @@ use std::collections::HashMap;
 use crate::migration::fold_string_into_array;
 use crate::schema::v2::V2Config;
 
-/// V1 partial typed lens. Anything not explicitly named flows through
-/// `passthrough` unchanged.
+/// V1 partial typed lens. Names only fields that change in the V1→V2
+/// step; everything else rides through `passthrough`.
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct V1Config {
-    // ── 12 fields folded into V2 [providers] ──────────────────────────
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<toml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -38,20 +37,14 @@ pub struct V1Config {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub embedding_routes: Vec<toml::Value>,
 
-    // ── renamed channels_config → channels ────────────────────────────
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channels_config: Option<toml::Value>,
 
-    /// Everything else passes through unchanged.
     #[serde(flatten)]
     pub passthrough: toml::Table,
 }
 
 impl V1Config {
-    /// Migrate V1 → V2.
-    ///
-    /// Compile-time guarantee: this function returns `V2Config`. The V3
-    /// schema is structurally unable to leak into the V1→V2 step.
     pub fn migrate(self) -> V2Config {
         let V1Config {
             api_key,
@@ -70,24 +63,9 @@ impl V1Config {
             mut passthrough,
         } = self;
 
-        // Build V2 [providers] from the V1 provider-related top-level fields.
-        //
-        // V2's ProvidersConfig has exactly four fields: `fallback`, `models`,
-        // `model_routes`, `embedding_routes`. The eight remaining V1 globals
-        // (`api_key`, `api_url`, `api_path`, `default_model`, `default_temperature`,
-        // `provider_timeout_secs`, `provider_max_tokens`, `extra_headers`) and
-        // `default_provider` are absorbed by the V2 ModelProviderConfig entry
-        // identified by V1's default_provider key — V2 moved them per-provider.
-        //
-        // V1 global -> V2 ModelProviderConfig field:
-        //   api_key                -> api_key
-        //   api_url                -> base_url
-        //   api_path               -> api_path
-        //   default_model          -> model
-        //   default_temperature    -> temperature
-        //   provider_timeout_secs  -> timeout_secs
-        //   provider_max_tokens    -> max_tokens
-        //   extra_headers          -> extra_headers
+        // V1 had provider knobs at the top level; V2 moved them per-provider.
+        // Fold each into the ModelProviderConfig entry identified by V1's
+        // default_provider key with field renames as below.
         let has_v1_providers_data = default_provider.is_some()
             || default_model.is_some()
             || api_key.is_some()
@@ -104,11 +82,9 @@ impl V1Config {
         let providers_value = if !has_v1_providers_data {
             None
         } else {
-            // V1's `default_provider` identifies which provider entry absorbs
-            // the V1 globals. When the field is missing on disk, V1's runtime
-            // fell back to "openrouter" (the hardcoded Config::default value);
-            // we use the same key here so the migrated config behaves the way
-            // a stock V1 install did.
+            // V1 runtime hardcoded "openrouter" as the fallback when
+            // default_provider was unset; preserve that so a stock V1 install
+            // round-trips.
             let default_provider_key: String = default_provider
                 .as_ref()
                 .and_then(|v| v.as_str())
@@ -133,16 +109,15 @@ impl V1Config {
                 let mut entry_table = match entry_value {
                     toml::Value::Table(t) => t,
                     other => {
-                        // Non-table user value at model_providers.<key>.
-                        // Preserve verbatim; nothing to fold into.
+                        // Preserve verbatim; nothing to fold into a non-table.
                         models_table.insert(default_provider_key.clone(), other);
                         toml::Table::new()
                     }
                 };
 
-                // `or_insert` semantics so any value the user explicitly set
-                // on the per-provider entry (e.g. base_url, max_tokens) wins
-                // over the V1 top-level global.
+                // or_insert so any value the user already set on the
+                // per-provider entry wins over the V1 top-level global —
+                // matches V1 runtime preference (per-provider > global).
                 if let Some(v) = api_key {
                     entry_table.entry("api_key".to_string()).or_insert(v);
                 }
@@ -205,12 +180,8 @@ impl V1Config {
             Some(toml::Value::Table(providers))
         };
 
-        // Rename channels_config → channels and apply V1→V2 nested folds:
-        //   T1: channels.matrix.room_id (String) → channels.matrix.allowed_rooms[]
-        //   T2: channels.slack.channel_id (Option<String>) → channels.slack.channel_ids[]
-        // V2 removed both singular fields. The transform only fires when the
-        // legacy field carries a non-empty string; missing/empty/non-string
-        // values are no-ops.
+        // Rename channels_config → channels and apply the singular→plural
+        // folds V2 needs (matrix.room_id, slack.channel_id).
         if let Some(mut channels_value) = channels_config {
             if let Some(channels_table) = channels_value.as_table_mut() {
                 apply_v1_to_v2_channel_folds(channels_table);
@@ -219,7 +190,6 @@ impl V1Config {
             tracing::info!(target: "migration", "channels_config → channels");
         }
 
-        // Set V2 schema_version = 2.
         let mut v2 = V2Config {
             schema_version: 2,
             providers: providers_value,
@@ -227,11 +197,8 @@ impl V1Config {
             ..V2Config::default()
         };
 
-        // Pull V2-relevant top-level keys (autonomy, agent, swarms, cron, cost,
-        // channels, agents) out of passthrough into their typed slots so that
-        // V2Config::migrate sees them in the lens. V1 input never sets these
-        // (they're V2-or-later additions or pass-through), but if a user did
-        // include them inline we honor them.
+        // Hoist keys that `V2Config::migrate` (V2→V3) operates on out of
+        // passthrough into the typed slots so the V2 lens sees them.
         if let Some(v) = v2.passthrough.remove("autonomy") {
             v2.autonomy = Some(v);
         }
@@ -253,9 +220,9 @@ impl V1Config {
         if let Some(toml::Value::Table(t)) = v2.passthrough.remove("agents") {
             v2.agents = t.into_iter().collect();
         }
-        // If V1 user happened to specify their own `providers` block (unlikely
-        // — that section was V2-introduced), prefer the synthesized one we
-        // built; merge any user-provided keys not already set.
+        // Edge case: V1 user wrote a [providers] block themselves (V2
+        // section name). Merge their keys with the synthesized ones,
+        // letting the synthesized values win.
         if let Some(toml::Value::Table(user_providers)) = v2.passthrough.remove("providers") {
             let synthesized = v2
                 .providers
@@ -278,16 +245,9 @@ impl V1Config {
     }
 }
 
-/// Apply V1→V2 nested folds to the channels table in place.
-///
-/// - **T1** `matrix.room_id: String` → `matrix.allowed_rooms: Vec<String>`.
-/// - **T2** `slack.channel_id: Option<String>` → `slack.channel_ids: Vec<String>`.
-///
-/// V2 removed both singular fields entirely; if we leave them on the table,
-/// V2 deserialization either drops them silently (data loss) or — once V3
-/// alias-wraps the channel — they become part of an unmodeled inner table
-/// where they'll never round-trip back. This pass moves them to their
-/// V2-canonical destinations before the V2 lens sees the data.
+/// V2 dropped the singular `matrix.room_id` and `slack.channel_id`
+/// fields in favor of the plural `allowed_rooms[]` / `channel_ids[]`.
+/// Move the V1 singular values into the plural slots so they survive.
 fn apply_v1_to_v2_channel_folds(channels: &mut toml::Table) {
     if let Some(toml::Value::Table(matrix)) = channels.get_mut("matrix")
         && fold_string_into_array(matrix, "room_id", "allowed_rooms")

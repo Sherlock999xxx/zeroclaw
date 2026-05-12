@@ -9,17 +9,11 @@ use crate::schema::v2::V2Config;
 pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 /// Top-level TOML keys that legacy schema versions had but V3 either
-/// removed or restructured into a different shape. Used by
-/// `Config::unknown_keys` to suppress false "unknown key" warnings on
-/// V1/V2 configs migrating through `migrate_to_current` — every key here
-/// is consumed by the V1→V2 or V2→V3 migration step, so its presence in
-/// a stale-but-being-migrated config is expected, not a typo.
-///
-/// Sources:
-/// - V1→V2 removed/renamed (top-level): `git show 1ec9c14ca:crates/zeroclaw-config/src/schema.rs`.
-/// - V2→V3 removed/restructured (top-level): `git show 68a875b5b:crates/zeroclaw-config/src/schema.rs`.
+/// removed or restructured. Suppresses "unknown key" warnings on V1/V2
+/// configs flowing through `migrate_to_current`: every key here is
+/// consumed by `V1Config::migrate` or `V2Config::migrate`, so it's
+/// expected on a stale-but-being-migrated config.
 pub const V1_LEGACY_KEYS: &[&str] = &[
-    // V1 → V2 removed/renamed
     "api_key",
     "api_url",
     "api_path",
@@ -33,10 +27,6 @@ pub const V1_LEGACY_KEYS: &[&str] = &[
     "model_routes",
     "embedding_routes",
     "channels_config",
-    // V2 → V3 removed or shape-changed at top level. V3's `Config::default()`
-    // serialization either omits these (HashMap-typed, `skip_serializing_if`
-    // empty) or doesn't carry the field at all, so without this entry the
-    // unknown-key probe would flag a legitimately-migrating V2 input.
     "autonomy",
     "agent",
     "swarms",
@@ -102,10 +92,9 @@ pub fn migrate_file(input: &str) -> Result<Option<String>> {
     }
 }
 
-/// The canonical V1 fixture, embedded into the binary. Single source of
-/// truth for the migration test suite (`tests/migration.rs`) and for
-/// [`generate`] / the `zeroclaw config generate` CLI command. Hand-authored
-/// to exercise every V1→V2 transformation rule.
+/// Embedded V1 fixture used by [`generate`] / the `zeroclaw config generate`
+/// CLI. Authored against the V1 schema at the parent of the V2-intro
+/// commit; see `fixtures/v1.toml`.
 const V1_FIXTURE: &str = include_str!("../fixtures/v1.toml");
 
 /// Options for [`generate`].
