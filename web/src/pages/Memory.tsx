@@ -11,7 +11,6 @@ import {
 } from 'lucide-react';
 import type { MemoryEntry } from '@/types/api';
 import { getMemory, storeMemory, deleteMemory } from '@/lib/api';
-import { SESSION_ID_STORAGE_KEY } from '@/lib/ws';
 import { t } from '@/lib/i18n';
 
 function truncate(text: string, max: number): string {
@@ -34,19 +33,13 @@ export default function Memory() {
   const [showForm, setShowForm] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  // Recover the agent chat session this memory was captured in. The chat
-  // page reads `getOrCreateSessionId()` (backed by SESSION_ID_STORAGE_KEY)
-  // on mount and hydrates messages via `getSessionMessages(sid)`, so
-  // overwriting the key + navigating to /agent is enough to load the
-  // saved transcript. (#6145)
-  const handleOpenChat = (sessionId: string) => {
-    try {
-      localStorage.setItem(SESSION_ID_STORAGE_KEY, sessionId);
-    } catch {
-      // localStorage unavailable (e.g. private mode); fall through to
-      // navigation, which will create a fresh session.
-    }
-    navigate('/agent');
+  // Memory entries don't yet carry the agent alias that owns the
+  // captured session, so we can't perfectly restore the transcript in
+  // the new per-agent chat. Route to the agents list; the user picks
+  // the agent and starts (or resumes its own) session from there.
+  // Follow-up: stamp agent_alias on MemoryEntry so this can deep-link.
+  const handleOpenChat = (_sessionId: string) => {
+    navigate('/agents');
   };
 
   // Form state

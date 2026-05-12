@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Cpu,
   Clock,
@@ -12,9 +13,12 @@ import {
   MessageSquare,
   ChevronRight,
   Wifi,
+  Plus,
 } from 'lucide-react';
 import type { StatusResponse, CostSummary, Session, ChannelDetail } from '@/types/api';
 import { getStatus, getCost, getSessions, getChannels } from '@/lib/api';
+import { loadAgentSummaries, toggleAgentEnabled, type AgentSummary } from '@/lib/agents';
+import AgentCard from '@/components/AgentCard';
 import { useSSE } from '@/hooks/useSSE';
 import { t } from '@/lib/i18n';
 
@@ -819,7 +823,9 @@ export default function Dashboard() {
 
   return (
     <div className="p-6 space-y-6 animate-fade-in">
-      {/* Tab Navigation */}
+      <AgentsSection />
+
+      {/* Global system stats — tab navigation */}
       <div
         className="flex items-center gap-1 p-1 rounded-2xl"
         style={{ background: "var(--pc-bg-elevated)" }}
@@ -870,5 +876,118 @@ export default function Dashboard() {
       {activeTab === 'sessions' && <SessionsTab />}
       {activeTab === 'channels' && <ChannelsTab />}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AgentsSection — top-of-dashboard agent grid. Always visible (above the
+// global-stats tabs) so the dashboard reads as "many agents + system state"
+// rather than "the agent". Same card component used on /agents.
+// ---------------------------------------------------------------------------
+
+function AgentsSection() {
+  const [agents, setAgents] = useState<AgentSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [toggling, setToggling] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    loadAgentSummaries()
+      .then(setAgents)
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : 'Failed to load agents'),
+      );
+  }, []);
+
+  const handleToggle = useCallback(async (agent: AgentSummary) => {
+    setToggling((prev) => new Set(prev).add(agent.alias));
+    try {
+      await toggleAgentEnabled(agent.alias, !agent.enabled);
+      setAgents((prev) =>
+        prev?.map((a) =>
+          a.alias === agent.alias ? { ...a, enabled: !a.enabled } : a,
+        ) ?? null,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to toggle ${agent.alias}`);
+    } finally {
+      setToggling((prev) => {
+        const next = new Set(prev);
+        next.delete(agent.alias);
+        return next;
+      });
+    }
+  }, []);
+
+  return (
+    <section>
+      <header className="flex items-center justify-between mb-4">
+        <h2
+          className="text-sm font-semibold uppercase tracking-wider"
+          style={{ color: 'var(--pc-text-primary)' }}
+        >
+          Agents
+        </h2>
+        <Link
+          to="/agents"
+          className="text-xs flex items-center gap-1"
+          style={{ color: 'var(--pc-text-muted)' }}
+        >
+          View all
+          <ChevronRight className="h-3 w-3" />
+        </Link>
+      </header>
+
+      {error && (
+        <div
+          className="mb-3 px-3 py-2 rounded-xl border text-xs"
+          style={{
+            background: 'var(--color-status-error-alpha-08)',
+            borderColor: 'var(--color-status-error-alpha-20)',
+            color: 'var(--color-status-error)',
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      {agents === null ? (
+        <div
+          className="rounded-2xl border p-6 text-center text-sm"
+          style={{ borderColor: 'var(--pc-border)', color: 'var(--pc-text-muted)' }}
+        >
+          Loading agents...
+        </div>
+      ) : agents.length === 0 ? (
+        <div
+          className="rounded-2xl border-2 border-dashed p-6 text-center"
+          style={{ borderColor: 'var(--pc-border)' }}
+        >
+          <p
+            className="text-sm font-medium mb-2"
+            style={{ color: 'var(--pc-text-primary)' }}
+          >
+            No agents configured yet.
+          </p>
+          <Link
+            to="/onboard"
+            className="btn-electric inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Start onboarding
+          </Link>
+        </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {agents.map((agent) => (
+            <AgentCard
+              key={agent.alias}
+              agent={agent}
+              toggling={toggling.has(agent.alias)}
+              onToggle={() => handleToggle(agent)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

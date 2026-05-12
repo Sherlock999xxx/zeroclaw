@@ -9,7 +9,6 @@ import { getAdminPairCode, getOnboardStatus } from './lib/api';
 import { basePath } from './lib/basePath';
 import { setLocale, type Locale } from './lib/i18n';
 import { Router } from './router/router';
-import { AgentProvider } from './contexts/AgentContext';
 
 // Locale context
 interface LocaleContextType {
@@ -211,14 +210,12 @@ function AppContent() {
   }
 
   return (
-    <AgentProvider>
-      <DraftContext.Provider value={draftStore}>
-        <LocaleContext.Provider value={{ locale, setAppLocale }}>
-          <FreshInstallRedirect />
-          <Router />
-        </LocaleContext.Provider>
-      </DraftContext.Provider>
-    </AgentProvider>
+    <DraftContext.Provider value={draftStore}>
+      <LocaleContext.Provider value={{ locale, setAppLocale }}>
+        <FreshInstallRedirect />
+        <Router />
+      </LocaleContext.Provider>
+    </DraftContext.Provider>
   );
 }
 

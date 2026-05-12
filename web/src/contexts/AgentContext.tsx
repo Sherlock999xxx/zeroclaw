@@ -52,8 +52,15 @@ export function useAgent() {
 
 const MODEL_SWITCH_TIMEOUT_MS = 10_000;
 
-export function AgentProvider({ children }: { children: React.ReactNode }) {
-  const sessionIdRef = useRef(getOrCreateSessionId());
+export interface AgentProviderProps {
+  /** Configured agent alias this provider is bound to. The WebSocket
+   * connection, session ID, and chat history are all scoped to this alias. */
+  agentAlias: string;
+  children: React.ReactNode;
+}
+
+export function AgentProvider({ agentAlias, children }: AgentProviderProps) {
+  const sessionIdRef = useRef(getOrCreateSessionId(agentAlias));
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     const persisted = loadChatHistory(sessionIdRef.current);
     return persisted.length > 0 ? persistedToUiMessages(persisted) : [];
@@ -331,9 +338,10 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
     };
   }, [handleWsMessage]);
 
-  // Global WebSocket connection — survives route changes.
+  // WebSocket bound to the configured agent. Re-keys (via the outer
+  // <AgentProvider key={alias}>) when the alias changes.
   useEffect(() => {
-    const ws = new WebSocketClient();
+    const ws = new WebSocketClient({ agentAlias });
     attachSocketCallbacks(ws);
     ws.connect();
     wsRef.current = ws;
@@ -341,7 +349,7 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
     return () => {
       ws.disconnect();
     };
-  }, [attachSocketCallbacks]);
+  }, [attachSocketCallbacks, agentAlias]);
 
   // Fetch current model and available models from config.
   useEffect(() => {
@@ -476,7 +484,7 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
         oldWs.disconnect();
       }
 
-      const ws = new WebSocketClient();
+      const ws = new WebSocketClient({ agentAlias });
       attachSocketCallbacks(ws);
       ws.connect();
       wsRef.current = ws;
@@ -489,7 +497,7 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
       setModelLoading(false);
       setError(err instanceof Error ? err.message : t('agent.failed_switch_model'));
     }
-  }, [attachSocketCallbacks, modelLoading, typing]);
+  }, [attachSocketCallbacks, modelLoading, typing, agentAlias]);
 
   const deleteMessage = useCallback((id: string) => {
     setMessages((prev) => prev.filter((m) => m.id !== id));
