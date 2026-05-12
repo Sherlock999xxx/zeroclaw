@@ -106,9 +106,16 @@ fn default_v2_schema_version() -> u32 {
 }
 
 /// Channel section keys subject to V3 alias-wrapping. Order does not matter
-/// for correctness; listed here so missing-from-V2 channel types simply pass
-/// through under whatever key the user used (with a debug-log warning).
-const V3_CHANNEL_TYPES: &[&str] = &[
+/// for correctness; missing entries here send a V2 `[channels.<type>]` block
+/// through the "unmodeled keys passthrough" branch — which leaves it FLAT
+/// instead of `[channels.<type>.default]`-shaped, and the V3 deserializer
+/// then chokes on the typed `HashMap<String, T>` slot.
+///
+/// Public so the integration tests can iterate every entry and assert each
+/// alias-wraps cleanly, AND assert this list covers every typed nested
+/// channel slot on `ChannelsConfig` (no silent drift between schema and
+/// migration).
+pub const V3_CHANNEL_TYPES: &[&str] = &[
     "telegram",
     "discord",
     "slack",
@@ -137,6 +144,9 @@ const V3_CHANNEL_TYPES: &[&str] = &[
     "reddit",
     "bluesky",
     "voice_call",
+    "voice_wake",
+    "voice_duplex",
+    "mqtt",
 ];
 
 impl V2Config {

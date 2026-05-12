@@ -1608,3 +1608,115 @@ allowed_rooms = ["!ops:matrix.org"]
         .collect();
     assert_eq!(rooms, vec!["!ops:matrix.org"]);
 }
+
+// ─────────────────────────────────────────────────────────────
+// V3_CHANNEL_TYPES coverage — every typed nested channel slot on
+// `ChannelsConfig` must appear in the migration walker's alias-wrap
+// list. Missing entries silently slip through the "unmodeled keys
+// passthrough" branch and surface as type errors at V3 deserialize
+// time (a V2 `[channels.foo] enabled = false` block remains flat,
+// then deserialize tries to read it as `HashMap<String, FooConfig>`
+// and panics with `invalid type: boolean false, expected struct
+// FooConfig`). The user report this regression test came from is
+// at the bottom of the next test.
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn v2_channels_voice_duplex_block_alias_wraps() {
+    // Reproduces the user-reported migration error in v0.8.0:
+    //   invalid type: boolean `false`, expected struct VoiceDuplexConfig
+    //   in `channels.voice_duplex.enabled`
+    // Cause: voice_duplex was missing from V3_CHANNEL_TYPES and went
+    // through the unmodeled-keys passthrough, leaving the V2 block flat.
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[channels_config.voice_duplex]
+enabled = false
+"#;
+    let cfg = migrate_to_current(raw)
+        .expect("voice_duplex flat V2 block must alias-wrap, not deserialize as flat struct");
+    // enabled = false drops the block entirely (T7 enabled-keep filter),
+    // so we just assert the migration succeeded.
+    assert_eq!(cfg.schema_version, CURRENT_SCHEMA_VERSION);
+}
+
+#[test]
+fn v2_channels_voice_wake_block_alias_wraps() {
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[channels_config.voice_wake]
+enabled = false
+"#;
+    let cfg = migrate_to_current(raw).expect("voice_wake flat V2 block must alias-wrap");
+    assert_eq!(cfg.schema_version, CURRENT_SCHEMA_VERSION);
+}
+
+#[test]
+fn v2_channels_mqtt_block_alias_wraps() {
+    let raw = r#"
+default_provider = "openai"
+default_model = "gpt-4o-mini"
+
+[channels_config.mqtt]
+enabled = false
+"#;
+    let cfg = migrate_to_current(raw).expect("mqtt flat V2 block must alias-wrap");
+    assert_eq!(cfg.schema_version, CURRENT_SCHEMA_VERSION);
+}
+
+#[test]
+fn v3_channel_types_covers_every_typed_channel_slot() {
+    // Drift gate: every `#[nested] HashMap<String, T>` field under
+    // ChannelsConfig must appear in V3_CHANNEL_TYPES (or be intentionally
+    // folded into a sibling type — today only `feishu` qualifies, since
+    // V2 `[channels.feishu]` is migrated to `[channels.lark.feishu]`).
+    use std::collections::HashSet;
+    use zeroclaw_config::schema::Config;
+    use zeroclaw_config::schema::v2::V3_CHANNEL_TYPES;
+
+    let listed: HashSet<&str> = V3_CHANNEL_TYPES.iter().copied().collect();
+
+    // Channel types that are intentionally NOT in V3_CHANNEL_TYPES:
+    // they're folded into another channel type by a dedicated walker
+    // step that runs before the alias-wrap loop.
+    let folded_into_sibling: HashSet<&str> = ["feishu"].into_iter().collect();
+
+    // map_key_sections paths come from the per-struct `#[prefix = ...]`
+    // attribute, which historically uses kebab-case for multi-word slots
+    // (`channels.gmail-push`). The migration walker compares against the
+    // TOML key, which is the snake-case field name (`channels.gmail_push`).
+    // Normalize before comparing so the two never silently disagree on
+    // separator choice.
+    let typed_channel_slots: Vec<String> = Config::map_key_sections()
+        .into_iter()
+        .filter_map(|s| {
+            let mut parts = s.path.splitn(2, '.');
+            match (parts.next(), parts.next()) {
+                (Some("channels"), Some(rest)) if !rest.contains('.') => {
+                    Some(rest.replace('-', "_"))
+                }
+                _ => None,
+            }
+        })
+        .collect();
+
+    let mut missing: Vec<&String> = typed_channel_slots
+        .iter()
+        .filter(|slot| !listed.contains(slot.as_str()))
+        .filter(|slot| !folded_into_sibling.contains(slot.as_str()))
+        .collect();
+    missing.sort();
+    assert!(
+        missing.is_empty(),
+        "ChannelsConfig has typed channel slots that V3_CHANNEL_TYPES does \
+         not alias-wrap during V2→V3 migration. Add each missing entry to \
+         the const in `crates/zeroclaw-config/src/schema/v2.rs`, or add a \
+         dedicated fold step before the alias-wrap loop and list the slot \
+         under `folded_into_sibling` here.\n\nMissing slots: {:?}",
+        missing
+    );
+}
