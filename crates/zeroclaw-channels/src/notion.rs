@@ -345,6 +345,7 @@ impl Channel for NotionChannel {
                                 reply_target: page_id,
                                 content: input_text,
                                 channel: "notion".into(),
+                                channel_alias: None,
                                 timestamp,
                                 thread_ts: None,
                                 interruption_scope_id: None,

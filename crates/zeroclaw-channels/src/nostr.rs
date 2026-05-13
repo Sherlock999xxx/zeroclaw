@@ -253,6 +253,7 @@ impl Channel for NostrChannel {
                             reply_target: sender_hex,
                             content,
                             channel: "nostr".to_string(),
+                            channel_alias: Some(self.alias.clone()),
                             timestamp,
                             thread_ts: None,
                             interruption_scope_id: None,

@@ -845,6 +845,11 @@ impl Channel for WhatsAppWebChannel {
         // Store the sender channel for incoming messages
         *self.tx.lock() = Some(tx.clone());
 
+        // Capture alias as an Arc so the long-running event closure (inside
+        // the reconnect loop) can clone cheaply per spawned message without
+        // borrowing `self` for its 'static lifetime.
+        let alias = std::sync::Arc::new(self.alias.clone());
+
         use wa_rs::bot::Bot;
         use wa_rs::pair_code::PairCodeOptions;
         use wa_rs::store::{Device, DeviceStore};
@@ -926,12 +931,15 @@ impl Channel for WhatsAppWebChannel {
                     None,
                     Some(PlatformType::Desktop),
                 )
-                .on_event(move |event, client| {
+                .on_event({
+                    let alias = Arc::clone(&alias);
+                    move |event, client| {
                     let tx_inner = tx_clone.clone();
                     let peer_resolver = Arc::clone(&peer_resolver);
                     let logout_tx = logout_tx_clone.clone();
                     let retry_count = retry_count_clone.clone();
                     let session_revoked = session_revoked_clone.clone();
+                    let alias = Arc::clone(&alias);
                     let transcription_config = transcription_config.clone();
                     let transcription_mgr = transcription_mgr.clone();
                     let voice_chats = voice_chats.clone();
@@ -1216,6 +1224,7 @@ impl Channel for WhatsAppWebChannel {
                                     .send(ChannelMessage {
                                         id: uuid::Uuid::new_v4().to_string(),
                                         channel: "whatsapp".to_string(),
+                                        channel_alias: Some((*alias).clone()),
                                         sender: normalized.clone(),
                                         // Reply to the originating chat JID (DM or group).
                                         // For self-chat with LID JIDs, this is the
@@ -1303,7 +1312,7 @@ impl Channel for WhatsAppWebChannel {
                             _ => {}
                         }
                     }
-                });
+                }});
 
             // Configure pair-code flow when a phone number is provided.
             if let Some(ref phone) = self.pair_phone {

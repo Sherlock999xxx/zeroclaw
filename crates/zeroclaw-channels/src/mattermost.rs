@@ -588,6 +588,7 @@ impl MattermostChannel {
             reply_target,
             content,
             channel: "mattermost".to_string(),
+            channel_alias: Some(self.alias.clone()),
             #[allow(clippy::cast_sign_loss)]
             timestamp: (create_at / 1000) as u64,
             thread_ts: None,

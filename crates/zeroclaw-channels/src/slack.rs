@@ -2528,6 +2528,7 @@ impl SlackChannel {
     fn parse_block_action_as_command(
         envelope: &serde_json::Value,
         _bot_user_id: &str,
+        alias: &str,
     ) -> Option<ChannelMessage> {
         let payload = envelope.get("payload")?;
 
@@ -2580,6 +2581,7 @@ impl SlackChannel {
             reply_target: channel_id.to_string(),
             content: command,
             channel: "slack".to_string(),
+            channel_alias: Some(alias.to_string()),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -2746,7 +2748,8 @@ impl SlackChannel {
                         }
                         continue;
                     }
-                    if let Some(msg) = Self::parse_block_action_as_command(&envelope, bot_user_id)
+                    if let Some(msg) =
+                        Self::parse_block_action_as_command(&envelope, bot_user_id, &self.alias)
                         && tx.send(msg).await.is_err()
                     {
                         return Ok(());
@@ -2827,6 +2830,7 @@ impl SlackChannel {
                                         reply_target: item_channel.to_string(),
                                         content: "/stop".to_string(),
                                         channel: "slack".to_string(),
+                                        channel_alias: Some(self.alias.clone()),
                                         timestamp: std::time::SystemTime::now()
                                             .duration_since(std::time::UNIX_EPOCH)
                                             .unwrap_or_default()
@@ -2929,6 +2933,7 @@ impl SlackChannel {
                     reply_target: channel_id.clone(),
                     content: normalized_text,
                     channel: "slack".to_string(),
+                    channel_alias: Some(self.alias.clone()),
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -3960,6 +3965,7 @@ impl Channel for SlackChannel {
                             reply_target: channel_id.clone(),
                             content: normalized_text,
                             channel: "slack".to_string(),
+                            channel_alias: Some(self.alias.clone()),
                             timestamp: std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
@@ -4058,6 +4064,7 @@ impl Channel for SlackChannel {
                         reply_target: thread_channel_id.clone(),
                         content: normalized_text,
                         channel: "slack".to_string(),
+                        channel_alias: Some(self.alias.clone()),
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
@@ -5257,6 +5264,7 @@ mod tests {
             reply_target: "C123".into(),
             content: "text".into(),
             channel: "slack".into(),
+            channel_alias: None,
             timestamp: 0,
             thread_ts: None, // thread_replies=false → no fallback to ts
             interruption_scope_id: None,
@@ -5283,6 +5291,7 @@ mod tests {
             reply_target: "C123".into(),
             content: "text".into(),
             channel: "slack".into(),
+            channel_alias: None,
             timestamp: 0,
             thread_ts: Some(ts.to_string()), // thread_replies=true → ts as thread_ts
             interruption_scope_id: None,

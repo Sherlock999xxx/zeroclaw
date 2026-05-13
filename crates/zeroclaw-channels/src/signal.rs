@@ -317,6 +317,7 @@ impl SignalChannel {
             reply_target: target,
             content: text.to_string(),
             channel: "signal".to_string(),
+            channel_alias: Some(self.alias.clone()),
             timestamp: timestamp / 1000, // millis → secs
             thread_ts: None,
             interruption_scope_id: None,

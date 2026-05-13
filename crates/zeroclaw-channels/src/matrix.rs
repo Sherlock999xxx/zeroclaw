@@ -1250,6 +1250,9 @@ mod inbound {
     #[derive(Clone)]
     pub(super) struct HandlerCtx {
         pub config: Arc<MatrixConfig>,
+        /// ZeroClaw alias for `[channels.matrix.<alias>]` so session_key
+        /// construction can scope by bot instance.
+        pub alias: String,
         /// Resolves inbound external peers from canonical state at message-time.
         /// No cache (see AGENTS.md "ABSOLUTE RULE — SINGLE SOURCE OF TRUTH").
         pub peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
@@ -1506,6 +1509,7 @@ mod inbound {
             reply_target: room.room_id().to_string(),
             content,
             channel: "matrix".to_string(),
+            channel_alias: Some(ctx.alias.clone()),
             timestamp: SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -2798,6 +2802,7 @@ impl Channel for MatrixChannel {
             .to_owned();
         let ctx = inbound::HandlerCtx {
             config: self.config.clone(),
+            alias: self.alias.clone(),
             peer_resolver: self.peer_resolver.clone(),
             transcription: self.transcription.clone(),
             workspace_dir: self.workspace_dir.clone(),

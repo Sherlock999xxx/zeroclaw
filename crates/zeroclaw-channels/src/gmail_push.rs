@@ -447,6 +447,7 @@ impl GmailPushChannel {
                         sender: sender_email,
                         content,
                         channel: "gmail_push".to_string(),
+                        channel_alias: Some(self.alias.clone()),
                         timestamp,
                         thread_ts: Some(gmail_msg.thread_id),
                         interruption_scope_id: None,

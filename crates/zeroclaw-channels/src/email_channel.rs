@@ -523,6 +523,7 @@ impl EmailChannel {
                 sender: email.sender,
                 content: email.content,
                 channel: "email".to_string(),
+                channel_alias: Some(self.alias.clone()),
                 timestamp: email.timestamp,
                 thread_ts: None,
                 interruption_scope_id: None,

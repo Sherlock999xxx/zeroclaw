@@ -1021,6 +1021,7 @@ impl LarkChannel {
                         reply_target: lark_msg.chat_id.clone(),
                         content: text,
                         channel: self.channel_name().to_string(),
+            channel_alias: Some(self.alias.clone()),
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
@@ -1552,6 +1553,7 @@ impl LarkChannel {
             reply_target: chat_id.to_string(),
             content: text,
             channel: self.channel_name().to_string(),
+            channel_alias: Some(self.alias.clone()),
             timestamp,
             thread_ts: None,
             interruption_scope_id: None,
@@ -1768,6 +1770,7 @@ impl LarkChannel {
             reply_target: chat_id.to_string(),
             content: text,
             channel: self.channel_name().to_string(),
+            channel_alias: Some(self.alias.clone()),
             timestamp,
             thread_ts: None,
             interruption_scope_id: None,

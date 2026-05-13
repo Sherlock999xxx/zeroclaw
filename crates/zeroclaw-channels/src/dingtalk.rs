@@ -305,6 +305,7 @@ impl Channel for DingTalkChannel {
                         reply_target: chat_id,
                         content: content.to_string(),
                         channel: "dingtalk".to_string(),
+                        channel_alias: Some(self.alias.clone()),
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
@@ -409,7 +410,7 @@ allowed_users = ["user1", "*"]
             .peer_groups
             .get("dingtalk_default")
             .expect("dingtalk allow-list synthesizes [peer_groups.dingtalk_default]");
-        assert_eq!(group.channel.as_str(), "dingtalk.default");
+        assert_eq!(group.channel, "dingtalk");
         let peers: Vec<&str> = group.external_peers.iter().map(|p| p.as_str()).collect();
         assert_eq!(peers, vec!["user1"]);
     }

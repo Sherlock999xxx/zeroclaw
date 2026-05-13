@@ -34,6 +34,12 @@ pub struct ChannelMessage {
     pub reply_target: String,
     pub content: String,
     pub channel: String,
+    /// ZeroClaw channel alias (the `<alias>` half of `[channels.<type>.<alias>]`)
+    /// when the platform supports multiple bot instances. Used by
+    /// session_key construction so two bots on the same platform compute
+    /// distinct session IDs and don't share conversation history. `None`
+    /// for channels that don't have an alias concept yet (webhook, cli).
+    pub channel_alias: Option<String>,
     pub timestamp: u64,
     /// Platform thread identifier (e.g. Slack `ts`, Discord thread ID).
     /// When set, replies should be posted as threaded responses.
@@ -367,6 +373,7 @@ mod tests {
             reply_target: String::new(),
             content: "hi".into(),
             channel: "stub".into(),
+            channel_alias: None,
             timestamp: 0,
             thread_ts: None,
             interruption_scope_id: None,

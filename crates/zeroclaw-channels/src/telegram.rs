@@ -1362,6 +1362,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             reply_target,
             content,
             channel: "telegram".to_string(),
+            channel_alias: Some(self.alias.clone()),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -1493,6 +1494,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             reply_target,
             content,
             channel: "telegram".to_string(),
+            channel_alias: Some(self.alias.clone()),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -1714,6 +1716,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             reply_target,
             content,
             channel: "telegram".to_string(),
+            channel_alias: Some(self.alias.clone()),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()

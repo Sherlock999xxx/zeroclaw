@@ -330,6 +330,7 @@ impl WhatsAppChannel {
                         sender: normalized_from,
                         content,
                         channel: "whatsapp".to_string(),
+                        channel_alias: Some(self.alias.clone()),
                         timestamp,
                         thread_ts: None,
                         interruption_scope_id: None,

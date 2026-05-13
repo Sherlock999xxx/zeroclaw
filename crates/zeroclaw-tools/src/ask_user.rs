@@ -347,6 +347,7 @@ mod tests {
                 reply_target: "user".to_string(),
                 content: self.response.clone(),
                 channel: self.channel_name.clone(),
+                channel_alias: None,
                 timestamp: 1000,
                 thread_ts: None,
                 interruption_scope_id: None,

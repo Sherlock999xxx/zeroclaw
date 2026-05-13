@@ -1249,6 +1249,7 @@ impl Channel for QQChannel {
                                 reply_target: chat_id,
                                 content,
                                 channel: "qq".to_string(),
+                channel_alias: Some(self.alias.clone()),
                                 timestamp: std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()
@@ -1290,6 +1291,7 @@ impl Channel for QQChannel {
                                 reply_target: chat_id,
                                 content,
                                 channel: "qq".to_string(),
+                channel_alias: Some(self.alias.clone()),
                                 timestamp: std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()

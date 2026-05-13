@@ -49,6 +49,7 @@ impl Channel for CliChannel {
                 reply_target: "user".to_string(),
                 content: line,
                 channel: "cli".to_string(),
+                channel_alias: None,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -121,6 +122,7 @@ mod tests {
             reply_target: "user".into(),
             content: "hello".into(),
             channel: "cli".into(),
+            channel_alias: None,
             timestamp: 1_234_567_890,
             thread_ts: None,
             interruption_scope_id: None,
@@ -142,6 +144,7 @@ mod tests {
             reply_target: "s".into(),
             content: "c".into(),
             channel: "ch".into(),
+            channel_alias: None,
             timestamp: 0,
             thread_ts: None,
             interruption_scope_id: None,

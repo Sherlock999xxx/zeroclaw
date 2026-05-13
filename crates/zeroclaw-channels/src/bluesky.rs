@@ -249,6 +249,7 @@ impl BlueskyChannel {
             reply_target,
             content: text.to_string(),
             channel: "bluesky".to_string(),
+            channel_alias: None,
             timestamp,
             thread_ts: Some(notif.uri.clone()),
             interruption_scope_id: None,

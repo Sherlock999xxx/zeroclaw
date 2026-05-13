@@ -236,6 +236,7 @@ impl Channel for WebhookChannel {
                 reply_target,
                 content: payload.content,
                 channel: "webhook".to_string(),
+                channel_alias: None,
                 timestamp,
                 thread_ts: payload.thread_id,
                 interruption_scope_id: None,

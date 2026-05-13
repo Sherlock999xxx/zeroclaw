@@ -207,6 +207,7 @@ impl Channel for MochatChannel {
                                 reply_target: sender.to_string(),
                                 content: content.to_string(),
                                 channel: "mochat".to_string(),
+                                channel_alias: Some(self.alias.clone()),
                                 timestamp: std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()

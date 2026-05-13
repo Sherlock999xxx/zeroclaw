@@ -13058,13 +13058,12 @@ impl Config {
             for alias in config.skill_bundles.keys().cloned().collect::<Vec<_>>() {
                 if let Ok(dir) =
                     crate::skill_bundles::resolve_directory(&config, &install_root, &alias)
+                    && let Err(e) = std::fs::create_dir_all(&dir)
                 {
-                    if let Err(e) = std::fs::create_dir_all(&dir) {
-                        tracing::warn!(
-                            "skill-bundle '{alias}' directory creation failed at {}: {e}",
-                            dir.display(),
-                        );
-                    }
+                    tracing::warn!(
+                        "skill-bundle '{alias}' directory creation failed at {}: {e}",
+                        dir.display(),
+                    );
                 }
             }
 

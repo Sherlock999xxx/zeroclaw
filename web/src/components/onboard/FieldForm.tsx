@@ -565,7 +565,7 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(function FieldForm
         </h2>
       )}
 
-      {entries.length > 4 && (
+      {entries.length > 1 && (
         <input
           type="text"
           value={filter}

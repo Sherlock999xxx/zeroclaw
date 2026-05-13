@@ -3433,6 +3433,7 @@ mod tests {
             reply_target: "+1234567890".into(),
             content: "hello".into(),
             channel: "whatsapp".into(),
+            channel_alias: None,
             timestamp: 1,
             thread_ts: None,
             interruption_scope_id: None,

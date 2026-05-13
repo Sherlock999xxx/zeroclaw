@@ -297,6 +297,7 @@ impl Channel for TwitterChannel {
                                 reply_target,
                                 content: clean_text,
                                 channel: "twitter".to_string(),
+                                channel_alias: Some(self.alias.clone()),
                                 timestamp: std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()

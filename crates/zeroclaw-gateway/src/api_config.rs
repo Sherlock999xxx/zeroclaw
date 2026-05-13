@@ -926,13 +926,12 @@ pub async fn handle_map_key(
             let install_root = working.install_root_dir();
             if let Ok(dir) =
                 zeroclaw_config::skill_bundles::resolve_directory(&working, &install_root, &key)
+                && let Err(e) = tokio::fs::create_dir_all(&dir).await
             {
-                if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-                    tracing::warn!(
-                        "skill-bundle '{key}' directory creation failed at {}: {e}",
-                        dir.display(),
-                    );
-                }
+                tracing::warn!(
+                    "skill-bundle '{key}' directory creation failed at {}: {e}",
+                    dir.display(),
+                );
             }
         }
 

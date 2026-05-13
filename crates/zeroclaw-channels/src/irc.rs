@@ -602,6 +602,7 @@ impl Channel for IrcChannel {
                         reply_target,
                         content,
                         channel: "irc".to_string(),
+                        channel_alias: Some(self.alias.clone()),
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()

@@ -297,6 +297,7 @@ impl VoiceCallChannel {
             reply_target: from_number.to_string(),
             content: format!("[Voice Call] Incoming call from {from_number} (call_id: {call_id})"),
             channel: "voice_call".to_string(),
+            channel_alias: None,
             timestamp: chrono::Utc::now().timestamp().unsigned_abs(),
             thread_ts: Some(call_id.to_string()),
             interruption_scope_id: Some(call_id.to_string()),

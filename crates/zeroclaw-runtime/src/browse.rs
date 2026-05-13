@@ -100,8 +100,10 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("shared/skills/beta")).unwrap();
         std::fs::write(dir.path().join("shared/readme.txt"), b"hi").unwrap();
 
-        let mut cfg = Config::default();
-        cfg.config_path = dir.path().join("config.toml");
+        let cfg = Config {
+            config_path: dir.path().join("config.toml"),
+            ..Config::default()
+        };
         (dir, cfg)
     }
 

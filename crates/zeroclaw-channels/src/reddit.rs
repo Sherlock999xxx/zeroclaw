@@ -227,6 +227,7 @@ impl RedditChannel {
             reply_target,
             content: body.to_string(),
             channel: "reddit".to_string(),
+            channel_alias: None,
             timestamp,
             thread_ts: item.parent_id.clone(),
             interruption_scope_id: None,
