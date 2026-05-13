@@ -12596,6 +12596,26 @@ fn config_dir_creation_error(path: &Path) -> String {
 /// version key = V1).
 const SAVE_PRESERVE_KEYS: &[&str] = &["schema_version"];
 
+/// Insert a blank line before every `[section]` header that doesn't
+/// already have one, so the serialized TOML reads as discrete blocks
+/// instead of running every section header directly after the
+/// previous line (`toml::to_string_pretty` doesn't gap between a
+/// trailing scalar and the next section header).
+fn ensure_blank_line_before_sections(toml: &str) -> String {
+    let mut out = String::with_capacity(toml.len() + 64);
+    let mut prev_line_blank = true; // start of file counts as blank
+    for line in toml.lines() {
+        let is_section_header = line.starts_with('[');
+        if is_section_header && !prev_line_blank {
+            out.push('\n');
+        }
+        out.push_str(line);
+        out.push('\n');
+        prev_line_blank = line.trim().is_empty();
+    }
+    out
+}
+
 /// Walk `actual` and drop every key whose value matches the same
 /// key's value in `defaults`. Tables recurse; the recursion drops a
 /// sub-table when every one of its keys was itself dropped (i.e. the
@@ -13350,7 +13370,7 @@ impl Config {
             if !has_uri && !has_api_key && !has_model {
                 tracing::warn!(
                     model_provider = %profile_name,
-                    "model_providers.{profile_name} is empty (no uri / api_key / model). \
+                    "providers.models.{profile_name} is empty (no uri / api_key / model). \
                      Skipping at runtime; finish onboarding via the dashboard or `zeroclaw onboard` \
                      to make this model_provider usable.",
                 );
@@ -13361,10 +13381,10 @@ impl Config {
                 && !uri.is_empty()
             {
                 let parsed = reqwest::Url::parse(uri).with_context(|| {
-                    format!("model_providers.{profile_name}.uri is not a valid URL")
+                    format!("providers.models.{profile_name}.uri is not a valid URL")
                 })?;
                 if !matches!(parsed.scheme(), "http" | "https") {
-                    anyhow::bail!("model_providers.{profile_name}.uri must use http/https");
+                    anyhow::bail!("providers.models.{profile_name}.uri must use http/https");
                 }
             }
 
@@ -13373,25 +13393,25 @@ impl Config {
                 && normalize_wire_api(wire_api).is_none()
             {
                 anyhow::bail!(
-                    "model_providers.{profile_name}.wire_api must be one of: responses, chat_completions"
+                    "providers.models.{profile_name}.wire_api must be one of: responses, chat_completions"
                 );
             }
 
             if let Some(temp) = profile.temperature {
                 validate_temperature(temp).map_err(|e| {
-                    anyhow::anyhow!("model_providers.{profile_name}.temperature: {e}")
+                    anyhow::anyhow!("providers.models.{profile_name}.temperature: {e}")
                 })?;
             }
 
             for (key, value) in &profile.pricing {
                 if value.is_nan() {
                     anyhow::bail!(
-                        "model_providers.{profile_name}.pricing.{key}: value must not be NaN"
+                        "providers.models.{profile_name}.pricing.{key}: value must not be NaN"
                     );
                 }
                 if *value < 0.0 {
                     anyhow::bail!(
-                        "model_providers.{profile_name}.pricing.{key}: value must be >= 0.0 (got {value})"
+                        "providers.models.{profile_name}.pricing.{key}: value must be >= 0.0 (got {value})"
                     );
                 }
             }
@@ -14158,8 +14178,9 @@ impl Config {
             .and_then(|v| v.try_into().ok())
             .unwrap_or_default();
         prune_default_values(&mut new_table, &default_table);
-        let new_toml =
-            toml::to_string_pretty(&new_table).context("Failed to serialize pruned config")?;
+        let new_toml = ensure_blank_line_before_sections(
+            &toml::to_string_pretty(&new_table).context("Failed to serialize pruned config")?,
+        );
 
         // If an existing config file is present, sync the new values onto it
         // to preserve comments and formatting. Otherwise, use the fresh serialization.

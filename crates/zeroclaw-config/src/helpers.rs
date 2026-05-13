@@ -395,7 +395,7 @@ mod tests {
         // wins so `custom:https://example/v1` is preferred over `custom`.
         let keys = ["custom", "custom:https://example/v1"];
         let got = route_hashmap_path(
-            "model_providers.custom:https://example/v1.api-key",
+            "providers.models.custom:https://example/v1.api-key",
             "",
             "model_providers",
             "",

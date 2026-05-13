@@ -810,7 +810,7 @@ async fn model_providers(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags
             "default".to_string()
         } else {
             let existing_aliases: Vec<String> = cfg
-                .get_map_keys(&format!("model_providers.{picked}"))
+                .get_map_keys(&format!("providers.models.{picked}"))
                 .unwrap_or_default();
             if existing_aliases.is_empty() {
                 let Some(a) = prompt_alias_name(ui, "default").await? else {
@@ -856,7 +856,7 @@ async fn model_providers(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags
         // family endpoint resolution happens family-side rather than via
         // pre-populated entry fields.
         if let Some(base_url) = selected_base_url.as_deref() {
-            cfg.set_prop(&format!("model_providers.{picked}.{alias}.uri"), base_url)?;
+            cfg.set_prop(&format!("providers.models.{picked}.{alias}.uri"), base_url)?;
         }
 
         let display_name = entries
@@ -875,7 +875,7 @@ async fn model_providers(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags
         // Apply CLI-flag overrides up front, then skip those names in the
         // interactive pass so the user isn't re-prompted for what they already
         // passed on the command line.
-        let prefix = format!("model_providers.{picked}.{alias}");
+        let prefix = format!("providers.models.{picked}.{alias}");
         let api_key_path = format!("{prefix}.api-key");
         if let Some(api_key) = &flags.api_key {
             persist(cfg, &api_key_path, api_key).await?;
@@ -969,7 +969,33 @@ async fn offer_advanced_settings(
     // Excluded: `model` (already prompted via prompt_model) and `api-key`
     // (explicit auth phase).
     let excludes: Vec<&str> = vec!["model", "api-key"];
-    let defaults: Vec<FieldDefault> = Vec::new();
+
+    // Surface per-field defaults as ghost-text placeholders so the
+    // operator sees "this is what we'll use if you hit Enter" instead
+    // of an empty box. URI default comes from the family's
+    // `FamilyEndpoint::endpoint_uri()` impl; temperature/timeout have
+    // hardcoded sensible values that match the runtime fallbacks in
+    // the provider factory.
+    let mut defaults: Vec<FieldDefault> = Vec::new();
+    if let Some((type_k, alias_k)) = prefix
+        .strip_prefix("providers.models.")
+        .and_then(|rest| rest.split_once('.'))
+        && let Some(uri) = cfg.providers.models.resolved_endpoint_uri(type_k, alias_k)
+    {
+        defaults.push(FieldDefault {
+            path: format!("{prefix}.uri"),
+            display: uri.to_string(),
+        });
+    }
+    defaults.push(FieldDefault {
+        path: format!("{prefix}.temperature"),
+        display: "0.7".to_string(),
+    });
+    defaults.push(FieldDefault {
+        path: format!("{prefix}.timeout-secs"),
+        display: "120".to_string(),
+    });
+
     prompt_fields_under(cfg, ui, prefix, &excludes, &defaults).await
 }
 
@@ -983,8 +1009,8 @@ async fn prompt_model(cfg: &mut Config, ui: &mut dyn OnboardUi, prefix: &str) ->
     let model_path = format!("{prefix}.model");
     let current = cfg.get_prop(&model_path).unwrap_or_default();
     let is_set = !current.is_empty() && current != "<unset>";
-    // Extract type and alias from "model_providers.<type>.<alias>".
-    let (model_provider, profile) = match prefix.strip_prefix("model_providers.") {
+    // Extract type and alias from "providers.models.<type>.<alias>".
+    let (model_provider, profile) = match prefix.strip_prefix("providers.models.") {
         Some(rest) => {
             if let Some((type_k, alias_k)) = rest.split_once('.') {
                 let profile = cfg.providers.models.find(type_k, alias_k);
@@ -1695,7 +1721,7 @@ fn available_channel_aliases(cfg: &Config) -> Vec<String> {
 fn available_model_provider_aliases(cfg: &Config) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for f in cfg.prop_fields() {
-        if let Some(rest) = f.name.strip_prefix("model_providers.") {
+        if let Some(rest) = f.name.strip_prefix("providers.models.") {
             let mut parts = rest.splitn(3, '.');
             if let (Some(ty), Some(alias), Some(_leaf)) = (parts.next(), parts.next(), parts.next())
             {
@@ -2067,7 +2093,7 @@ mod tests {
         entry.uri = Some(base_url);
         let mut ui = QuickUi::new().with("Model", "gateway-large");
 
-        prompt_model(&mut cfg, &mut ui, "model_providers.custom.default")
+        prompt_model(&mut cfg, &mut ui, "providers.models.custom.default")
             .await
             .unwrap();
 
@@ -2357,7 +2383,7 @@ mod tests {
             .insert("work".into(), AnthropicModelProviderConfig::default());
 
         let mut ui = QuickUi::new().with("Model", "claude-opus-4-7");
-        prompt_model(&mut cfg, &mut ui, "model_providers.anthropic.work")
+        prompt_model(&mut cfg, &mut ui, "providers.models.anthropic.work")
             .await
             .unwrap();
 
@@ -2524,7 +2550,7 @@ mod tests {
         // no insert needed to access it. The test below verifies that a dotted
         // alias key is rejected by `create_map_key`.
         // Now try to add an alias with a dot in the name.
-        let result = cfg.create_map_key("model_providers.anthropic", "my.alias");
+        let result = cfg.create_map_key("providers.models.anthropic", "my.alias");
         assert!(
             result.is_err(),
             "dot in double-nested alias must be rejected"
@@ -2574,7 +2600,7 @@ mod tests {
             .insert("work".into(), AnthropicModelProviderConfig::default());
 
         let mut keys = cfg
-            .get_map_keys("model_providers.anthropic")
+            .get_map_keys("providers.models.anthropic")
             .expect("anthropic has two aliases — get_map_keys must return Some");
         keys.sort();
         assert_eq!(keys, vec!["default", "work"]);

@@ -1157,7 +1157,7 @@ mod tests {
         // operator-named aliases. Adding an alias on any family flips the
         // picker badge to "configured" for that family.
         let mut cfg = empty_cfg();
-        cfg.create_map_key("model_providers.anthropic", "default")
+        cfg.create_map_key("providers.models.anthropic", "default")
             .expect("create_map_key");
         let items = providers_picker(&cfg);
         let anthropic = items.iter().find(|i| i.key == "anthropic").unwrap();
