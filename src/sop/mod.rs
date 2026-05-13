@@ -4,7 +4,7 @@ pub use zeroclaw_runtime::sop::*;
 use anyhow::Result;
 
 pub fn handle_command(command: crate::SopCommands, config: &crate::config::Config) -> Result<()> {
-    let workspace_dir = &config.workspace_dir;
+    let workspace_dir = &config.data_dir;
     let default_mode = parse_execution_mode(&config.sop.default_execution_mode);
     let sops = load_sops(workspace_dir, config.sop.sops_dir.as_deref(), default_mode);
 

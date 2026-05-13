@@ -4319,7 +4319,7 @@ fn build_channel_by_id(
                     .with_streaming(tg.stream_mode, tg.draft_update_interval_ms)
                     .with_transcription(config.transcription.clone())
                     .with_tts(&config)
-                    .with_workspace_dir(config.workspace_dir.clone())
+                    .with_workspace_dir(config.data_dir.clone())
                     .with_approval_timeout_secs(tg.approval_timeout_secs),
             ))
         }
@@ -4345,7 +4345,7 @@ fn build_channel_by_id(
                     dc.mention_only,
                 )
                 .with_channel_ids(dc.channel_ids.clone())
-                .with_workspace_dir(config.workspace_dir.clone())
+                .with_workspace_dir(config.data_dir.clone())
                 .with_streaming(
                     dc.stream_mode,
                     dc.draft_update_interval_ms,
@@ -4376,7 +4376,7 @@ fn build_channel_by_id(
                     alias,
                     peer_resolver,
                 )
-                .with_workspace_dir(config.workspace_dir.clone())
+                .with_workspace_dir(config.data_dir.clone())
                 .with_markdown_blocks(sl.use_markdown_blocks)
                 .with_transcription(config.transcription.clone())
                 .with_streaming(sl.stream_drafts, sl.draft_update_interval_ms)
@@ -4456,7 +4456,7 @@ fn build_channel_by_id(
                 Ok(Arc::new(
                     MatrixChannel::new(mx.clone(), alias, peer_resolver, state_dir)?
                         .with_transcription(config.transcription.clone())
-                        .with_workspace_dir(config.workspace_dir.clone()),
+                        .with_workspace_dir(config.data_dir.clone()),
                 ))
             }
             #[cfg(not(feature = "channel-matrix"))]
@@ -4592,7 +4592,7 @@ fn build_channel_by_id(
                     wc.state_dir.as_ref().map(std::path::PathBuf::from),
                 )?
                 .with_persistence(config_arc.clone())
-                .with_workspace_dir(config.workspace_dir.clone()),
+                .with_workspace_dir(config.data_dir.clone()),
             ))
         }
         #[cfg(not(feature = "channel-wechat"))]
@@ -4920,7 +4920,7 @@ fn collect_configured_channels(
                 .with_streaming(tg.stream_mode, tg.draft_update_interval_ms)
                 .with_transcription(config.transcription.clone())
                 .with_tts(&config)
-                .with_workspace_dir(config.workspace_dir.clone())
+                .with_workspace_dir(config.data_dir.clone())
                 .with_proxy_url(tg.proxy_url.clone())
                 .with_tool_command_specs(tool_specs.to_vec())
                 .with_approval_timeout_secs(tg.approval_timeout_secs),
@@ -4949,7 +4949,7 @@ fn collect_configured_channels(
             dc.mention_only,
         )
         .with_channel_ids(dc.channel_ids.clone())
-        .with_workspace_dir(config.workspace_dir.clone())
+        .with_workspace_dir(config.data_dir.clone())
         .with_streaming(
             dc.stream_mode,
             dc.draft_update_interval_ms,
@@ -4960,7 +4960,7 @@ fn collect_configured_channels(
         .with_stall_timeout(dc.stall_timeout_secs)
         .with_approval_timeout_secs(dc.approval_timeout_secs);
         if dc.archive {
-            match zeroclaw_memory::SqliteMemory::new_named(&config.workspace_dir, "discord") {
+            match zeroclaw_memory::SqliteMemory::new_named(&config.data_dir, "discord") {
                 Ok(mem) => {
                     discord_ch = discord_ch.with_archive_memory(std::sync::Arc::new(mem));
                 }
@@ -5000,7 +5000,7 @@ fn collect_configured_channels(
                 .with_thread_replies(sl.thread_replies.unwrap_or(true))
                 .with_group_reply_policy(sl.mention_only, Vec::new())
                 .with_strict_mention_in_thread(sl.strict_mention_in_thread)
-                .with_workspace_dir(config.workspace_dir.clone())
+                .with_workspace_dir(config.data_dir.clone())
                 .with_markdown_blocks(sl.use_markdown_blocks)
                 .with_proxy_url(sl.proxy_url.clone())
                 .with_transcription(config.transcription.clone())
@@ -5084,7 +5084,7 @@ fn collect_configured_channels(
             Ok(channel) => {
                 let channel = channel
                     .with_transcription(config.transcription.clone())
-                    .with_workspace_dir(config.workspace_dir.clone());
+                    .with_workspace_dir(config.data_dir.clone());
                 channels.push(ConfiguredChannel {
                     display_name: "Matrix",
                     channel: Arc::new(channel),
@@ -5483,7 +5483,7 @@ fn collect_configured_channels(
                     alias.clone(),
                     peer_resolver,
                 )
-                .with_workspace_dir(config.workspace_dir.clone())
+                .with_workspace_dir(config.data_dir.clone())
                 .with_proxy_url(qq.proxy_url.clone()),
             ),
         });
@@ -5583,7 +5583,7 @@ fn collect_configured_channels(
                     channel: Arc::new(
                         channel
                             .with_persistence(config_arc.clone())
-                            .with_workspace_dir(config.workspace_dir.clone()),
+                            .with_workspace_dir(config.data_dir.clone()),
                     ),
                 });
             }
@@ -5959,13 +5959,16 @@ pub async fn start_channels(
     let temperature = agent_provider_entry
         .and_then(|e| e.temperature)
         .unwrap_or(0.7);
-    let mem: Arc<dyn Memory> = Arc::from(zeroclaw_memory::create_memory_with_storage_and_routes(
-        &config.memory,
-        &config.embedding_routes,
-        config.resolve_active_storage(),
-        &config.workspace_dir,
+    // Per-agent memory dispatch: SQL/Qdrant backends share a single
+    // install-wide instance and carry per-agent attribution at the
+    // row level; markdown backends get a per-agent MEMORY.md inside
+    // `<install>/agents/<alias>/workspace/`.
+    let mem: Arc<dyn Memory> = zeroclaw_memory::create_memory_for_agent(
+        &config,
+        &agent_alias,
         agent_provider_entry.and_then(|e| e.api_key.as_deref()),
-    )?);
+    )
+    .await?;
     let (composio_key, composio_entity_id) = if config.composio.enabled {
         (
             config.composio.api_key.as_deref(),
@@ -5975,7 +5978,7 @@ pub async fn start_channels(
         (None, None)
     };
     // Build system prompt from workspace identity files + skills
-    let workspace = config.workspace_dir.clone();
+    let workspace = config.data_dir.clone();
     let (
         mut built_tools,
         delegate_handle_ch,
@@ -6193,7 +6196,7 @@ pub async fn start_channels(
         &model,
         &tool_descs,
         &skills,
-        Some(&config.identity),
+        Some(&agent.identity),
         bootstrap_max_chars,
         Some(&risk_profile),
         native_tools,
@@ -6404,7 +6407,7 @@ pub async fn start_channels(
         api_url: agent_provider_entry.and_then(|e| e.uri.clone()),
         reliability: Arc::new(config.reliability.clone()),
         provider_runtime_options,
-        workspace_dir: Arc::new(config.workspace_dir.clone()),
+        workspace_dir: Arc::new(config.data_dir.clone()),
         message_timeout_secs,
         interrupt_on_new_message: InterruptOnNewMessageConfig {
             telegram: interrupt_on_new_message,
@@ -6444,7 +6447,7 @@ pub async fn start_channels(
         show_tool_calls: config.channels.show_tool_calls,
         session_store: if config.channels.session_persistence {
             match zeroclaw_infra::make_session_backend(
-                &config.workspace_dir,
+                &config.data_dir,
                 &config.channels.session_backend,
             ) {
                 Ok(backend) => {
@@ -6466,7 +6469,7 @@ pub async fn start_channels(
         activated_tools: ch_activated_handle,
         cost_tracking: zeroclaw_runtime::cost::CostTracker::get_or_init_global(
             config.cost.clone(),
-            &config.workspace_dir,
+            &config.data_dir,
         )
         .map(|tracker| {
             let pricing: zeroclaw_runtime::agent::cost::ModelProviderPricing = config
@@ -6637,7 +6640,7 @@ pub async fn deliver_announcement(
                 dc.mention_only,
             )
             .with_channel_ids(dc.channel_ids.clone())
-            .with_workspace_dir(config.workspace_dir.clone());
+            .with_workspace_dir(config.data_dir.clone());
             zeroclaw_api::channel::Channel::send(&ch, &SendMessage::new(&safe_output, target))
                 .await?;
         }
@@ -6658,7 +6661,7 @@ pub async fn deliver_announcement(
                 "default",
                 peer_resolver,
             )
-            .with_workspace_dir(config.workspace_dir.clone());
+            .with_workspace_dir(config.data_dir.clone());
             zeroclaw_api::channel::Channel::send(&ch, &SendMessage::new(&safe_output, target))
                 .await?;
         }
@@ -6705,7 +6708,7 @@ pub async fn deliver_announcement(
                 wc.cdn_base_url.clone(),
                 wc.state_dir.as_ref().map(std::path::PathBuf::from),
             )?
-            .with_workspace_dir(config.workspace_dir.clone());
+            .with_workspace_dir(config.data_dir.clone());
             zeroclaw_api::channel::Channel::send(&ch, &SendMessage::new(&safe_output, target))
                 .await?;
         }
@@ -11595,7 +11598,7 @@ BTC is currently around $65,000 based on latest tool output."#
     async fn process_channel_message_refreshes_available_skills_after_new_session() {
         let workspace = make_workspace();
         let mut config = Config {
-            workspace_dir: workspace.path().to_path_buf(),
+            data_dir: workspace.path().to_path_buf(),
             ..Default::default()
         };
         config.skills.open_skills_enabled = false;
@@ -11604,12 +11607,13 @@ BTC is currently around $65,000 based on latest tool output."#
             zeroclaw_runtime::skills::load_skills_with_config(workspace.path(), &config);
         assert!(initial_skills.is_empty());
 
+        let default_identity = zeroclaw_config::schema::IdentityConfig::default();
         let initial_system_prompt = build_system_prompt_with_mode(
             workspace.path(),
             "test-model",
             &[],
             &initial_skills,
-            Some(&config.identity),
+            Some(&default_identity),
             None,
             false,
             config.skills.prompt_injection_mode,
@@ -11651,7 +11655,7 @@ BTC is currently around $65,000 based on latest tool output."#
             api_url: None,
             reliability: Arc::new(zeroclaw_config::schema::ReliabilityConfig::default()),
             provider_runtime_options: zeroclaw_providers::ModelProviderRuntimeOptions::default(),
-            workspace_dir: Arc::new(config.workspace_dir.clone()),
+            workspace_dir: Arc::new(config.data_dir.clone()),
             prompt_config: Arc::new(config.clone()),
             message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             interrupt_on_new_message: InterruptOnNewMessageConfig {

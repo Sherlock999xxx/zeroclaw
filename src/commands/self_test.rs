@@ -35,10 +35,10 @@ pub async fn run_quick(config: &crate::config::Config) -> Result<Vec<CheckResult
     results.push(check_config(config));
 
     // 2. Workspace directory is writable
-    results.push(check_workspace(&config.workspace_dir).await);
+    results.push(check_workspace(&config.data_dir).await);
 
     // 3. SQLite memory backend opens
-    results.push(check_sqlite(&config.workspace_dir));
+    results.push(check_sqlite(&config.data_dir));
 
     // 4. ModelProvider registry has entries
     results.push(check_model_provider_registry());
@@ -294,7 +294,7 @@ async fn check_gateway_health(config: &crate::config::Config) -> CheckResult {
 async fn check_memory_roundtrip(config: &crate::config::Config) -> CheckResult {
     let mem = match crate::memory::create_memory(
         &config.memory,
-        &config.workspace_dir,
+        &config.data_dir,
         config
             .first_model_provider()
             .and_then(|e| e.api_key.as_deref()),

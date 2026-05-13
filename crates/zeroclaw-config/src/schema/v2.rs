@@ -328,6 +328,11 @@ impl V2Config {
             passthrough.insert("agents".to_string(), toml::Value::Table(new_agents));
         }
 
+        // V3 demoted [identity] to per-agent. Lift the V2 top-level block
+        // into each declared [agents.<alias>.identity]. Runs after the
+        // agents fold so synthesized and pre-existing agents both get it.
+        lift_top_level_identity_into_agents(&mut passthrough);
+
         // V3 requires heartbeat.agent to be set when enabled=true.
         // V2 fell through to the implicit single agent; point this at
         // the synthesized (or first preserved) agent.
@@ -1776,6 +1781,55 @@ fn ensure_profile_entry(passthrough: &mut toml::Table, section: &str, alias: &st
             .entry(alias.to_string())
             .or_insert_with(|| toml::Value::Table(toml::Table::new()));
     }
+}
+
+/// Lift the top-level `[identity]` table into each `[agents.<alias>.identity]`
+/// during V2 → V3. V3 demoted identity to a per-agent block; leaving the
+/// V2 top-level key intact would surface as an unknown field on the V3
+/// deserializer. Operators who already wrote a per-agent identity block
+/// keep it (no clobber). If no agents are present after the fold, the
+/// top-level block is dropped with a warn (lossy but intentional — V3
+/// has no other slot for it).
+fn lift_top_level_identity_into_agents(passthrough: &mut toml::Table) {
+    let Some(identity_value) = passthrough.remove("identity") else {
+        return;
+    };
+    let Some(agents_value) = passthrough.get_mut("agents") else {
+        tracing::warn!(
+            target: "migration",
+            "[identity] dropped during V2->V3 (no [agents] table to attach to)"
+        );
+        return;
+    };
+    let Some(agents_table) = agents_value.as_table_mut() else {
+        return;
+    };
+    if agents_table.is_empty() {
+        tracing::warn!(
+            target: "migration",
+            "[identity] dropped during V2->V3 (agents map empty after fold)"
+        );
+        return;
+    }
+    let aliases: Vec<String> = agents_table.keys().cloned().collect();
+    let mut folded = 0usize;
+    for alias in &aliases {
+        let Some(agent_table) = agents_table
+            .get_mut(alias)
+            .and_then(toml::Value::as_table_mut)
+        else {
+            continue;
+        };
+        if agent_table.contains_key("identity") {
+            continue;
+        }
+        agent_table.insert("identity".to_string(), identity_value.clone());
+        folded += 1;
+    }
+    tracing::info!(
+        target: "migration",
+        "[identity] lifted into [agents.<alias>.identity] ({folded} agent(s))",
+    );
 }
 
 /// If no agents were declared in V2 input but the V2→V3 fold synthesized at

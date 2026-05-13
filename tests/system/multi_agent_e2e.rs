@@ -8,9 +8,12 @@
 
 use tempfile::TempDir;
 
-/// Filesystem migration: a legacy `<install>/workspace/` gets moved
-/// into `<install>/agents/default/workspace/` on first boot, with a
-/// timestamped backup and idempotent re-run semantics.
+/// Filesystem migration: a legacy `<install>/workspace/` is split on
+/// first boot — shared databases (`memory/`, `sessions/`, `state/`)
+/// move to `<install>/data/`, per-agent plaintext (MEMORY.md,
+/// IDENTITY.md, SOUL.md, anything else) moves to
+/// `<install>/agents/default/workspace/`. Timestamped backup retains
+/// the legacy tree; re-run on a fresh-cleaned install is a no-op.
 #[test]
 fn legacy_install_upgrades_cleanly_with_backup() {
     let tmp = TempDir::new().unwrap();
@@ -25,15 +28,18 @@ fn legacy_install_upgrades_cleanly_with_backup() {
     )
     .unwrap();
     std::fs::write(legacy.join("AGENTS.md"), "legacy identity").unwrap();
-    let legacy_subdir = legacy.join("memory");
-    std::fs::create_dir_all(&legacy_subdir).unwrap();
-    std::fs::write(legacy_subdir.join("2026-05-01.md"), "daily log entry").unwrap();
+    // Shared-database subdir: this should land under <install>/data/,
+    // not under the per-agent workspace.
+    let legacy_db = legacy.join("memory");
+    std::fs::create_dir_all(&legacy_db).unwrap();
+    std::fs::write(legacy_db.join("brain.db"), b"sqlite-bytes").unwrap();
 
     let ran = zeroclaw_config::migration::migrate_legacy_workspace_to_default_agent(install_root)
         .expect("migration must succeed on populated legacy install");
-    assert!(ran, "populated legacy install → migration runs");
+    assert!(ran, "populated legacy install → split migration runs");
 
-    // Legacy dir is gone; new path is populated with the same data.
+    // Legacy dir is gone; both target dirs are populated with the right
+    // pieces of the legacy tree.
     assert!(!legacy.exists(), "legacy workspace must move out");
     let new_default = install_root
         .join("agents")
@@ -42,17 +48,23 @@ fn legacy_install_upgrades_cleanly_with_backup() {
     assert_eq!(
         std::fs::read_to_string(new_default.join("MEMORY.md")).unwrap(),
         "# Long-Term Memory\n\nlegacy data",
-        "MEMORY.md content must survive the move"
+        "MEMORY.md must land in the per-agent workspace"
     );
     assert_eq!(
         std::fs::read_to_string(new_default.join("AGENTS.md")).unwrap(),
         "legacy identity",
-        "AGENTS.md content must survive the move"
+        "AGENTS.md must land in the per-agent workspace"
     );
+
+    let data_target = install_root.join("data");
     assert_eq!(
-        std::fs::read_to_string(new_default.join("memory").join("2026-05-01.md")).unwrap(),
-        "daily log entry",
-        "daily-log subdir must move with the rest"
+        std::fs::read(data_target.join("memory").join("brain.db")).unwrap(),
+        b"sqlite-bytes",
+        "shared databases must land under <install>/data/"
+    );
+    assert!(
+        !new_default.join("memory").exists(),
+        "shared-db subdir must NOT land in the per-agent workspace"
     );
 
     // A timestamped backup retains the legacy contents — operator
@@ -72,6 +84,11 @@ fn legacy_install_upgrades_cleanly_with_backup() {
         std::fs::read_to_string(backup_legacy.join("MEMORY.md")).unwrap(),
         "# Long-Term Memory\n\nlegacy data",
         "backup must retain pre-migration contents"
+    );
+    assert_eq!(
+        std::fs::read(backup_legacy.join("memory").join("brain.db")).unwrap(),
+        b"sqlite-bytes",
+        "backup must retain the shared-db subdir too"
     );
 
     // Idempotent re-run: legacy gone → no-op (returns false).
@@ -96,11 +113,11 @@ async fn two_sqlite_agents_on_one_install_have_isolated_memory() {
     let tmp = TempDir::new().unwrap();
     let install_root = tmp.path();
     let mut cfg = Config {
-        workspace_dir: install_root.join("workspace"),
+        data_dir: install_root.join("data"),
         config_path: install_root.join("config.toml"),
         ..Config::default()
     };
-    std::fs::create_dir_all(&cfg.workspace_dir).unwrap();
+    std::fs::create_dir_all(&cfg.data_dir).unwrap();
     cfg.risk_profiles
         .insert("default".into(), RiskProfileConfig::default());
     cfg.model_providers.openrouter.insert(

@@ -74,9 +74,13 @@ static RUNTIME_PROXY_CLIENT_CACHE: OnceLock<RwLock<HashMap<String, reqwest::Clie
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct Config {
-    /// Workspace directory - computed from home, not serialized
+    /// Shared instance data directory (databases, hygiene state, cost
+    /// records, daemon state files). Computed from `ZEROCLAW_CONFIG_DIR`
+    /// / `ZEROCLAW_DATA_DIR` / `ZEROCLAW_WORKSPACE` (deprecated) at
+    /// load time, not serialized. Per-agent identity + markdown lives
+    /// at `agent_workspace_dir(&alias)`, not here.
     #[serde(skip)]
-    pub workspace_dir: PathBuf,
+    pub data_dir: PathBuf,
     /// Path to config.toml - computed from home, not serialized
     #[serde(skip)]
     pub config_path: PathBuf,
@@ -345,11 +349,6 @@ pub struct Config {
     #[serde(default)]
     #[nested]
     pub proxy: ProxyConfig,
-
-    /// Identity format configuration: OpenClaw or AIEOS (`[identity]`).
-    #[serde(default)]
-    #[nested]
-    pub identity: IdentityConfig,
 
     /// Cost tracking and budget enforcement configuration (`[cost]`).
     #[serde(default)]
@@ -2859,6 +2858,15 @@ pub struct AliasedAgentConfig {
     #[serde(default)]
     #[nested]
     pub memory: crate::multi_agent::AgentMemoryConfig,
+
+    /// Per-agent identity format (`[agents.<alias>.identity]`). Each
+    /// agent renders its own IDENTITY.md / SOUL.md inside its
+    /// per-agent workspace; this block selects the format (OpenClaw or
+    /// AIEOS) and optional inline/file source for the agent's identity
+    /// document.
+    #[serde(default)]
+    #[nested]
+    pub identity: IdentityConfig,
 }
 
 fn default_agent_compact_context() -> bool {
@@ -2899,6 +2907,7 @@ impl Default for AliasedAgentConfig {
             tool_receipts: ToolReceiptsConfig::default(),
             workspace: crate::multi_agent::AgentWorkspaceConfig::default(),
             memory: crate::multi_agent::AgentMemoryConfig::default(),
+            identity: IdentityConfig::default(),
         }
     }
 }
@@ -3036,15 +3045,13 @@ impl Config {
     /// (the directory containing `config.toml`).
     ///
     /// Per-agent workspaces live under
-    /// `<install>/agents/<alias>/workspace/`; the legacy
-    /// `<install>/workspace/` is migrated into the default agent's
-    /// slot on first boot. Per-agent code paths (identity-file load,
-    /// `SecurityPolicy::for_agent`, the memory factory) consult this
-    /// method directly. `config.workspace_dir` points at the
-    /// default agent's per-agent workspace (the same path this method
-    /// returns for `"default"`) so legacy install-wide callers that
-    /// have not yet migrated to `agent_workspace_dir(alias)` read the
-    /// live agent workspace rather than an orphaned legacy path.
+    /// `<install>/agents/<alias>/workspace/` and hold the agent's
+    /// markdown memory (MEMORY.md), identity files (IDENTITY.md,
+    /// SOUL.md), and any other per-agent plaintext state. Shared
+    /// databases (SQLite memory, sessions, cost records) live under
+    /// `config.data_dir` instead and partition by agent at the row
+    /// level. Per-agent overrides via `[agents.<alias>.workspace.path]`
+    /// pin an arbitrary filesystem path (e.g. a different mount).
     #[must_use]
     pub fn agent_workspace_dir(&self, agent_alias: &str) -> std::path::PathBuf {
         if let Some(cfg) = self.agents.get(agent_alias)
@@ -12283,7 +12290,7 @@ impl Default for Config {
         let zeroclaw_dir = home.join(".zeroclaw");
 
         Self {
-            workspace_dir: zeroclaw_dir.join("workspace"),
+            data_dir: zeroclaw_dir.join("data"),
             config_path: zeroclaw_dir.join("config.toml"),
             env_overridden_paths: std::collections::HashSet::new(),
             pre_override_snapshots: std::collections::HashMap::new(),
@@ -12329,7 +12336,6 @@ impl Default for Config {
             project_intel: ProjectIntelConfig::default(),
             google_workspace: GoogleWorkspaceConfig::default(),
             proxy: ProxyConfig::default(),
-            identity: IdentityConfig::default(),
             cost: CostConfig::default(),
             peripherals: PeripheralsConfig::default(),
             delegate: DelegateToolConfig::default(),
@@ -12369,15 +12375,13 @@ impl Default for Config {
     }
 }
 
-fn default_config_and_workspace_dirs() -> Result<(PathBuf, PathBuf)> {
+fn default_config_and_data_dirs() -> Result<(PathBuf, PathBuf)> {
     let config_dir = default_config_dir()?;
-    // The second value is the legacy single-workspace path. It is
-    // input to the V3 filesystem migration (which moves its contents
-    // into `<install>/agents/default/workspace/`) and to the
-    // `resolve_runtime_dirs_for_onboarding` API. After
-    // `Config::load_or_init` completes, `config.workspace_dir` points
-    // at the per-agent default-agent workspace, not this legacy path.
-    Ok((config_dir.clone(), config_dir.join("workspace")))
+    // The second value is the shared instance data directory
+    // (databases + state files). Per-agent identity + markdown lives
+    // at `<config-dir>/agents/<alias>/workspace/`, resolved separately
+    // via `Config::agent_workspace_dir`.
+    Ok((config_dir.clone(), config_dir.join("data")))
 }
 
 fn default_config_dir() -> Result<PathBuf> {
@@ -12420,52 +12424,49 @@ fn default_path_under_config_dir(relative: &str) -> String {
     }
 }
 
-pub fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf, PathBuf) {
-    let workspace_config_dir = workspace_dir.to_path_buf();
-    if workspace_config_dir.join("config.toml").exists() {
-        return (
-            workspace_config_dir.clone(),
-            workspace_config_dir.join("workspace"),
-        );
+pub fn resolve_config_dir_for_data(data_dir: &Path) -> (PathBuf, PathBuf) {
+    let data_config_dir = data_dir.to_path_buf();
+    if data_config_dir.join("config.toml").exists() {
+        return (data_config_dir.clone(), data_config_dir.join("data"));
     }
 
-    let legacy_config_dir = workspace_dir
-        .parent()
-        .map(|parent| parent.join(".zeroclaw"));
+    let legacy_config_dir = data_dir.parent().map(|parent| parent.join(".zeroclaw"));
     if let Some(legacy_dir) = legacy_config_dir {
         if legacy_dir.join("config.toml").exists() {
-            return (legacy_dir, workspace_config_dir);
+            return (legacy_dir, data_config_dir);
         }
 
-        if workspace_dir
-            .file_name()
-            .is_some_and(|name| name == std::ffi::OsStr::new("workspace"))
-        {
-            return (legacy_dir, workspace_config_dir);
+        // Accept either the new "data" suffix or the legacy "workspace"
+        // suffix; the V2->V3 filesystem migration renames the on-disk
+        // dir but operator-set env-var paths from before the rename
+        // still resolve correctly.
+        if data_dir.file_name().is_some_and(|name| {
+            name == std::ffi::OsStr::new("data") || name == std::ffi::OsStr::new("workspace")
+        }) {
+            return (legacy_dir, data_config_dir);
         }
     }
 
-    (
-        workspace_config_dir.clone(),
-        workspace_config_dir.join("workspace"),
-    )
+    (data_config_dir.clone(), data_config_dir.join("data"))
 }
 
-/// Resolve the current runtime config/workspace directories for onboarding flows.
+/// Resolve the current runtime config/data directories for onboarding flows.
 ///
 /// This mirrors the same precedence used by `Config::load_or_init()`:
-/// `ZEROCLAW_CONFIG_DIR` > `ZEROCLAW_WORKSPACE` > active workspace marker > defaults.
+/// `ZEROCLAW_CONFIG_DIR` > `ZEROCLAW_DATA_DIR` > `ZEROCLAW_WORKSPACE`
+/// (deprecated) > defaults.
 pub async fn resolve_runtime_dirs_for_onboarding() -> Result<(PathBuf, PathBuf)> {
-    let (default_zeroclaw_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
-    let (config_dir, workspace_dir, _) =
-        resolve_runtime_config_dirs(&default_zeroclaw_dir, &default_workspace_dir).await?;
-    Ok((config_dir, workspace_dir))
+    let (default_zeroclaw_dir, default_data_dir) = default_config_and_data_dirs()?;
+    let (config_dir, data_dir, _) =
+        resolve_runtime_config_dirs(&default_zeroclaw_dir, &default_data_dir).await?;
+    Ok((config_dir, data_dir))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ConfigResolutionSource {
     EnvConfigDir,
-    EnvWorkspace,
+    EnvDataDir,
+    EnvWorkspaceLegacy,
     DefaultConfigDir,
 }
 
@@ -12473,7 +12474,8 @@ impl ConfigResolutionSource {
     const fn as_str(self) -> &'static str {
         match self {
             Self::EnvConfigDir => "ZEROCLAW_CONFIG_DIR",
-            Self::EnvWorkspace => "ZEROCLAW_WORKSPACE",
+            Self::EnvDataDir => "ZEROCLAW_DATA_DIR",
+            Self::EnvWorkspaceLegacy => "ZEROCLAW_WORKSPACE",
             Self::DefaultConfigDir => "default",
         }
     }
@@ -12510,35 +12512,83 @@ fn expand_tilde_path(path: &str) -> PathBuf {
 
 async fn resolve_runtime_config_dirs(
     default_zeroclaw_dir: &Path,
-    default_workspace_dir: &Path,
+    default_data_dir: &Path,
 ) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
     if let Ok(custom_config_dir) = std::env::var("ZEROCLAW_CONFIG_DIR") {
         let custom_config_dir = custom_config_dir.trim();
         if !custom_config_dir.is_empty() {
+            // If the operator ALSO set ZEROCLAW_DATA_DIR or
+            // ZEROCLAW_WORKSPACE, CONFIG_DIR wins; surface the
+            // collision so they know which one took effect.
+            if std::env::var("ZEROCLAW_DATA_DIR")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .is_some()
+            {
+                tracing::warn!(
+                    "ZEROCLAW_CONFIG_DIR is set; ZEROCLAW_DATA_DIR is ignored \
+                     (CONFIG_DIR pins both the config directory and the data \
+                     directory under it)."
+                );
+            }
+            if std::env::var("ZEROCLAW_WORKSPACE")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .is_some()
+            {
+                tracing::warn!(
+                    "ZEROCLAW_CONFIG_DIR is set; ZEROCLAW_WORKSPACE (deprecated) \
+                     is ignored. ZEROCLAW_WORKSPACE will be removed in a future \
+                     release; switch any remaining references to ZEROCLAW_DATA_DIR."
+                );
+            }
             let zeroclaw_dir = expand_tilde_path(custom_config_dir);
             return Ok((
                 zeroclaw_dir.clone(),
-                zeroclaw_dir.join("workspace"),
+                zeroclaw_dir.join("data"),
                 ConfigResolutionSource::EnvConfigDir,
             ));
         }
     }
 
+    if let Ok(custom_data) = std::env::var("ZEROCLAW_DATA_DIR")
+        && !custom_data.trim().is_empty()
+    {
+        if std::env::var("ZEROCLAW_WORKSPACE")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .is_some()
+        {
+            tracing::warn!(
+                "ZEROCLAW_DATA_DIR and ZEROCLAW_WORKSPACE are both set; \
+                 ZEROCLAW_WORKSPACE (deprecated) is ignored. \
+                 ZEROCLAW_WORKSPACE will be removed in a future release."
+            );
+        }
+        let expanded = expand_tilde_path(&custom_data);
+        let (zeroclaw_dir, data_dir) = resolve_config_dir_for_data(&expanded);
+        return Ok((zeroclaw_dir, data_dir, ConfigResolutionSource::EnvDataDir));
+    }
+
     if let Ok(custom_workspace) = std::env::var("ZEROCLAW_WORKSPACE")
         && !custom_workspace.is_empty()
     {
+        tracing::warn!(
+            "ZEROCLAW_WORKSPACE is deprecated; use ZEROCLAW_DATA_DIR instead. \
+             ZEROCLAW_WORKSPACE will be removed in a future release."
+        );
         let expanded = expand_tilde_path(&custom_workspace);
-        let (zeroclaw_dir, workspace_dir) = resolve_config_dir_for_workspace(&expanded);
+        let (zeroclaw_dir, data_dir) = resolve_config_dir_for_data(&expanded);
         return Ok((
             zeroclaw_dir,
-            workspace_dir,
-            ConfigResolutionSource::EnvWorkspace,
+            data_dir,
+            ConfigResolutionSource::EnvWorkspaceLegacy,
         ));
     }
 
     Ok((
         default_zeroclaw_dir.to_path_buf(),
-        default_workspace_dir.to_path_buf(),
+        default_data_dir.to_path_buf(),
         ConfigResolutionSource::DefaultConfigDir,
     ))
 }
@@ -12724,7 +12774,7 @@ impl Config {
     }
 
     pub async fn load_or_init() -> Result<Self> {
-        let (default_zeroclaw_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+        let (default_zeroclaw_dir, default_workspace_dir) = default_config_and_data_dirs()?;
 
         // Resolve env overrides FIRST so the migration runs against
         // the install root the operator actually uses. Running the
@@ -12778,14 +12828,18 @@ impl Config {
         // pre-multi-agent install's `<install>/workspace/` is present
         // and needs to be moved into the new layout.
         //
-        // `config.workspace_dir` keeps the install dir as its bound
-        // value so legacy install-wide consumers (`cost::CostTracker`
-        // writes `<workspace_dir>/state/costs.jsonl`,
-        // `plugins::PluginHost`, etc.) write under the install root
-        // rather than under a synthesized agent slot. Per-agent paths
-        // resolve through `Config::agent_workspace_dir(alias)` and do
-        // not depend on this field.
-        let workspace_dir = zeroclaw_dir.clone();
+        // `config.data_dir` resolves to `<install>/data/` — the shared
+        // instance data directory holding databases (memory, sessions,
+        // cost records) and hygiene/state files. Per-agent identity
+        // and markdown (MEMORY.md, IDENTITY.md, SOUL.md) lives at
+        // `Config::agent_workspace_dir(alias)` instead.
+        let data_dir = zeroclaw_dir.join("data");
+        fs::create_dir_all(&data_dir)
+            .await
+            .with_context(|| format!("Failed to create data directory: {}", data_dir.display()))?;
+        // Legacy alias retained for clarity in the struct initializer
+        // and existing field assignments below.
+        let workspace_dir = data_dir;
 
         fs::create_dir_all(&zeroclaw_dir)
             .await
@@ -12887,7 +12941,7 @@ impl Config {
             }
             // Set computed paths that are skipped during serialization
             config.config_path = config_path.clone();
-            config.workspace_dir = workspace_dir;
+            config.data_dir = workspace_dir;
             let store = crate::secrets::SecretStore::new(&zeroclaw_dir, config.secrets.encrypt);
             // Decrypt all #[secret]-annotated fields via Configurable derive
             config.decrypt_secrets(&store)?;
@@ -12915,7 +12969,7 @@ impl Config {
             }
             tracing::info!(
                 path = %config.config_path.display(),
-                workspace = %config.workspace_dir.display(),
+                workspace = %config.data_dir.display(),
                 source = resolution_source.as_str(),
                 initialized = true,
                 "Config loaded"
@@ -12924,7 +12978,7 @@ impl Config {
         } else {
             let mut config = Config {
                 config_path: config_path.clone(),
-                workspace_dir,
+                data_dir: workspace_dir,
                 ..Config::default()
             };
             // Save defaults FIRST so env-injected values never reach the
@@ -12955,7 +13009,7 @@ impl Config {
             }
             tracing::info!(
                 path = %config.config_path.display(),
-                workspace = %config.workspace_dir.display(),
+                workspace = %config.data_dir.display(),
                 source = resolution_source.as_str(),
                 initialized = true,
                 "Config loaded"
@@ -14007,7 +14061,7 @@ impl Config {
             return Ok(self.config_path.clone());
         }
 
-        let (default_zeroclaw_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+        let (default_zeroclaw_dir, default_workspace_dir) = default_config_and_data_dirs()?;
         let (zeroclaw_dir, _workspace_dir, source) =
             resolve_runtime_config_dirs(&default_zeroclaw_dir, &default_workspace_dir).await?;
         let file_name = self
@@ -14490,7 +14544,7 @@ mod tests {
             c.skills.prompt_injection_mode,
             SkillsPromptInjectionMode::Full
         );
-        assert!(c.workspace_dir.to_string_lossy().contains("workspace"));
+        assert!(c.data_dir.to_string_lossy().contains("data"));
         assert!(c.config_path.to_string_lossy().contains("config.toml"));
     }
 
@@ -14581,7 +14635,7 @@ mod tests {
 
         let config = Config {
             config_path: config_path.clone(),
-            workspace_dir,
+            data_dir: workspace_dir,
             ..Default::default()
         };
 
@@ -14896,7 +14950,7 @@ auto_save = true
             transcription_providers: crate::providers::TranscriptionProviders::default(),
             model_routes: Vec::new(),
             embedding_routes: Vec::new(),
-            workspace_dir: PathBuf::from("/tmp/test/workspace"),
+            data_dir: PathBuf::from("/tmp/test/workspace"),
             config_path: PathBuf::from("/tmp/test/config.toml"),
             observability: ObservabilityConfig {
                 backend: "log".into(),
@@ -15029,7 +15083,6 @@ auto_save = true
             google_workspace: GoogleWorkspaceConfig::default(),
             proxy: ProxyConfig::default(),
             pacing: PacingConfig::default(),
-            identity: IdentityConfig::default(),
             cost: CostConfig::default(),
             peripherals: PeripheralsConfig::default(),
             delegate: DelegateToolConfig::default(),
@@ -15494,7 +15547,7 @@ default_temperature = 0.7
             transcription_providers: crate::providers::TranscriptionProviders::default(),
             model_routes: Vec::new(),
             embedding_routes: Vec::new(),
-            workspace_dir: dir.join("workspace"),
+            data_dir: dir.join("workspace"),
             config_path: config_path.clone(),
             observability: ObservabilityConfig::default(),
             trust: crate::scattered_types::TrustConfig::default(),
@@ -15533,7 +15586,6 @@ default_temperature = 0.7
             google_workspace: GoogleWorkspaceConfig::default(),
             proxy: ProxyConfig::default(),
             pacing: PacingConfig::default(),
-            identity: IdentityConfig::default(),
             cost: CostConfig::default(),
             peripherals: PeripheralsConfig::default(),
             delegate: DelegateToolConfig::default(),
@@ -15610,7 +15662,7 @@ default_temperature = 0.7
         fs::create_dir_all(&dir).await.unwrap();
 
         let mut config = Config {
-            workspace_dir: dir.join("workspace"),
+            data_dir: dir.join("workspace"),
             config_path: dir.join("config.toml"),
             ..Default::default()
         };
@@ -15776,7 +15828,7 @@ default_temperature = 0.7
 
         let config_path = dir.join("config.toml");
         let mut config = Config {
-            workspace_dir: dir.join("workspace"),
+            data_dir: dir.join("workspace"),
             config_path: config_path.clone(),
             ..Default::default()
         };
@@ -17056,7 +17108,7 @@ model = "primary-model"
         unsafe { std::env::set_var("ZEROCLAW_WORKSPACE", &workspace_dir) };
 
         let mut config = Config {
-            workspace_dir,
+            data_dir: workspace_dir,
             config_path: PathBuf::from("config.toml"),
             ..Default::default()
         };
@@ -17173,7 +17225,7 @@ model = "primary-model"
     }
 
     #[test]
-    async fn resolve_runtime_config_dirs_uses_env_workspace_first() {
+    async fn resolve_runtime_config_dirs_accepts_legacy_zeroclaw_workspace() {
         let _env_guard = env_override_lock().await;
         let default_config_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         let default_workspace_dir = default_config_dir.join("workspace");
@@ -17186,9 +17238,12 @@ model = "primary-model"
                 .await
                 .unwrap();
 
-        assert_eq!(source, ConfigResolutionSource::EnvWorkspace);
+        // ZEROCLAW_WORKSPACE is the deprecated alias for ZEROCLAW_DATA_DIR.
+        // Resolution treats the path as the config root and derives the data
+        // sub-dir from it; the source label reflects the deprecated entry.
+        assert_eq!(source, ConfigResolutionSource::EnvWorkspaceLegacy);
         assert_eq!(config_dir, workspace_dir);
-        assert_eq!(resolved_workspace_dir, workspace_dir.join("workspace"));
+        assert_eq!(resolved_workspace_dir, workspace_dir.join("data"));
 
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::remove_var("ZEROCLAW_WORKSPACE") };
@@ -17216,10 +17271,7 @@ model = "primary-model"
 
         assert_eq!(source, ConfigResolutionSource::EnvConfigDir);
         assert_eq!(config_dir, explicit_config_dir);
-        assert_eq!(
-            resolved_workspace_dir,
-            explicit_config_dir.join("workspace")
-        );
+        assert_eq!(resolved_workspace_dir, explicit_config_dir.join("data"));
 
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::remove_var("ZEROCLAW_CONFIG_DIR") };
@@ -17280,12 +17332,12 @@ model = "primary-model"
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
-        // V3 fresh init: `config.workspace_dir` is the install root
-        // (the directory holding `config.toml`). No synthesized
-        // `agents/default/workspace/` is created at boot — `default`
-        // is migration-only, and per-agent workspaces are created
-        // lazily at agent-loop entry.
-        assert_eq!(config.workspace_dir, workspace_dir);
+        // V3 fresh init: `config.data_dir` lives at `<install>/data/`
+        // (the shared databases root); the install root holds
+        // `config.toml`. No synthesized `agents/default/workspace/` is
+        // created at boot — `default` is migration-only, and per-agent
+        // workspaces are created lazily at agent-loop entry.
+        assert_eq!(config.data_dir, workspace_dir.join("data"));
         assert_eq!(config.config_path, workspace_dir.join("config.toml"));
         assert!(workspace_dir.join("config.toml").exists());
         assert!(
@@ -17322,14 +17374,11 @@ model = "primary-model"
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
-        // V3: `config.workspace_dir` is the install root (the
-        // directory holding `config.toml`). The ZEROCLAW_WORKSPACE
-        // env var resolved the install root via
-        // `resolve_config_dir_for_workspace`; the legacy
-        // `<workspace_dir>/` path is the legacy-layout migration's
-        // input, not the post-load workspace anchor, and no
-        // `agents/default/workspace/` is synthesized on a fresh boot.
-        assert_eq!(config.workspace_dir, legacy_config_dir);
+        // V3: `config.data_dir` lives at `<install>/data/`. The
+        // ZEROCLAW_WORKSPACE env var (deprecated alias) resolved to the
+        // legacy config layout where the install root is the parent of
+        // the env-var path; data sits at `<install>/data/`.
+        assert_eq!(config.data_dir, legacy_config_dir.join("data"));
         assert_eq!(config.config_path, legacy_config_path);
         assert!(config.config_path.exists());
 
@@ -17372,10 +17421,11 @@ default_model = "legacy-model"
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
-        // V3: `config.workspace_dir` resolves to the install root
-        // (the directory holding the existing `config.toml`),
-        // regardless of the ZEROCLAW_WORKSPACE override.
-        assert_eq!(config.workspace_dir, legacy_config_dir);
+        // V3: `config.data_dir` resolves to `<install>/data/` under
+        // the install root (the directory holding the existing
+        // `config.toml`), regardless of the ZEROCLAW_WORKSPACE
+        // (deprecated) override.
+        assert_eq!(config.data_dir, legacy_config_dir.join("data"));
         assert_eq!(config.config_path, legacy_config_path);
         assert_eq!(
             config
@@ -17414,7 +17464,7 @@ default_model = "legacy-model"
 
         let mut config = Config {
             config_path: config_path.clone(),
-            workspace_dir: config_dir.join("workspace"),
+            data_dir: config_dir.join("workspace"),
             ..Default::default()
         };
         config.secrets.encrypt = true;
@@ -17492,10 +17542,12 @@ default_model = "persisted-profile"
         drop(guard);
         let logs = capture.captured();
 
-        // V3: per-agent default-agent workspace under the resolved
-        // V3: install root is the workspace anchor. No
-        // `agents/default/workspace/` synthesized on load.
-        assert_eq!(config.workspace_dir, workspace_dir);
+        // V3: shared databases live at `<install>/data/`, per-agent
+        // identity at `<install>/agents/<alias>/workspace/`. The
+        // ZEROCLAW_WORKSPACE env var (deprecated alias for
+        // ZEROCLAW_DATA_DIR) pinned the install root, so data_dir is
+        // `<install>/data/` derived from the resolved root.
+        assert_eq!(config.data_dir, workspace_dir.join("data"));
         assert_eq!(config.config_path, config_path);
         assert_eq!(
             config
@@ -18306,7 +18358,7 @@ require_otp_to_resume = true
         let plaintext_token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11";
 
         let mut config = Config {
-            workspace_dir: dir.join("workspace"),
+            data_dir: dir.join("workspace"),
             config_path: dir.join("config.toml"),
             ..Default::default()
         };
@@ -18633,7 +18685,7 @@ require_otp_to_resume = true
         let plaintext_secret = "nevis-test-client-secret-value";
 
         let mut config = Config {
-            workspace_dir: dir.join("workspace"),
+            data_dir: dir.join("workspace"),
             config_path: dir.join("config.toml"),
             ..Default::default()
         };
@@ -19751,7 +19803,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
         let dir = TempDir::new().unwrap();
         let mut config = Config {
             config_path: dir.path().join("config.toml"),
-            workspace_dir: dir.path().join("workspace"),
+            data_dir: dir.path().join("workspace"),
             ..Default::default()
         };
         let alias = "default";
@@ -19811,7 +19863,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
 
         let mut loaded: Config = crate::migration::migrate_to_current(&raw_toml).unwrap();
         loaded.config_path = config.config_path.clone();
-        loaded.workspace_dir = config.workspace_dir.clone();
+        loaded.data_dir = config.data_dir.clone();
         let store = crate::secrets::SecretStore::new(dir.path(), loaded.secrets.encrypt);
         loaded.decrypt_secrets(&store).unwrap();
         let loaded_provider = loaded
@@ -19848,7 +19900,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
         let dir = TempDir::new().unwrap();
         let mut config = Config {
             config_path: dir.path().join("config.toml"),
-            workspace_dir: dir.path().join("workspace"),
+            data_dir: dir.path().join("workspace"),
             ..Default::default()
         };
         let original_secret = "sk-ant-real-on-disk-credential";
@@ -19868,7 +19920,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             .unwrap();
         let mut reloaded: Config = crate::migration::migrate_to_current(&raw).unwrap();
         reloaded.config_path = config.config_path.clone();
-        reloaded.workspace_dir = config.workspace_dir.clone();
+        reloaded.data_dir = config.data_dir.clone();
         let store = crate::secrets::SecretStore::new(dir.path(), reloaded.secrets.encrypt);
         reloaded.decrypt_secrets(&store).unwrap();
         assert_eq!(
@@ -19915,7 +19967,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
 
         let mut after: Config = crate::migration::migrate_to_current(&raw_after).unwrap();
         after.config_path = reloaded.config_path.clone();
-        after.workspace_dir = reloaded.workspace_dir.clone();
+        after.data_dir = reloaded.data_dir.clone();
         let store2 = crate::secrets::SecretStore::new(dir.path(), after.secrets.encrypt);
         after.decrypt_secrets(&store2).unwrap();
         assert_eq!(

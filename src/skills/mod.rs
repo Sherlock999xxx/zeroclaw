@@ -22,7 +22,7 @@ pub mod skill_http {
 
 #[allow(dead_code)]
 pub fn handle_command(command: crate::SkillCommands, config: &crate::config::Config) -> Result<()> {
-    let workspace_dir = &config.workspace_dir;
+    let workspace_dir = &config.data_dir;
     match command {
         crate::SkillCommands::List => {
             let skills = load_skills_with_config(workspace_dir, config);

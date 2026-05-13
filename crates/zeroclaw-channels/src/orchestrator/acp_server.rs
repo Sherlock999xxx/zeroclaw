@@ -586,7 +586,7 @@ impl AcpServer {
         // Build agent from global config, with the session's cwd pinned as
         // the file/shell sandbox boundary. The agent's data directory
         // (memory DB, identity, scheduled tasks) still lives under
-        // `config.workspace_dir`.
+        // `config.data_dir`.
         let agent = Agent::from_config_with_session_cwd_and_mcp_backchannel(
             &self.config,
             &agent_alias,
@@ -638,7 +638,7 @@ impl AcpServer {
             .and_then(|v| v.as_str())
             .map(PathBuf::from)
             .unwrap_or_else(|| {
-                std::env::current_dir().unwrap_or_else(|_| self.config.workspace_dir.clone())
+                std::env::current_dir().unwrap_or_else(|_| self.config.data_dir.clone())
             })
     }
 
@@ -1269,7 +1269,7 @@ mod tests {
     #[test]
     fn session_new_defaults_to_launch_cwd_when_client_omits_cwd() {
         let config = Config {
-            workspace_dir: PathBuf::from("/not/the/project"),
+            data_dir: PathBuf::from("/not/the/project"),
             ..Default::default()
         };
         let server = AcpServer::new(config, AcpServerConfig::default());
@@ -1296,7 +1296,7 @@ mod tests {
     async fn session_new_does_not_wait_for_configured_mcp_servers() {
         let cwd = tempfile::tempdir().unwrap();
         let mut config = Config {
-            workspace_dir: cwd.path().to_path_buf(),
+            data_dir: cwd.path().to_path_buf(),
             model_providers: {
                 let mut m = zeroclaw_config::providers::ModelProviders::default();
                 m.openrouter.insert(
@@ -1626,7 +1626,7 @@ mod tests {
     async fn session_stop_finds_session_during_active_prompt_turn() {
         let cwd = tempfile::tempdir().unwrap();
         let mut config = Config {
-            workspace_dir: cwd.path().to_path_buf(),
+            data_dir: cwd.path().to_path_buf(),
             model_providers: {
                 let mut m = zeroclaw_config::providers::ModelProviders::default();
                 m.anthropic.insert(
@@ -1699,7 +1699,7 @@ mod tests {
 
     fn make_test_config(cwd: &std::path::Path) -> Config {
         let mut cfg = Config {
-            workspace_dir: cwd.to_path_buf(),
+            data_dir: cwd.to_path_buf(),
             ..Default::default()
         };
         cfg.model_providers.anthropic.insert(
@@ -1880,7 +1880,7 @@ mod tests {
     async fn cancel_tokens_map_remove_works() {
         let cwd = tempfile::tempdir().unwrap();
         let config = Config {
-            workspace_dir: cwd.path().to_path_buf(),
+            data_dir: cwd.path().to_path_buf(),
             ..Default::default()
         };
         let server = Arc::new(AcpServer::new(config, AcpServerConfig::default()));

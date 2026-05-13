@@ -37,7 +37,7 @@ impl ModelRoutingConfigTool {
                 )
             })?;
         parsed.config_path = self.config.config_path.clone();
-        parsed.workspace_dir = self.config.workspace_dir.clone();
+        parsed.data_dir = self.config.data_dir.clone();
         Ok(parsed)
     }
 
@@ -1013,7 +1013,7 @@ mod tests {
 
     async fn test_config(tmp: &TempDir) -> Arc<Config> {
         let config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };

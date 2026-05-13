@@ -3607,7 +3607,7 @@ mod tests {
         use crate::schema::{AliasedAgentConfig, Config, RiskProfileConfig};
 
         let mut cfg = Config {
-            workspace_dir: PathBuf::from("/tmp/zeroclaw-for-agent-test"),
+            data_dir: PathBuf::from("/tmp/zeroclaw-for-agent-test"),
             config_path: PathBuf::from("/tmp/zeroclaw-for-agent-test/config.toml"),
             ..Config::default()
         };
@@ -3724,7 +3724,7 @@ mod tests {
         use crate::schema::{AliasedAgentConfig, Config, RiskProfileConfig};
 
         let mut cfg = Config {
-            workspace_dir: PathBuf::from("/tmp/zeroclaw-for-agent-unrestricted"),
+            data_dir: PathBuf::from("/tmp/zeroclaw-for-agent-unrestricted"),
             config_path: PathBuf::from("/tmp/zeroclaw-for-agent-unrestricted/config.toml"),
             ..Config::default()
         };

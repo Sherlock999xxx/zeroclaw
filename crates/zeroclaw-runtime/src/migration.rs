@@ -36,7 +36,7 @@ pub async fn migrate_openclaw_memory(
         );
     }
 
-    if paths_equal(&source_workspace, &config.workspace_dir) {
+    if paths_equal(&source_workspace, &config.data_dir) {
         bail!("Source workspace matches current ZeroClaw workspace; refusing self-migration");
     }
 
@@ -55,7 +55,7 @@ pub async fn migrate_openclaw_memory(
     if dry_run {
         println!("🔎 Dry run: OpenClaw migration preview");
         println!("  Source: {}", source_workspace.display());
-        println!("  Target: {}", config.workspace_dir.display());
+        println!("  Target: {}", config.data_dir.display());
         println!("  Candidates: {}", entries.len());
         println!("    - from sqlite:   {}", stats.from_sqlite);
         println!("    - from markdown: {}", stats.from_markdown);
@@ -64,7 +64,7 @@ pub async fn migrate_openclaw_memory(
         return Ok(());
     }
 
-    if let Some(backup_dir) = backup_target_memory(&config.workspace_dir)? {
+    if let Some(backup_dir) = backup_target_memory(&config.data_dir)? {
         println!("🛟 Backup created: {}", backup_dir.display());
     }
 
@@ -95,7 +95,7 @@ pub async fn migrate_openclaw_memory(
 
     println!("✅ OpenClaw memory migration complete");
     println!("  Source: {}", source_workspace.display());
-    println!("  Target: {}", config.workspace_dir.display());
+    println!("  Target: {}", config.data_dir.display());
     println!("  Imported:         {}", stats.imported);
     println!("  Skipped unchanged:{}", stats.skipped_unchanged);
     println!("  Renamed conflicts:{}", stats.renamed_conflicts);
@@ -106,7 +106,7 @@ pub async fn migrate_openclaw_memory(
 }
 
 fn target_memory_backend(config: &Config) -> Result<Box<dyn Memory>> {
-    zeroclaw_memory::create_memory_for_migration(&config.memory.backend, &config.workspace_dir)
+    zeroclaw_memory::create_memory_for_migration(&config.memory.backend, &config.data_dir)
 }
 
 fn collect_source_entries(
@@ -422,7 +422,7 @@ mod tests {
 
     fn test_config(workspace: &Path) -> Config {
         Config {
-            workspace_dir: workspace.to_path_buf(),
+            data_dir: workspace.to_path_buf(),
             config_path: workspace.join("config.toml"),
             memory: MemoryConfig {
                 backend: "sqlite".to_string(),

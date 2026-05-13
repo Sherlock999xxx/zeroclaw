@@ -131,11 +131,9 @@ RUN size=$(stat -c%s /app/zeroclaw) && \
 # runtime stage serves it at GET /. The dashboard was decoupled from the
 # binary in #5665 and is now served from disk at `gateway.web_dist_dir`;
 # without this copy the image would return HTTP 503 on /.
-RUN mkdir -p /zeroclaw-data/.zeroclaw /zeroclaw-data/workspace /zeroclaw-data/web && \
+RUN mkdir -p /zeroclaw-data/.zeroclaw /zeroclaw-data/data /zeroclaw-data/web && \
     cp -r web/dist /zeroclaw-data/web/dist && \
     printf '%s\n' \
-        'workspace_dir = "/zeroclaw-data/workspace"' \
-        'config_path = "/zeroclaw-data/.zeroclaw/config.toml"' \
         'api_key = ""' \
         'default_provider = "openrouter"' \
         'default_model = "anthropic/claude-sonnet-4-20250514"' \
@@ -170,7 +168,7 @@ COPY --from=builder /zeroclaw-data /zeroclaw-data
 # Environment setup
 # Ensure UTF-8 locale so CJK / multibyte input is handled correctly
 ENV LANG=C.UTF-8
-ENV ZEROCLAW_WORKSPACE=/zeroclaw-data/workspace
+ENV ZEROCLAW_DATA_DIR=/zeroclaw-data/data
 ENV HOME=/zeroclaw-data
 # Default provider and model are set in config.toml, not here,
 # so config file edits are not silently overridden

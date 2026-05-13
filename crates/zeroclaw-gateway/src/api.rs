@@ -1422,11 +1422,11 @@ mod tests {
     async fn cron_api_shell_roundtrip_includes_delivery() {
         let tmp = tempfile::TempDir::new().unwrap();
         let config = zeroclaw_config::schema::Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..zeroclaw_config::schema::Config::default()
         };
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         let state = test_state(with_test_agent(config));
 
         let add_response = handle_api_cron_add(
@@ -1472,11 +1472,11 @@ mod tests {
     async fn cron_api_accepts_agent_jobs() {
         let tmp = tempfile::TempDir::new().unwrap();
         let config = zeroclaw_config::schema::Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..zeroclaw_config::schema::Config::default()
         };
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         let state = test_state(with_test_agent(config));
 
         let response = handle_api_cron_add(
@@ -1511,11 +1511,11 @@ mod tests {
     async fn cron_api_rejects_announce_delivery_without_target() {
         let tmp = tempfile::TempDir::new().unwrap();
         let config = zeroclaw_config::schema::Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..zeroclaw_config::schema::Config::default()
         };
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         let state = test_state(with_test_agent(config));
 
         let response = handle_api_cron_add(
@@ -1559,11 +1559,11 @@ mod tests {
     async fn cron_api_rejects_announce_delivery_with_unsupported_channel() {
         let tmp = tempfile::TempDir::new().unwrap();
         let config = zeroclaw_config::schema::Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..zeroclaw_config::schema::Config::default()
         };
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         let state = test_state(with_test_agent(config));
 
         let response = handle_api_cron_add(
@@ -1608,11 +1608,11 @@ mod tests {
     async fn cron_api_run_executes_shell_job_and_records_run() {
         let tmp = tempfile::TempDir::new().unwrap();
         let config = zeroclaw_config::schema::Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..zeroclaw_config::schema::Config::default()
         };
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         let state = test_state(with_test_agent(config));
 
         let job = zeroclaw_runtime::cron::add_shell_job_with_approval(
@@ -1670,11 +1670,11 @@ mod tests {
     async fn cron_api_run_returns_not_found_for_unknown_job() {
         let tmp = tempfile::TempDir::new().unwrap();
         let config = zeroclaw_config::schema::Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..zeroclaw_config::schema::Config::default()
         };
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         let state = test_state(with_test_agent(config));
 
         let response = handle_api_cron_run(

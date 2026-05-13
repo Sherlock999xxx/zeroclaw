@@ -514,7 +514,7 @@ pub async fn create_memory_for_agent(
         &config.memory,
         &config.embedding_routes,
         config.resolve_active_storage(),
-        &config.workspace_dir,
+        &config.data_dir,
         api_key,
     )?;
     let inner_arc: Arc<dyn Memory> = Arc::from(inner);

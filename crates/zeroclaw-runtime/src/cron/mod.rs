@@ -234,11 +234,11 @@ mod tests {
 
     fn test_config(tmp: &TempDir) -> Config {
         let config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         config
     }
 
@@ -419,7 +419,7 @@ mod tests {
 
         let security = SecurityPolicy::from_risk_profile(
             &zeroclaw_config::schema::RiskProfileConfig::default(),
-            &config.workspace_dir,
+            &config.data_dir,
         );
         assert!(security.is_command_allowed("echo safe"));
     }
@@ -657,7 +657,7 @@ mod tests {
 
         let security = SecurityPolicy::from_risk_profile(
             &zeroclaw_config::schema::RiskProfileConfig::default(),
-            &config.workspace_dir,
+            &config.data_dir,
         );
         // Simulate scheduler validation path
         let result =

@@ -2275,7 +2275,7 @@ pub async fn run(
         &config.browser,
         &config.http_request,
         &config.web_fetch,
-        &config.workspace_dir,
+        &config.data_dir,
         &config.agents,
         primary_model_provider.and_then(|e| e.api_key.as_deref()),
         &config,
@@ -2419,7 +2419,7 @@ pub async fn run(
         .datasheet_dir
         .as_ref()
         .filter(|d| !d.trim().is_empty())
-        .map(|dir| crate::rag::HardwareRag::load(&config.workspace_dir, dir.trim()))
+        .map(|dir| crate::rag::HardwareRag::load(&config.data_dir, dir.trim()))
         .and_then(Result::ok)
         .filter(|r: &crate::rag::HardwareRag| !r.is_empty());
     if let Some(ref rag) = hardware_rag {
@@ -2443,7 +2443,7 @@ pub async fn run(
     crate::i18n::init(&i18n_locale);
 
     // ── Build system prompt from workspace MD files (OpenClaw framework) ──
-    let skills = crate::skills::load_skills_with_config(&config.workspace_dir, &config);
+    let skills = crate::skills::load_skills_with_config(&config.data_dir, &config);
 
     // Register skill-defined tools as callable tool specs in the tool registry
     // so the LLM can invoke them via native function calling, not just XML prompts.
@@ -2574,11 +2574,11 @@ pub async fn run(
     };
     let native_tools = model_provider.supports_native_tools();
     let mut system_prompt = crate::agent::system_prompt::build_system_prompt_with_mode_and_autonomy(
-        &config.workspace_dir,
+        &config.data_dir,
         &model_name,
         &tool_descs,
         &skills,
-        Some(&config.identity),
+        Some(&agent.identity),
         bootstrap_max_chars,
         Some(&risk_profile),
         native_tools,
@@ -2616,8 +2616,8 @@ pub async fn run(
 
     // ── Cost tracking context (scoped for CLI / cron / web agents) ──
     let cost_tracking_context: Option<ToolLoopCostTrackingContext> =
-        crate::cost::CostTracker::get_or_init_global(config.cost.clone(), &config.workspace_dir)
-            .map(|tracker| {
+        crate::cost::CostTracker::get_or_init_global(config.cost.clone(), &config.data_dir).map(
+            |tracker| {
                 let pricing: crate::agent::cost::ModelProviderPricing = config
                     .model_providers
                     .iter_entries()
@@ -2628,7 +2628,8 @@ pub async fn run(
                     .collect();
                 ToolLoopCostTrackingContext::new(tracker, Arc::new(pricing))
                     .with_agent_alias(agent_alias)
-            });
+            },
+        );
 
     // ── Execute ──────────────────────────────────────────────────
     let start = Instant::now();
@@ -2805,7 +2806,7 @@ pub async fn run(
             let tool_calls = crate::skills::creator::extract_tool_calls_from_history(&history);
             if tool_calls.len() >= 2 {
                 let creator = crate::skills::creator::SkillCreator::new(
-                    config.workspace_dir.clone(),
+                    config.data_dir.clone(),
                     config.skills.skill_creation.clone(),
                 );
                 match creator.create_from_execution(&msg, &tool_calls, None).await {
@@ -3301,7 +3302,7 @@ pub async fn process_message(
         &config.browser,
         &config.http_request,
         &config.web_fetch,
-        &config.workspace_dir,
+        &config.data_dir,
         &config.agents,
         primary_model_provider.and_then(|e| e.api_key.as_deref()),
         &config,
@@ -3425,7 +3426,7 @@ pub async fn process_message(
         .datasheet_dir
         .as_ref()
         .filter(|d| !d.trim().is_empty())
-        .map(|dir| crate::rag::HardwareRag::load(&config.workspace_dir, dir.trim()))
+        .map(|dir| crate::rag::HardwareRag::load(&config.data_dir, dir.trim()))
         .and_then(Result::ok)
         .filter(|r: &crate::rag::HardwareRag| !r.is_empty());
     let board_names: Vec<String> = config
@@ -3444,7 +3445,7 @@ pub async fn process_message(
         .unwrap_or_else(crate::i18n::detect_locale);
     crate::i18n::init(&i18n_locale);
 
-    let skills = crate::skills::load_skills_with_config(&config.workspace_dir, &config);
+    let skills = crate::skills::load_skills_with_config(&config.data_dir, &config);
 
     // Register skill-defined tools as callable tool specs (process_message path).
     tools::register_skill_tools(&mut tools_registry, &skills, security.clone());
@@ -3532,11 +3533,11 @@ pub async fn process_message(
     };
     let native_tools = model_provider.supports_native_tools();
     let mut system_prompt = crate::agent::system_prompt::build_system_prompt_with_mode_and_autonomy(
-        &config.workspace_dir,
+        &config.data_dir,
         &model_name,
         &tool_descs,
         &skills,
-        Some(&config.identity),
+        Some(&agent.identity),
         bootstrap_max_chars,
         Some(&risk_profile),
         native_tools,

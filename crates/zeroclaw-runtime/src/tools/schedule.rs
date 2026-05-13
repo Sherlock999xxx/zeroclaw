@@ -469,15 +469,13 @@ mod tests {
             tmp.path().join("config.toml"),
             zeroclaw_config::schema::RiskProfileConfig::default(),
         );
-        tokio::fs::create_dir_all(&config.workspace_dir)
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(&config.data_dir).await.unwrap();
         let security = Arc::new(SecurityPolicy::from_risk_profile(
             config
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         ));
         (tmp, config, security)
     }
@@ -582,7 +580,7 @@ mod tests {
         profile: zeroclaw_config::schema::RiskProfileConfig,
     ) -> Config {
         let mut config = Config {
-            workspace_dir: workspace,
+            data_dir: workspace,
             config_path,
             ..Config::default()
         };
@@ -617,15 +615,13 @@ mod tests {
                 ..Default::default()
             },
         );
-        tokio::fs::create_dir_all(&config.workspace_dir)
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(&config.data_dir).await.unwrap();
         let security = Arc::new(SecurityPolicy::from_risk_profile(
             config
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         ));
 
         let tool = ScheduleTool::new(security, config, "test-agent");
@@ -657,15 +653,13 @@ mod tests {
                 ..Default::default()
             },
         );
-        tokio::fs::create_dir_all(&config.workspace_dir)
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(&config.data_dir).await.unwrap();
         let security = Arc::new(SecurityPolicy::from_risk_profile(
             config
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         ));
         let tool = ScheduleTool::new(security, config, "test-agent");
 
@@ -703,15 +697,13 @@ mod tests {
                 ..Default::default()
             },
         );
-        tokio::fs::create_dir_all(&config.workspace_dir)
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(&config.data_dir).await.unwrap();
         let security = Arc::new(SecurityPolicy::from_risk_profile(
             config
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         ));
         let tool = ScheduleTool::new(security, config, "test-agent");
 
@@ -761,7 +753,7 @@ mod tests {
     async fn mutating_actions_fail_when_cron_disabled() {
         let tmp = TempDir::new().unwrap();
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -778,13 +770,13 @@ mod tests {
                 ..Default::default()
             },
         );
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         let security = Arc::new(SecurityPolicy::from_risk_profile(
             config
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         ));
         let tool = ScheduleTool::new(security, config, "test-agent");
 
@@ -811,7 +803,7 @@ mod tests {
     async fn create_blocks_disallowed_command() {
         let tmp = TempDir::new().unwrap();
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -837,13 +829,13 @@ mod tests {
                 ..Default::default()
             },
         );
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         let security = Arc::new(SecurityPolicy::from_risk_profile(
             config
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         ));
         let tool = ScheduleTool::new(security, config, "test-agent");
 
@@ -870,7 +862,7 @@ mod tests {
     async fn medium_risk_create_requires_approval() {
         let tmp = TempDir::new().unwrap();
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -896,13 +888,13 @@ mod tests {
                 ..Default::default()
             },
         );
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         let security = Arc::new(SecurityPolicy::from_risk_profile(
             config
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         ));
         let tool = ScheduleTool::new(security, config, "test-agent");
 

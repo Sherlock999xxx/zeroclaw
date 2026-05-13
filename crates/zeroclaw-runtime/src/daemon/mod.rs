@@ -153,9 +153,8 @@ pub async fn run(
     let (event_tx, _rx) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
 
     if config.heartbeat.enabled {
-        let _ =
-            crate::heartbeat::engine::HeartbeatEngine::ensure_heartbeat_file(&config.workspace_dir)
-                .await;
+        let _ = crate::heartbeat::engine::HeartbeatEngine::ensure_heartbeat_file(&config.data_dir)
+            .await;
     }
 
     let mut handles: Vec<JoinHandle<()>> = vec![spawn_state_writer(config.clone())];
@@ -390,11 +389,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
 
     let observer: std::sync::Arc<dyn crate::observability::Observer> =
         std::sync::Arc::from(crate::observability::create_observer(&config.observability));
-    let engine = HeartbeatEngine::new(
-        config.heartbeat.clone(),
-        config.workspace_dir.clone(),
-        observer,
-    );
+    let engine = HeartbeatEngine::new(config.heartbeat.clone(), config.data_dir.clone(), observer);
     let metrics = engine.metrics();
     let delivery = resolve_heartbeat_delivery(&config)?;
     let two_phase = config.heartbeat.two_phase;
@@ -566,7 +561,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
         let heartbeat_memory: Option<Box<dyn zeroclaw_memory::Memory>> =
             zeroclaw_memory::create_memory(
                 &config.memory,
-                &config.workspace_dir,
+                &config.data_dir,
                 config
                     .first_model_provider()
                     .and_then(|e| e.api_key.as_deref()),
@@ -655,7 +650,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                     let duration_ms = task_start.elapsed().as_millis() as i64;
                     let now = chrono::Utc::now();
                     let _ = crate::heartbeat::store::record_run(
-                        &config.workspace_dir,
+                        &config.data_dir,
                         &task.text,
                         &task.priority.to_string(),
                         now - chrono::Duration::milliseconds(duration_ms),
@@ -732,7 +727,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                     let duration_ms = task_start.elapsed().as_millis() as i64;
                     let now = chrono::Utc::now();
                     let _ = crate::heartbeat::store::record_run(
-                        &config.workspace_dir,
+                        &config.data_dir,
                         &task.text,
                         &task.priority.to_string(),
                         now - chrono::Duration::milliseconds(duration_ms),
@@ -837,7 +832,7 @@ fn load_heartbeat_session_context(config: &Config) -> Option<String> {
         return None;
     }
 
-    let sessions_dir = config.workspace_dir.join("sessions");
+    let sessions_dir = config.data_dir.join("sessions");
 
     // Find the most recently modified JSONL file that belongs to this target.
     // Matches both `{channel}_{to}.jsonl` and `{channel}_{anything}_{to}.jsonl`.
@@ -1065,11 +1060,11 @@ mod tests {
 
     fn test_config(tmp: &TempDir) -> Config {
         let config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         config
     }
 

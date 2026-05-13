@@ -2507,6 +2507,89 @@ fn encryption_covers_every_schema_secret_field() {
     );
 }
 
+#[test]
+fn identity_lifts_into_agents_default_during_v2_to_v3() {
+    // V2 had a top-level [identity] block. V3 demoted identity to
+    // per-agent (`[agents.<alias>.identity]`); the V2->V3 typed
+    // migration must lift the top-level block into the synthesized
+    // default agent and remove the top-level key so the V3
+    // deserializer doesn't see an unknown field.
+    let v3 = migrate_v2(
+        r#"
+schema_version = 2
+
+[identity]
+format = "aieos"
+aieos_inline = "{\"placeholder\":true}"
+
+[providers.models.openrouter]
+model = "anthropic/claude-sonnet-4-5"
+api_key = "sk-test"
+"#,
+    );
+
+    assert!(
+        v3.get("identity").is_none(),
+        "top-level [identity] must not survive V2->V3 (V3 removed the slot); got: {v3:#?}"
+    );
+
+    let default_identity = lookup_dotted(&v3, "agents.default.identity")
+        .expect("[agents.default.identity] must be lifted from V2 top-level [identity]");
+    assert_eq!(
+        default_identity.get("format").and_then(toml::Value::as_str),
+        Some("aieos"),
+        "lifted identity must preserve V2 format value"
+    );
+    assert_eq!(
+        default_identity
+            .get("aieos_inline")
+            .and_then(toml::Value::as_str),
+        Some("{\"placeholder\":true}"),
+        "lifted identity must preserve V2 aieos_inline value"
+    );
+}
+
+#[test]
+fn identity_lift_does_not_clobber_operator_per_agent_block() {
+    // If the operator already wrote a per-agent identity block in
+    // their V2 input (forward-looking), the V2->V3 lift must not
+    // overwrite it. Top-level [identity] is still removed (V3 has no
+    // slot for it) but each per-agent block keeps its operator-set
+    // value.
+    let v3 = migrate_v2(
+        r#"
+schema_version = 2
+
+[identity]
+format = "openclaw"
+
+[providers.models.openrouter]
+model = "anthropic/claude-sonnet-4-5"
+api_key = "sk-test"
+
+[agents.scout]
+model_provider = "openrouter.openrouter"
+risk_profile = "default"
+runtime_profile = "default"
+
+[agents.scout.identity]
+format = "aieos"
+"#,
+    );
+
+    let scout_identity = lookup_dotted(&v3, "agents.scout.identity")
+        .expect("operator's per-agent identity must survive the V2->V3 fold");
+    assert_eq!(
+        scout_identity.get("format").and_then(toml::Value::as_str),
+        Some("aieos"),
+        "operator-set per-agent identity must NOT be clobbered by the top-level lift"
+    );
+    assert!(
+        v3.get("identity").is_none(),
+        "top-level [identity] must still be removed even when no agent needed the lift"
+    );
+}
+
 /// Look up a dotted snake_case path inside a TOML value.
 fn lookup_dotted<'a>(value: &'a toml::Value, path: &str) -> Option<&'a toml::Value> {
     let mut cur = value;

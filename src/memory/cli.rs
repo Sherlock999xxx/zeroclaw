@@ -46,7 +46,7 @@ fn create_memory_with_embedder(config: &Config) -> Result<Box<dyn Memory>> {
         &config.memory,
         &config.embedding_routes,
         config.resolve_active_storage(),
-        &config.workspace_dir,
+        &config.data_dir,
         fallback_api_key,
     )
 }
@@ -82,7 +82,7 @@ fn create_cli_memory(config: &Config) -> Result<Box<dyn Memory>> {
         MemoryBackendKind::None => {
             bail!("Memory backend is 'none' (disabled). No entries to manage.");
         }
-        _ => create_memory_for_migration(&backend, &config.workspace_dir),
+        _ => create_memory_for_migration(&backend, &config.data_dir),
     }
 }
 

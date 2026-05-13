@@ -684,7 +684,7 @@ async fn run_job_command_with_timeout(
         );
     }
 
-    let child = match build_cron_shell_command(&job.command, &config.workspace_dir) {
+    let child = match build_cron_shell_command(&job.command, &config.data_dir) {
         Ok(mut cmd) => match cmd.spawn() {
             Ok(child) => child,
             Err(e) => return (false, format!("spawn error: {e}")),
@@ -752,7 +752,7 @@ mod tests {
 
     async fn test_config(tmp: &TempDir) -> Config {
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -774,9 +774,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        tokio::fs::create_dir_all(&config.workspace_dir)
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(&config.data_dir).await.unwrap();
         config
     }
 
@@ -888,7 +886,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) = run_job_command(&config, &security, &job).await;
@@ -907,7 +905,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) = run_job_command(&config, &security, &job).await;
@@ -931,7 +929,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) =
@@ -955,7 +953,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) = run_job_command(&config, &security, &job).await;
@@ -979,7 +977,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) = run_job_command(&config, &security, &job).await;
@@ -1004,7 +1002,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) = run_job_command(&config, &security, &job).await;
@@ -1029,7 +1027,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) = run_job_command(&config, &security, &job).await;
@@ -1054,7 +1052,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) = run_job_command(&config, &security, &job).await;
@@ -1079,7 +1077,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) = run_job_command(&config, &security, &job).await;
@@ -1103,7 +1101,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) = run_job_command(&config, &security, &job).await;
@@ -1127,7 +1125,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) = run_job_command(&config, &security, &job).await;
@@ -1152,11 +1150,11 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         tokio::fs::write(
-            config.workspace_dir.join("retry-once.sh"),
+            config.data_dir.join("retry-once.sh"),
             "#!/bin/sh\nif [ -f retry-ok.flag ]; then\n  echo recovered\n  exit 0\nfi\ntouch retry-ok.flag\nexit 1\n",
         )
         .await
@@ -1185,7 +1183,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let job = test_job("ls always_missing_for_retry_test");
@@ -1213,7 +1211,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) =
@@ -1239,7 +1237,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) =
@@ -1266,7 +1264,7 @@ mod tests {
                 .risk_profiles
                 .get("default")
                 .unwrap_or(&zeroclaw_config::schema::RiskProfileConfig::default()),
-            &config.workspace_dir,
+            &config.data_dir,
         );
 
         let (success, output) =

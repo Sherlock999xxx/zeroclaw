@@ -1730,7 +1730,7 @@ mod tests {
     fn test_cfg(temp: &TempDir) -> Config {
         Config {
             config_path: temp.path().join("config.toml"),
-            workspace_dir: temp.path().join("workspace"),
+            data_dir: temp.path().join("data"),
             ..Default::default()
         }
     }

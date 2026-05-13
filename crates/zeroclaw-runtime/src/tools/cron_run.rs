@@ -177,7 +177,7 @@ mod tests {
 
     async fn test_config(tmp: &TempDir) -> Arc<Config> {
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -197,9 +197,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        tokio::fs::create_dir_all(&config.workspace_dir)
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(&config.data_dir).await.unwrap();
         Arc::new(config)
     }
 
@@ -226,7 +224,7 @@ mod tests {
             SecurityPolicy::for_agent(cfg, "test-agent").unwrap_or_else(|_| {
                 SecurityPolicy::from_risk_profile(
                     &zeroclaw_config::schema::RiskProfileConfig::default(),
-                    &cfg.workspace_dir,
+                    &cfg.data_dir,
                 )
             }),
         )
@@ -240,14 +238,12 @@ mod tests {
         // otherwise execute_job_now's reverse-lookup can't find the
         // owning agent.
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
         seed_test_agent(&mut config);
-        tokio::fs::create_dir_all(&config.workspace_dir)
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(&config.data_dir).await.unwrap();
         let job = cron::add_job(&config, "test-agent", "*/5 * * * *", "echo run-now").unwrap();
         config
             .agents
@@ -283,11 +279,11 @@ mod tests {
     async fn blocks_run_in_read_only_mode() {
         let tmp = TempDir::new().unwrap();
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         seed_test_agent(&mut config);
         let job = cron::add_job(&config, "test-agent", "*/5 * * * *", "echo run-now").unwrap();
         config
@@ -307,7 +303,7 @@ mod tests {
     async fn shell_run_requires_approval_for_medium_risk() {
         let tmp = TempDir::new().unwrap();
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -322,7 +318,7 @@ mod tests {
             .entry("default".into())
             .or_default()
             .allowed_commands = vec!["touch".into()];
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         seed_test_agent(&mut config);
         let cfg = Arc::new(config);
         // Create with explicit approval so the job persists for the run test.
@@ -356,7 +352,7 @@ mod tests {
     async fn blocks_run_when_rate_limited() {
         let tmp = TempDir::new().unwrap();
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -371,7 +367,7 @@ mod tests {
             .entry("default".into())
             .or_default()
             .max_actions_per_hour = 0;
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         seed_test_agent(&mut config);
         let cfg = Arc::new(config);
         let job = cron::add_job(&cfg, "test-agent", "*/5 * * * *", "echo run-now").unwrap();

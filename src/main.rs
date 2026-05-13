@@ -1499,7 +1499,7 @@ async fn main() -> Result<()> {
     // All other commands need config loaded first
     let mut config = Box::pin(Config::load_or_init()).await?;
     #[cfg(feature = "agent-runtime")]
-    observability::runtime_trace::init_from_config(&config.observability, &config.workspace_dir);
+    observability::runtime_trace::init_from_config(&config.observability, &config.data_dir);
     #[cfg(feature = "agent-runtime")]
     if config.security.otp.enabled {
         let config_dir = config
@@ -1937,7 +1937,7 @@ async fn main() -> Result<()> {
                         use zeroclaw_memory::NoneMemory;
                         use zeroclaw_runtime::sop::{SopAuditLogger, SopEngine};
                         let sop_config = current_config.sop.clone();
-                        let workspace_dir = current_config.workspace_dir.clone();
+                        let workspace_dir = current_config.data_dir.clone();
                         move |mqtt_config| {
                             let engine = if sop_config.sops_dir.is_some() {
                                 let mut e = SopEngine::new(sop_config.clone());
@@ -2005,7 +2005,7 @@ async fn main() -> Result<()> {
             println!("🦀 ZeroClaw Status");
             println!();
             println!("Version:     {}", env!("CARGO_PKG_VERSION"));
-            println!("Workspace:   {}", config.workspace_dir.display());
+            println!("Workspace:   {}", config.data_dir.display());
             println!("Config:      {}", config.config_path.display());
             println!();
             println!(
@@ -2100,7 +2100,7 @@ async fn main() -> Result<()> {
             println!("  Max cost/day:      ${:.2}", config.cost.daily_limit_usd);
             println!("  Max cost/month:    ${:.2}", config.cost.monthly_limit_usd);
             if config.cost.enabled {
-                match cost::CostTracker::new(config.cost.clone(), &config.workspace_dir) {
+                match cost::CostTracker::new(config.cost.clone(), &config.data_dir) {
                     Ok(tracker) => match tracker.get_summary() {
                         Ok(summary) => {
                             println!(
@@ -2929,7 +2929,7 @@ async fn main() -> Result<()> {
         #[cfg(feature = "plugins-wasm")]
         Commands::Plugin { plugin_command } => match plugin_command {
             PluginCommands::List => {
-                let host = zeroclaw::plugins::host::PluginHost::new(&config.workspace_dir)?;
+                let host = zeroclaw::plugins::host::PluginHost::new(&config.data_dir)?;
                 let plugins = host.list_plugins();
                 if plugins.is_empty() {
                     println!("No plugins installed.");
@@ -2947,19 +2947,19 @@ async fn main() -> Result<()> {
                 Ok(())
             }
             PluginCommands::Install { source } => {
-                let mut host = zeroclaw::plugins::host::PluginHost::new(&config.workspace_dir)?;
+                let mut host = zeroclaw::plugins::host::PluginHost::new(&config.data_dir)?;
                 host.install(&source)?;
                 println!("Plugin installed from {source}");
                 Ok(())
             }
             PluginCommands::Remove { name } => {
-                let mut host = zeroclaw::plugins::host::PluginHost::new(&config.workspace_dir)?;
+                let mut host = zeroclaw::plugins::host::PluginHost::new(&config.data_dir)?;
                 host.remove(&name)?;
                 println!("Plugin '{name}' removed.");
                 Ok(())
             }
             PluginCommands::Info { name } => {
-                let host = zeroclaw::plugins::host::PluginHost::new(&config.workspace_dir)?;
+                let host = zeroclaw::plugins::host::PluginHost::new(&config.data_dir)?;
                 match host.get_plugin(&name) {
                     Some(info) => {
                         println!("Plugin: {} v{}", info.name, info.version);

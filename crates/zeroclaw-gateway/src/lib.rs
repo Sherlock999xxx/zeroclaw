@@ -543,7 +543,7 @@ pub async fn run_gateway(
             &config.memory,
             &config.embedding_routes,
             config.resolve_active_storage(),
-            &config.workspace_dir,
+            &config.data_dir,
             fallback.and_then(|e| e.api_key.as_deref()),
         )?)
     };
@@ -637,7 +637,7 @@ pub async fn run_gateway(
                 &config.browser,
                 &config.http_request,
                 &config.web_fetch,
-                &config.workspace_dir,
+                &config.data_dir,
                 &config.agents,
                 config
                     .first_model_provider()
@@ -721,7 +721,7 @@ pub async fn run_gateway(
         Arc::new(tools_registry_raw.iter().map(|t| t.spec()).collect());
 
     // Cost tracker — process-global singleton so channels share the same instance
-    let cost_tracker = CostTracker::get_or_init_global(config.cost.clone(), &config.workspace_dir);
+    let cost_tracker = CostTracker::get_or_init_global(config.cost.clone(), &config.data_dir);
 
     // SSE broadcast channel for real-time events.
     // Use an externally provided sender (e.g. from the daemon) so that other
@@ -898,7 +898,7 @@ pub async fn run_gateway(
     // #5769 split, just on a different backend pairing.
     let session_backend: Option<Arc<dyn SessionBackend>> = if config.gateway.session_persistence {
         match zeroclaw_infra::make_session_backend(
-            &config.workspace_dir,
+            &config.data_dir,
             &config.channels.session_backend,
         ) {
             Ok(backend) => {
@@ -1102,9 +1102,7 @@ pub async fn run_gateway(
 
     // Device registry and pairing store (only when pairing is required)
     let device_registry = if config.gateway.require_pairing {
-        Some(Arc::new(api_pairing::DeviceRegistry::new(
-            &config.workspace_dir,
-        )))
+        Some(Arc::new(api_pairing::DeviceRegistry::new(&config.data_dir)))
     } else {
         None
     };
@@ -1155,7 +1153,7 @@ pub async fn run_gateway(
         #[cfg(feature = "webauthn")]
         webauthn: if config.security.webauthn.enabled {
             let secret_store = Arc::new(zeroclaw_runtime::security::SecretStore::new(
-                &config.workspace_dir,
+                &config.data_dir,
                 true,
             ));
             let wa_config = zeroclaw_runtime::security::webauthn::WebAuthnConfig {
@@ -1168,7 +1166,7 @@ pub async fn run_gateway(
                 manager: zeroclaw_runtime::security::webauthn::WebAuthnManager::new(
                     wa_config,
                     secret_store,
-                    &config.workspace_dir,
+                    &config.data_dir,
                 ),
                 pending_registrations: parking_lot::Mutex::new(std::collections::HashMap::new()),
                 pending_authentications: parking_lot::Mutex::new(std::collections::HashMap::new()),
@@ -3307,7 +3305,7 @@ mod tests {
 
         let config = Config {
             config_path: config_path.clone(),
-            workspace_dir: workspace_path,
+            data_dir: workspace_path,
             ..Default::default()
         };
         config.save().await.unwrap();

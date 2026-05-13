@@ -363,7 +363,7 @@ pub fn run_traces(
 ) -> Result<()> {
     let path = crate::observability::runtime_trace::resolve_trace_path(
         &config.observability,
-        &config.workspace_dir,
+        &config.data_dir,
     );
 
     if let Some(target_id) = id.map(str::trim).filter(|value| !value.is_empty()) {
@@ -682,7 +682,7 @@ fn embedding_provider_validation_error(name: &str) -> Option<String> {
 
 fn check_workspace(config: &Config, items: &mut Vec<DiagItem>) {
     let cat = "workspace";
-    let ws = &config.workspace_dir;
+    let ws = &config.data_dir;
 
     if ws.exists() {
         items.push(DiagItem::ok(

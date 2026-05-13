@@ -266,7 +266,7 @@ mod tests {
 
     async fn test_config(tmp: &TempDir) -> Arc<Config> {
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -286,9 +286,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        tokio::fs::create_dir_all(&config.workspace_dir)
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(&config.data_dir).await.unwrap();
         Arc::new(config)
     }
 
@@ -315,7 +313,7 @@ mod tests {
             SecurityPolicy::for_agent(cfg, "test-agent").unwrap_or_else(|_| {
                 SecurityPolicy::from_risk_profile(
                     &zeroclaw_config::schema::RiskProfileConfig::default(),
-                    &cfg.workspace_dir,
+                    &cfg.data_dir,
                 )
             }),
         )
@@ -344,7 +342,7 @@ mod tests {
     async fn blocks_disallowed_command_updates() {
         let tmp = TempDir::new().unwrap();
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -354,9 +352,7 @@ mod tests {
             .entry("default".into())
             .or_default()
             .allowed_commands = vec!["echo".into()];
-        tokio::fs::create_dir_all(&config.workspace_dir)
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(&config.data_dir).await.unwrap();
         let cfg = Arc::new(config);
         let job = cron::add_job(&cfg, "test-agent", "*/5 * * * *", "echo ok").unwrap();
         let tool = CronUpdateTool::new(cfg.clone(), test_security(&cfg), "test-agent");
@@ -376,11 +372,11 @@ mod tests {
     async fn blocks_mutation_in_read_only_mode() {
         let tmp = TempDir::new().unwrap();
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         seed_test_agent(&mut config);
         let job = cron::add_job(&config, "test-agent", "*/5 * * * *", "echo ok").unwrap();
         config
@@ -406,7 +402,7 @@ mod tests {
     async fn medium_risk_shell_update_requires_approval() {
         let tmp = TempDir::new().unwrap();
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -421,7 +417,7 @@ mod tests {
             .entry("default".into())
             .or_default()
             .allowed_commands = vec!["echo".into(), "touch".into()];
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         seed_test_agent(&mut config);
         let cfg = Arc::new(config);
         let job = cron::add_job(&cfg, "test-agent", "*/5 * * * *", "echo ok").unwrap();
@@ -457,13 +453,13 @@ mod tests {
     fn patch_schema_covers_all_cronjobpatch_fields_and_schedule_is_oneof() {
         let tmp = TempDir::new().unwrap();
         let cfg = Arc::new(Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         });
         let security = Arc::new(SecurityPolicy::from_risk_profile(
             &zeroclaw_config::schema::RiskProfileConfig::default(),
-            &cfg.workspace_dir,
+            &cfg.data_dir,
         ));
         let tool = CronUpdateTool::new(cfg, security, "test-agent");
         let schema = tool.parameters_schema();
@@ -558,7 +554,7 @@ mod tests {
     async fn blocks_update_when_rate_limited() {
         let tmp = TempDir::new().unwrap();
         let mut config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            data_dir: tmp.path().join("data"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -573,7 +569,7 @@ mod tests {
             .entry("default".into())
             .or_default()
             .max_actions_per_hour = 0;
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        std::fs::create_dir_all(&config.data_dir).unwrap();
         seed_test_agent(&mut config);
         let cfg = Arc::new(config);
         let job = cron::add_job(&cfg, "test-agent", "*/5 * * * *", "echo ok").unwrap();

@@ -400,57 +400,75 @@ pub struct MigrateReport {
     pub to_version: u32,
 }
 
-/// Move a legacy `<install>/workspace/` into
-/// `<install>/agents/default/workspace/` (one-time migration from the
-/// pre-multi-agent layout).
+/// Subdirectory names under the legacy `<install>/workspace/` tree
+/// that hold shared databases. These move to `<install>/data/<name>/`
+/// during the split; everything else lands in
+/// `<install>/agents/default/workspace/` (per-agent markdown +
+/// identity files).
+const LEGACY_SHARED_DB_DIRS: &[&str] = &["memory", "sessions", "state"];
+
+/// Split a legacy `<install>/workspace/` into:
+/// - `<install>/data/<name>/` for shared databases (memory, sessions,
+///   state) — these live at the instance root in V3, with per-agent
+///   attribution at the row level.
+/// - `<install>/agents/default/workspace/<rest>` for per-agent
+///   plaintext (MEMORY.md, IDENTITY.md, SOUL.md, any other files).
 ///
-/// Idempotent: on a fresh install (no legacy dir) this is a no-op;
-/// on an already-migrated install (legacy dir gone, new dir
-/// populated) this is also a no-op. Mid-migration crash recovery is
-/// the operator's responsibility — the function refuses to overwrite
-/// a populated target dir, so a half-finished move surfaces as a
-/// loud error rather than data loss.
+/// Idempotent: on a fresh install (no legacy dir) this is a no-op; on
+/// an already-migrated install where the legacy dir is gone, this is
+/// also a no-op. Mid-migration crash recovery is the operator's
+/// responsibility — the function refuses to clobber a populated
+/// target slot, so a half-finished split surfaces as a loud error
+/// rather than data loss.
 ///
 /// Before any move, copies the legacy workspace contents to
 /// `<install>/backup-<timestamp>/legacy-workspace/` so a rollback is
 /// just `mv` back. The backup uses copy-not-rename so a partial
 /// failure mid-copy does not orphan the legacy data.
 ///
-/// Returns `Ok(true)` when a migration actually ran, `Ok(false)`
-/// when nothing needed to happen.
+/// Returns `Ok(true)` when a split actually ran, `Ok(false)` when
+/// nothing needed to happen.
 pub fn migrate_legacy_workspace_to_default_agent(install_root: &Path) -> Result<bool> {
     let legacy = install_root.join("workspace");
-    let agents_dir = install_root.join("agents");
-    let new_default = agents_dir.join("default").join("workspace");
+    let data_target = install_root.join("data");
+    let agent_default = install_root
+        .join("agents")
+        .join("default")
+        .join("workspace");
 
-    // Fast path: legacy doesn't exist → nothing to do (fresh install or
-    // already migrated).
+    // Fast path: legacy doesn't exist → nothing to do.
     if !legacy.is_dir() {
         return Ok(false);
     }
 
-    // The new path already exists AND is populated → assume migration
-    // already ran and the operator (or a previous boot) hasn't
-    // cleaned up the legacy dir yet. Don't touch.
-    if new_default.is_dir() {
-        let populated = std::fs::read_dir(&new_default)
-            .map(|mut iter| iter.next().is_some())
-            .unwrap_or(false);
-        if populated {
-            tracing::info!(
-                target = %new_default.display(),
-                legacy = %legacy.display(),
-                "filesystem migration: target already populated; skipping move. \
-                 Legacy dir can be removed manually after verifying the migration."
-            );
-            return Ok(false);
-        }
+    // Fully-migrated guard: if both targets exist AND are populated,
+    // a prior boot already ran the split. Leave everything alone so
+    // the operator can decide what to do with the residual legacy
+    // contents (kept in place for visibility, plus the timestamped
+    // backup from the original split).
+    let data_populated = data_target
+        .is_dir()
+        .then(|| std::fs::read_dir(&data_target).ok())
+        .flatten()
+        .is_some_and(|mut iter| iter.next().is_some());
+    let agent_populated = agent_default
+        .is_dir()
+        .then(|| std::fs::read_dir(&agent_default).ok())
+        .flatten()
+        .is_some_and(|mut iter| iter.next().is_some());
+    if data_populated && agent_populated {
+        tracing::info!(
+            data_target = %data_target.display(),
+            agent_target = %agent_default.display(),
+            legacy = %legacy.display(),
+            "filesystem migration: targets already populated; skipping split. \
+             Legacy dir can be removed manually after verifying."
+        );
+        return Ok(false);
     }
 
     // Pre-migration backup. Copy-not-rename so a partial failure mid-
-    // copy does not orphan the legacy data. The timestamp keeps
-    // backups distinct across multiple boot attempts on a broken
-    // install.
+    // copy does not orphan the legacy data.
     let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S").to_string();
     let backup_dir = install_root
         .join(format!("backup-{timestamp}"))
@@ -473,51 +491,108 @@ pub fn migrate_legacy_workspace_to_default_agent(install_root: &Path) -> Result<
         "[system] filesystem migration: legacy workspace backed up"
     );
 
-    // Build the agents/default/ tree, then move the legacy workspace
-    // dir into place under that. `rename` is the canonical "atomic"
-    // move on the same filesystem; on a cross-fs path (e.g. legacy on
-    // tmpfs, target on disk) `rename` fails and we fall back to
-    // copy-then-remove.
-    std::fs::create_dir_all(agents_dir.join("default")).with_context(|| {
+    std::fs::create_dir_all(&data_target).with_context(|| {
         format!(
-            "[system] failed to create per-agent dir {}",
-            agents_dir.join("default").display()
+            "[system] failed to create shared data dir {}",
+            data_target.display()
+        )
+    })?;
+    std::fs::create_dir_all(&agent_default).with_context(|| {
+        format!(
+            "[system] failed to create default agent workspace dir {}",
+            agent_default.display()
         )
     })?;
 
-    if new_default.exists() {
-        // Empty target dir from a previous skipped run; remove so
-        // rename has a clean slot.
-        std::fs::remove_dir(&new_default).with_context(|| {
+    let mut shared_count = 0usize;
+    let mut agent_count = 0usize;
+    for entry in std::fs::read_dir(&legacy).with_context(|| {
+        format!(
+            "[system] failed to enumerate legacy workspace at {}",
+            legacy.display()
+        )
+    })? {
+        let entry = entry.with_context(|| {
             format!(
-                "[system] failed to remove empty target {} before move",
-                new_default.display()
-            )
-        })?;
-    }
-
-    if std::fs::rename(&legacy, &new_default).is_err() {
-        // Cross-filesystem path: copy + remove.
-        copy_dir_recursive(&legacy, &new_default).with_context(|| {
-            format!(
-                "[system] failed to copy legacy workspace from {} to {}",
-                legacy.display(),
-                new_default.display()
-            )
-        })?;
-        std::fs::remove_dir_all(&legacy).with_context(|| {
-            format!(
-                "[system] failed to remove legacy workspace {} after copy",
+                "[system] failed to read entry in legacy workspace at {}",
                 legacy.display()
             )
         })?;
+        let name = entry.file_name();
+        let src = entry.path();
+        let is_shared_db = name
+            .to_str()
+            .is_some_and(|n| LEGACY_SHARED_DB_DIRS.contains(&n));
+        let dst = if is_shared_db {
+            data_target.join(&name)
+        } else {
+            agent_default.join(&name)
+        };
+
+        if dst.exists() {
+            tracing::warn!(
+                source = %src.display(),
+                target = %dst.display(),
+                "filesystem migration: target already exists; refusing to clobber. \
+                 Resolve manually (the entry is still present in the legacy workspace and \
+                 in the timestamped backup); the rest of the split will continue."
+            );
+            continue;
+        }
+
+        if std::fs::rename(&src, &dst).is_err() {
+            // Cross-filesystem path (e.g. legacy on tmpfs, target on
+            // disk): copy + remove.
+            if src.is_dir() {
+                copy_dir_recursive(&src, &dst).with_context(|| {
+                    format!(
+                        "[system] failed to copy {} to {}",
+                        src.display(),
+                        dst.display()
+                    )
+                })?;
+                std::fs::remove_dir_all(&src).with_context(|| {
+                    format!("[system] failed to remove {} after copy", src.display())
+                })?;
+            } else {
+                std::fs::copy(&src, &dst).with_context(|| {
+                    format!(
+                        "[system] failed to copy {} to {}",
+                        src.display(),
+                        dst.display()
+                    )
+                })?;
+                std::fs::remove_file(&src).with_context(|| {
+                    format!("[system] failed to remove {} after copy", src.display())
+                })?;
+            }
+        }
+
+        if is_shared_db {
+            shared_count += 1;
+        } else {
+            agent_count += 1;
+        }
+    }
+
+    // Remove the (now-empty) legacy workspace. If anything remains
+    // (e.g. an entry we couldn't move because the target existed),
+    // leave the dir in place so the operator can inspect.
+    if std::fs::read_dir(&legacy)
+        .map(|mut iter| iter.next().is_none())
+        .unwrap_or(false)
+    {
+        let _ = std::fs::remove_dir(&legacy);
     }
 
     tracing::info!(
         legacy = %legacy.display(),
-        target = %new_default.display(),
+        data_target = %data_target.display(),
+        agent_target = %agent_default.display(),
         backup = %backup_dir.display(),
-        "[system] filesystem migration: legacy workspace moved into default agent slot"
+        shared = shared_count,
+        agent = agent_count,
+        "[system] filesystem migration: legacy workspace split into shared data + default agent workspace"
     );
     Ok(true)
 }
@@ -956,33 +1031,117 @@ mod tests {
     }
 
     #[test]
-    fn fs_migration_skips_when_target_already_populated() {
+    fn fs_migration_skips_when_both_targets_already_populated() {
         let tmp = tempfile::tempdir().unwrap();
         let install_root = tmp.path();
 
-        // Both legacy AND new-default exist + populated. The
-        // migration must NOT clobber the new dir.
+        // Legacy AND both new targets exist + populated → assume the
+        // operator already ran the split. Skip everything (no backup,
+        // no work).
         let legacy = install_root.join("workspace");
         std::fs::create_dir_all(&legacy).unwrap();
         std::fs::write(legacy.join("MEMORY.md"), "legacy-content").unwrap();
 
-        let new_default = install_root
+        let data_target = install_root.join("data");
+        std::fs::create_dir_all(data_target.join("memory")).unwrap();
+        std::fs::write(data_target.join("memory").join("brain.db"), b"db").unwrap();
+
+        let agent_default = install_root
             .join("agents")
             .join("default")
             .join("workspace");
-        std::fs::create_dir_all(&new_default).unwrap();
-        std::fs::write(new_default.join("MEMORY.md"), "new-content").unwrap();
+        std::fs::create_dir_all(&agent_default).unwrap();
+        std::fs::write(agent_default.join("MEMORY.md"), "new-content").unwrap();
 
         let ran = migrate_legacy_workspace_to_default_agent(install_root).unwrap();
-        assert!(!ran, "populated target → no migration runs");
+        assert!(!ran, "populated targets → no migration runs");
         assert!(
             legacy.exists(),
-            "legacy workspace must be left in place when target is populated"
+            "legacy workspace must be left in place when targets are populated"
         );
         assert_eq!(
-            std::fs::read_to_string(new_default.join("MEMORY.md")).unwrap(),
+            std::fs::read_to_string(agent_default.join("MEMORY.md")).unwrap(),
             "new-content",
-            "target contents must not be clobbered"
+            "agent target contents must not be clobbered"
+        );
+    }
+
+    #[test]
+    fn fs_migration_splits_databases_to_data_and_markdown_to_agent_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let install_root = tmp.path();
+        let legacy = install_root.join("workspace");
+        std::fs::create_dir_all(legacy.join("memory")).unwrap();
+        std::fs::create_dir_all(legacy.join("sessions")).unwrap();
+        std::fs::create_dir_all(legacy.join("state")).unwrap();
+        std::fs::write(legacy.join("memory").join("brain.db"), b"db-bytes").unwrap();
+        std::fs::write(legacy.join("sessions").join("sessions.db"), b"sess").unwrap();
+        std::fs::write(legacy.join("state").join("costs.jsonl"), b"{}").unwrap();
+        std::fs::write(legacy.join("MEMORY.md"), "# Memory\n\nfoo").unwrap();
+        std::fs::write(legacy.join("IDENTITY.md"), "# Identity\nbar").unwrap();
+        std::fs::write(legacy.join("SOUL.md"), "# Soul\nbaz").unwrap();
+
+        let ran = migrate_legacy_workspace_to_default_agent(install_root).unwrap();
+        assert!(ran);
+
+        // Shared databases moved under <install>/data/.
+        let data_target = install_root.join("data");
+        assert_eq!(
+            std::fs::read(data_target.join("memory").join("brain.db")).unwrap(),
+            b"db-bytes"
+        );
+        assert_eq!(
+            std::fs::read(data_target.join("sessions").join("sessions.db")).unwrap(),
+            b"sess"
+        );
+        assert_eq!(
+            std::fs::read(data_target.join("state").join("costs.jsonl")).unwrap(),
+            b"{}"
+        );
+
+        // Per-agent markdown moved under <install>/agents/default/workspace/.
+        let agent_default = install_root
+            .join("agents")
+            .join("default")
+            .join("workspace");
+        assert_eq!(
+            std::fs::read_to_string(agent_default.join("MEMORY.md")).unwrap(),
+            "# Memory\n\nfoo"
+        );
+        assert_eq!(
+            std::fs::read_to_string(agent_default.join("IDENTITY.md")).unwrap(),
+            "# Identity\nbar"
+        );
+        assert_eq!(
+            std::fs::read_to_string(agent_default.join("SOUL.md")).unwrap(),
+            "# Soul\nbaz"
+        );
+
+        // Legacy workspace removed since it was fully drained.
+        assert!(
+            !legacy.exists(),
+            "legacy workspace must be removed after a clean split"
+        );
+
+        // Backup captured the legacy tree.
+        let backup_legacy = std::fs::read_dir(install_root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .find(|e| {
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|s| s.starts_with("backup-"))
+            })
+            .expect("backup dir created")
+            .path()
+            .join("legacy-workspace");
+        assert_eq!(
+            std::fs::read(backup_legacy.join("memory").join("brain.db")).unwrap(),
+            b"db-bytes"
+        );
+        assert_eq!(
+            std::fs::read_to_string(backup_legacy.join("MEMORY.md")).unwrap(),
+            "# Memory\n\nfoo"
         );
     }
 }

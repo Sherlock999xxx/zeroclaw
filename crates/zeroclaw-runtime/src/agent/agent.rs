@@ -473,7 +473,7 @@ impl Agent {
     /// for this agent — i.e. the boundary used by file_read/write/edit and the
     /// cwd used by the shell tool. Memory storage, identity files, scheduled
     /// task DBs, and other on-disk state continue to live under
-    /// `config.workspace_dir`.
+    /// `config.data_dir`.
     ///
     /// This is what ACP sessions use to pin tool path resolution to the
     /// IDE-provided `cwd` without relocating the agent's data directory.
@@ -551,6 +551,16 @@ impl Agent {
         // dir). The session-cwd override still wins so ACP sessions
         // can pin tool path resolution to an IDE-provided cwd.
         let agent_workspace = config.agent_workspace_dir(agent_alias);
+        // Create the per-agent workspace dir on demand so bootstrap
+        // file writes (and downstream markdown-memory backends) don't
+        // hit ENOENT on a fresh install.
+        if let Err(e) = tokio::fs::create_dir_all(&agent_workspace).await {
+            tracing::warn!(
+                agent = %agent_alias,
+                workspace = %agent_workspace.display(),
+                "Failed to create per-agent workspace dir (continuing): {e}"
+            );
+        }
         // Seed the agent's bootstrap files (AGENTS.md / SOUL.md /
         // IDENTITY.md / USER.md / TOOLS.md / BOOTSTRAP.md) on first
         // run. Idempotent — never overwrites existing files; only
@@ -745,7 +755,7 @@ impl Agent {
 
         let response_cache = if config.memory.response_cache_enabled {
             zeroclaw_memory::response_cache::ResponseCache::with_hot_cache(
-                &config.workspace_dir,
+                &config.data_dir,
                 config.memory.response_cache_ttl_minutes,
                 config.memory.response_cache_max_entries,
                 config.memory.response_cache_hot_entries,
@@ -766,7 +776,7 @@ impl Agent {
 
         // Load skills and register them as callable tools so WebSocket/daemon
         // sessions can execute them (not just describe them in the prompt).
-        let skills = crate::skills::load_skills_with_config(&config.workspace_dir, config);
+        let skills = crate::skills::load_skills_with_config(&config.data_dir, config);
         tools::register_skill_tools(&mut tools, &skills, security.clone());
 
         let approval_manager = if approval_backchannel {
@@ -798,7 +808,7 @@ impl Agent {
             .classification_config(config.query_classification.clone())
             .available_hints(available_hints)
             .route_model_by_hint(route_model_by_hint)
-            .identity_config(config.identity.clone())
+            .identity_config(agent_cfg.identity.clone())
             .skills(skills)
             .skills_prompt_mode(config.skills.prompt_injection_mode)
             .auto_save(config.memory.auto_save)
@@ -2633,7 +2643,7 @@ mod tests {
         std::fs::create_dir_all(&workspace_dir).unwrap();
 
         let mut config = zeroclaw_config::schema::Config {
-            workspace_dir,
+            data_dir: workspace_dir,
             config_path: tmp.path().join("config.toml"),
             ..Default::default()
         };

@@ -133,7 +133,7 @@ async fn scheduled_run_does_not_leak_conversation_memory_into_provider_request()
     let mut risk_profiles = HashMap::new();
     risk_profiles.insert("default".to_string(), RiskProfileConfig::default());
     let mut config = Config {
-        workspace_dir: workspace_dir.clone(),
+        data_dir: workspace_dir.clone(),
         config_path: tmp.path().join("config.toml"),
         model_providers,
         agents,

@@ -182,7 +182,7 @@ pub async fn handle_index(
 
     let workspace_dir = {
         let cfg = state.config.read();
-        cfg.workspace_dir.clone()
+        cfg.data_dir.clone()
     };
 
     let files: Vec<PersonalityIndexEntry> = EDITABLE_PERSONALITY_FILES
@@ -232,7 +232,7 @@ pub async fn handle_get(
 
     let workspace_dir = {
         let cfg = state.config.read();
-        cfg.workspace_dir.clone()
+        cfg.data_dir.clone()
     };
     let path = personality_path(&workspace_dir, q.agent.as_deref(), allowed);
 
@@ -299,7 +299,7 @@ pub async fn handle_put(
 
     let workspace_dir = {
         let cfg = state.config.read();
-        cfg.workspace_dir.clone()
+        cfg.data_dir.clone()
     };
     let path = personality_path(&workspace_dir, q.agent.as_deref(), allowed);
 

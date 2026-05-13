@@ -351,7 +351,7 @@ async fn handle_socket(
         }
     }
 
-    let session_cwd = match resolve_session_cwd(requested_cwd.as_deref(), &config.workspace_dir) {
+    let session_cwd = match resolve_session_cwd(requested_cwd.as_deref(), &config.data_dir) {
         Ok(cwd) => cwd,
         Err(e) => {
             let err = serde_json::json!({
