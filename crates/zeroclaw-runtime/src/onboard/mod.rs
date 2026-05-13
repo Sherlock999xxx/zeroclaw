@@ -341,16 +341,16 @@ async fn prompt_field(
             }
         }
         PropKind::String | PropKind::Integer | PropKind::Float => {
-            // Prefill priority: config current value > section default > empty.
-            // When the user accepts the prefilled default (no edit), we
-            // still write it through set_prop so the config records the
-            // resolved value rather than leaving it as an implicit fallback.
-            let prefill = if is_set {
-                Some(current.as_str())
+            // `current` pre-fills the buffer (edit mode); `placeholder`
+            // renders the section default as ghost text. The Enter-on-
+            // empty path commits the placeholder so the resolved value
+            // is still recorded in config.toml.
+            let (prefill, placeholder) = if is_set {
+                (Some(current.as_str()), None)
             } else {
-                default
+                (None, default)
             };
-            match ui.string(prompt, prefill).await? {
+            match ui.string(prompt, prefill, placeholder).await? {
                 Answer::Back => return Ok(Nav::Back),
                 Answer::Value(new) => {
                     if (is_set || !new.is_empty()) && new != current {
@@ -360,17 +360,17 @@ async fn prompt_field(
             }
         }
         PropKind::StringArray => {
-            let prefill = if is_set {
-                Some(current.as_str())
+            let (prefill, placeholder) = if is_set {
+                (Some(current.as_str()), None)
             } else {
-                default
+                (None, default)
             };
             // Accepts comma-separated input or the bracketed form from
             // config.toml. Reject malformed brackets — otherwise the
             // parser silently coerces them into a single-element list
             // of garbage.
             loop {
-                match ui.string(prompt, prefill).await? {
+                match ui.string(prompt, prefill, placeholder).await? {
                     Answer::Back => return Ok(Nav::Back),
                     Answer::Value(new) => {
                         let trimmed = new.trim();
@@ -414,12 +414,12 @@ async fn prompt_field(
             // a multi-row sub-form UI; surface this as a JSON-array text
             // input so the field is at least editable from the CLI. The
             // dashboard renders these properly via the per-row editor.
-            let prefill = if is_set {
-                Some(current.as_str())
+            let (prefill, placeholder) = if is_set {
+                (Some(current.as_str()), None)
             } else {
-                default
+                (None, default)
             };
-            match ui.string(prompt, prefill).await? {
+            match ui.string(prompt, prefill, placeholder).await? {
                 Answer::Back => return Ok(Nav::Back),
                 Answer::Value(new) => {
                     if (is_set || !new.is_empty()) && new != current {
@@ -432,12 +432,12 @@ async fn prompt_field(
             // Struct-shaped scalar (e.g. model_providers.<id>.pricing).
             // Same TUI fallback as ObjectArray: edit as raw JSON; the
             // dashboard renders a proper sub-form.
-            let prefill = if is_set {
-                Some(current.as_str())
+            let (prefill, placeholder) = if is_set {
+                (Some(current.as_str()), None)
             } else {
-                default
+                (None, default)
             };
-            match ui.string(prompt, prefill).await? {
+            match ui.string(prompt, prefill, placeholder).await? {
                 Answer::Back => return Ok(Nav::Back),
                 Answer::Value(new) => {
                     if (is_set || !new.is_empty()) && new != current {
@@ -683,7 +683,7 @@ fn openai_compat_discovery_base_url(
 
 async fn prompt_custom_openai_base_url(ui: &mut dyn OnboardUi) -> Result<Option<String>> {
     loop {
-        match ui.string("OpenAI-compatible base URL", None).await? {
+        match ui.string("OpenAI-compatible base URL", None, None).await? {
             Answer::Back => return Ok(None),
             Answer::Value(value) => {
                 let normalized = value.trim().trim_end_matches('/').to_string();
@@ -701,8 +701,15 @@ async fn prompt_custom_openai_base_url(ui: &mut dyn OnboardUi) -> Result<Option<
 /// valid value or backs out. Returns `Some(alias)` on success, `None` on Back.
 async fn prompt_alias_name(ui: &mut dyn OnboardUi, suggestion: &str) -> Result<Option<String>> {
     loop {
+        // Alias suggestion is a default the user can accept by hitting
+        // Enter, not a pre-filled string to edit — surface it as the
+        // ghost-text placeholder so the input box is otherwise empty.
         match ui
-            .string("Alias (name for this configuration)", Some(suggestion))
+            .string(
+                "Alias (name for this configuration)",
+                None,
+                Some(suggestion),
+            )
             .await?
         {
             Answer::Back => return Ok(None),
@@ -1056,8 +1063,8 @@ async fn prompt_model(cfg: &mut Config, ui: &mut dyn OnboardUi, prefix: &str) ->
                 "Catalog lookup failed for {model_provider} — enter a model id manually \
                  (see the model_provider's docs for the exact format)."
             ));
-            let default = if is_set { Some(current.as_str()) } else { None };
-            match ui.string("Model id", default).await? {
+            let prefill = if is_set { Some(current.as_str()) } else { None };
+            match ui.string("Model id", prefill, None).await? {
                 Answer::Back => return Ok(Nav::Back),
                 Answer::Value(v) => v,
             }
@@ -1498,7 +1505,7 @@ async fn prompt_agent_alias_single(
         ui.note(&format!(
             "{help}\nNo {field} aliases configured yet. Press Enter to leave empty."
         ));
-        match ui.string(field, Some(&current)).await? {
+        match ui.string(field, Some(&current), None).await? {
             Answer::Back => return Ok(Nav::Back),
             Answer::Value(new) => {
                 if new != current {
@@ -2263,11 +2270,12 @@ mod tests {
             &mut self,
             prompt: &str,
             current: Option<&str>,
+            placeholder: Option<&str>,
         ) -> anyhow::Result<Answer<String>> {
             if prompt == self.back_prompt {
                 return Ok(Answer::Back);
             }
-            self.inner.string(prompt, current).await
+            self.inner.string(prompt, current, placeholder).await
         }
 
         async fn secret(

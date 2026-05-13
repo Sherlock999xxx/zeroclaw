@@ -396,10 +396,25 @@ pub enum Answer<T> {
 pub trait OnboardUi: Send {
     async fn confirm(&mut self, prompt: &str, default: bool) -> anyhow::Result<Answer<bool>>;
 
+    /// Single-line text/number/path input.
+    ///
+    /// - `current`: existing value to pre-fill into the editable buffer
+    ///   (edit mode — user lands on the prompt with the value typed in
+    ///   and can modify it before Enter).
+    /// - `placeholder`: a schema/runtime default to surface as ghost-text
+    ///   when the buffer is empty. Backends that support styled output
+    ///   render this dim; pressing Enter on an empty buffer commits the
+    ///   placeholder as the chosen value.
+    ///
+    /// At most one of `current` / `placeholder` should be `Some` at any
+    /// call site: if the user has set a value already, pre-fill it;
+    /// otherwise surface the default as ghost text. Passing both
+    /// devolves to pre-fill semantics (the placeholder is ignored).
     async fn string(
         &mut self,
         prompt: &str,
         current: Option<&str>,
+        placeholder: Option<&str>,
     ) -> anyhow::Result<Answer<String>>;
 
     /// `Answer::Value(Some(v))` = new secret entered. `Answer::Value(None)` =

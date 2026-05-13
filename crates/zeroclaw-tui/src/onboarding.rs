@@ -298,8 +298,20 @@ impl OnboardUi for RatatuiUi {
         }
     }
 
-    async fn string(&mut self, prompt: &str, current: Option<&str>) -> Result<Answer<String>> {
+    async fn string(
+        &mut self,
+        prompt: &str,
+        current: Option<&str>,
+        placeholder: Option<&str>,
+    ) -> Result<Answer<String>> {
         let mut buffer = current.unwrap_or_default().to_string();
+        // If the caller pre-filled `current`, ignore `placeholder`
+        // (pre-fill wins; the user is editing).
+        let placeholder = if current.is_some() && !buffer.is_empty() {
+            None
+        } else {
+            placeholder.map(str::to_string)
+        };
         loop {
             let section = self.section.clone();
             let subsection = self.subsection.clone();
@@ -332,6 +344,7 @@ impl OnboardUi for RatatuiUi {
                         label: prompt,
                         input: &input,
                         masked: false,
+                        placeholder: placeholder.as_deref(),
                     },
                     r.input,
                 );
@@ -341,7 +354,17 @@ impl OnboardUi for RatatuiUi {
                 KeyEvent {
                     code: KeyCode::Enter,
                     ..
-                } => return Ok(Answer::Value(buffer)),
+                } => {
+                    // Enter with an empty buffer + a placeholder default
+                    // commits the placeholder as the value. This is the
+                    // "ghost text disappears, default accepted" path.
+                    if buffer.is_empty()
+                        && let Some(default) = placeholder.as_deref().filter(|s| !s.is_empty())
+                    {
+                        return Ok(Answer::Value(default.to_string()));
+                    }
+                    return Ok(Answer::Value(buffer));
+                }
                 KeyEvent {
                     code: KeyCode::Esc, ..
                 } => return Ok(Answer::Back),
@@ -404,6 +427,7 @@ impl OnboardUi for RatatuiUi {
                         label: prompt,
                         input: &input,
                         masked: true,
+                        placeholder: None,
                     },
                     r.input,
                 );
