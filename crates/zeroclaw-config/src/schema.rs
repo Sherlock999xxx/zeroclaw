@@ -3022,6 +3022,26 @@ impl Config {
         self.providers.models.find(type_key, alias_key)
     }
 
+    /// Resolve `(provider_type, provider_alias, &ModelProviderConfig)` for an
+    /// agent. Same lookup as `model_provider_for_agent` but also returns the
+    /// `'static` type key that downstream provider factories
+    /// (`create_routed_model_provider_with_options`, etc.) need. Returns
+    /// `None` when the agent has no `model_provider` set, when the reference
+    /// is unparseable, or when the resolved entry has been deleted from
+    /// `providers.models`.
+    #[must_use]
+    pub fn resolved_model_provider_for_agent(
+        &self,
+        agent_alias: &str,
+    ) -> Option<(&'static str, &str, &ModelProviderConfig)> {
+        let agent = self.agents.get(agent_alias)?;
+        let (type_key, alias_key) = agent.model_provider.split_once('.')?;
+        self.providers
+            .models
+            .iter_entries()
+            .find(|(ty, al, _)| *ty == type_key && *al == alias_key)
+    }
+
     /// Reverse-lookup the agent alias that owns a configured channel
     /// (`<type>.<alias>`). Returns the first agent listing the channel in
     /// its `channels` field. `None` when no agent owns the channel —

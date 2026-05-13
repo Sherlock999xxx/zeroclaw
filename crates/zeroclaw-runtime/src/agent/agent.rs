@@ -589,11 +589,29 @@ impl Agent {
             policy
         });
 
-        let primary_model_provider = config.first_model_provider();
+        let (provider_name, _provider_alias, agent_model_provider) =
+            match config.resolved_model_provider_for_agent(agent_alias) {
+                Some(resolved) => (resolved.0, resolved.1, Some(resolved.2)),
+                None => {
+                    let agent_ref = agent_cfg.model_provider.as_str();
+                    if !agent_ref.is_empty() {
+                        anyhow::bail!(
+                            "agents.{agent_alias}.model_provider = \"{agent_ref}\" does not \
+                             resolve to a configured [model_providers.<type>.<alias>] entry"
+                        );
+                    }
+                    // V3 schema requires every agent to set model_provider.
+                    // Empty is a config error rather than a silent fallback.
+                    anyhow::bail!(
+                        "agents.{agent_alias}.model_provider is empty — set it to a \
+                         configured \"<type>.<alias>\" (e.g. \"anthropic.{agent_alias}\")"
+                    );
+                }
+            };
         let memory: Arc<dyn Memory> = zeroclaw_memory::create_memory_for_agent(
             config,
             agent_alias,
-            primary_model_provider.and_then(|e| e.api_key.as_deref()),
+            agent_model_provider.and_then(|e| e.api_key.as_deref()),
         )
         .await?;
 
@@ -629,7 +647,7 @@ impl Agent {
             &config.web_fetch,
             &security.workspace_dir,
             &config.agents,
-            primary_model_provider.and_then(|e| e.api_key.as_deref()),
+            agent_model_provider.and_then(|e| e.api_key.as_deref()),
             config,
             None,
         );
@@ -695,33 +713,17 @@ impl Agent {
             }
         }
 
-        let provider_name = config.first_model_provider_type().unwrap_or("openrouter");
-
-        let model_name = match primary_model_provider
+        let model_name = match agent_model_provider
             .and_then(|e| e.model.as_deref())
             .map(str::trim)
             .filter(|m| !m.is_empty())
         {
             Some(m) => m.to_string(),
-            None => match config.resolve_default_model() {
-                Some(m) => {
-                    tracing::warn!(
-                        model_provider = provider_name,
-                        model = %m,
-                        "fallback model_provider has no `model` set; using first configured \
-                         providers.models entry as default. Set [model_providers.{provider_name}] \
-                         model = \"...\" to silence this warning.",
-                    );
-                    m
-                }
-                None => {
-                    anyhow::bail!(
-                        "no model configured: providers.models is empty or has no `model` field \
-                         set. Configure at least one [model_providers.<type>.<alias>] \
-                         model = \"...\" or define a [[model_routes]] hint.",
-                    )
-                }
-            },
+            None => anyhow::bail!(
+                "agents.{agent_alias}.model_provider resolves to a model_provider entry \
+                 with no `model` set. Configure [model_providers.{provider_name}.<alias>] \
+                 model = \"...\".",
+            ),
         };
 
         let provider_runtime_options =
@@ -730,8 +732,8 @@ impl Agent {
         let model_provider: Box<dyn ModelProvider> =
             zeroclaw_providers::create_routed_model_provider_with_options(
                 provider_name,
-                primary_model_provider.and_then(|e| e.api_key.as_deref()),
-                primary_model_provider.and_then(|e| e.uri.as_deref()),
+                agent_model_provider.and_then(|e| e.api_key.as_deref()),
+                agent_model_provider.and_then(|e| e.uri.as_deref()),
                 &config.reliability,
                 &config.model_routes,
                 &model_name,
@@ -800,7 +802,7 @@ impl Agent {
             .config(agent_cfg.clone())
             .model_name(model_name)
             .temperature(
-                primary_model_provider
+                agent_model_provider
                     .and_then(|e| e.temperature)
                     .unwrap_or(0.7),
             )
