@@ -155,13 +155,20 @@ export function ConfigDraftProvider({ children }: { children: ReactNode }) {
 
   const saveAll = useCallback(async (): Promise<PatchResponse> => {
     const ops: PatchOp[] = [];
+    const draftedPaths = new Set<string>();
     for (const [path, entry] of Object.entries(drafts)) {
+      draftedPaths.add(path);
       const op: PatchOp = { op: 'replace', path, value: entry.value };
       const c = comments[path];
       if (c && c.length > 0) op.comment = c;
       ops.push(op);
     }
+    for (const [path, comment] of Object.entries(comments)) {
+      if (draftedPaths.has(path) || tombstones.has(path)) continue;
+      ops.push({ op: 'comment', path, comment });
+    }
     for (const path of tombstones) {
+      if (draftedPaths.has(path)) continue;
       ops.push({ op: 'remove', path });
     }
     if (ops.length === 0) {
@@ -223,28 +230,27 @@ export function useConfigDraft(): ConfigDraftCtx {
   return ctx;
 }
 
-/** Count of pending changes — drafts + tombstones, deduplicated. */
+/** Count of pending changes — drafts + comments + tombstones, deduplicated by path. */
 export function useConfigDirtyCount(): number {
-  const { drafts, tombstones } = useConfigDraft();
-  const draftKeys = Object.keys(drafts);
-  const draftSet = new Set(draftKeys);
-  let count = draftKeys.length;
-  for (const t of tombstones) {
-    if (!draftSet.has(t)) count += 1;
-  }
-  return count;
+  const { drafts, comments, tombstones } = useConfigDraft();
+  const seen = new Set<string>();
+  for (const path of Object.keys(drafts)) seen.add(path);
+  for (const path of Object.keys(comments)) seen.add(path);
+  for (const path of tombstones) seen.add(path);
+  return seen.size;
 }
 
 /** Aggregate top-level section keys (`channels`, `memory`, ...) that have
  *  any pending edits. Used by the banner to show which sections to revisit. */
 export function useConfigDirtySections(): string[] {
-  const { drafts, tombstones } = useConfigDraft();
+  const { drafts, comments, tombstones } = useConfigDraft();
   const seen = new Set<string>();
   const collect = (path: string) => {
     const top = path.split('.', 1)[0];
     if (top) seen.add(top);
   };
   for (const path of Object.keys(drafts)) collect(path);
+  for (const path of Object.keys(comments)) collect(path);
   for (const path of tombstones) collect(path);
   return [...seen].sort();
 }

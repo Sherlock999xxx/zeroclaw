@@ -247,7 +247,7 @@ export interface ListResponse {
 }
 
 export interface PatchOp {
-  op: 'add' | 'replace' | 'remove' | 'test';
+  op: 'add' | 'replace' | 'remove' | 'test' | 'comment';
   path: string;
   value?: unknown;
   comment?: string;

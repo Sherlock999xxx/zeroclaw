@@ -1086,6 +1086,34 @@ pub async fn handle_patch(
                     });
                 }
             }
+            "comment" => {
+                // Comment-only update: record the (path, comment) pair
+                // for `apply_comments` after the patch commits, but
+                // skip `set_prop` entirely. Lets the operator annotate
+                // a secret without rotating its ciphertext.
+                if info.is_none() {
+                    return error_response(
+                        ConfigApiError::path_not_found(&path).with_op_index(idx),
+                    );
+                }
+                let Some(comment) = op.comment.clone() else {
+                    return error_response(
+                        ConfigApiError::new(
+                            ConfigApiCode::ValueTypeMismatch,
+                            "JSON Patch `comment` op requires `comment` field",
+                        )
+                        .with_path(&path)
+                        .with_op_index(idx),
+                    );
+                };
+                results.push(PatchOpResult {
+                    op: op.op.clone(),
+                    path,
+                    value: None,
+                    populated: None,
+                    comment: Some(comment),
+                });
+            }
             "move" | "copy" => {
                 return error_response(
                     ConfigApiError::op_not_supported(&op.op)

@@ -367,16 +367,7 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(function FieldForm
     setWarnings([]);
 
     const ops: PatchOp[] = [];
-    for (const e of entries) {
-      if (configDraft.tombstones.has(e.path)) {
-        ops.push({ op: 'remove', path: e.path });
-        continue;
-      }
-      const raw = draft[e.path] ?? '';
-      const original = defaultInputValue(e);
-      // Secrets with empty input mean "don't change".
-      if (e.is_secret && raw.length === 0) continue;
-      if (raw === original) continue;
+    const parseStringArrayValue = (e: ListResponseEntry, raw: string): unknown => {
       let value: unknown = parseInput(e, raw);
       // For Option<Vec<String>>: empty rows = "no opinion" → send null
       // (clears the field). Mandatory Vec<String>: empty stays as [] (an
@@ -389,9 +380,42 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(function FieldForm
       ) {
         value = null;
       }
-      const op: PatchOp = { op: 'replace', path: e.path, value };
-      const c = comments[e.path];
-      if (c && c.length > 0) op.comment = c;
+      return value;
+    };
+    for (const e of entries) {
+      if (configDraft.tombstones.has(e.path)) {
+        ops.push({ op: 'remove', path: e.path });
+        continue;
+      }
+      const raw = draft[e.path] ?? '';
+      const original = defaultInputValue(e);
+      const valueChanged =
+        !(e.is_secret && raw.length === 0) && raw !== original;
+      const comment = comments[e.path] ?? '';
+      const commentChanged = comment.length > 0;
+      if (!valueChanged && !commentChanged) continue;
+      if (!valueChanged && commentChanged) {
+        // Secret: route through the comment-only op so ciphertext is
+        // preserved. Non-secret: round-trip via replace with the
+        // existing value.
+        if (e.is_secret) {
+          ops.push({ op: 'comment', path: e.path, comment });
+        } else {
+          ops.push({
+            op: 'replace',
+            path: e.path,
+            value: parseStringArrayValue(e, raw),
+            comment,
+          });
+        }
+        continue;
+      }
+      const op: PatchOp = {
+        op: 'replace',
+        path: e.path,
+        value: parseStringArrayValue(e, raw),
+      };
+      if (commentChanged) op.comment = comment;
       ops.push(op);
     }
 
@@ -476,11 +500,13 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(function FieldForm
       }
       const raw = draft[e.path] ?? '';
       const original = defaultInputValue(e);
-      if (e.is_secret && raw.length === 0) continue;
-      if (raw !== original) n += 1;
+      const valueChanged =
+        !(e.is_secret && raw.length === 0) && raw !== original;
+      const commentChanged = (comments[e.path] ?? '').length > 0;
+      if (valueChanged || commentChanged) n += 1;
     }
     return n;
-  }, [entries, draft, configDraft.tombstones]);
+  }, [entries, draft, comments, configDraft.tombstones]);
 
   // Warn user before navigating away with unsaved changes.
   useEffect(() => {
@@ -505,9 +531,11 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(function FieldForm
   }
 
   return (
-    <div className="flex flex-col gap-4 pb-20">
-      {/* pb-20 reserves space at the bottom so the last field isn't covered
-          by the sticky save bar when the form is short. */}
+    <div className="flex flex-col gap-4 pb-20 min-h-full">
+      {/* min-h-full stretches the form to fill the scroll area so the
+          sticky save bar anchors to the viewport bottom even when the
+          field list is short. pb-20 reserves space so the last field
+          isn't covered by the bar. */}
       {title && (
         <h2
           className="text-lg font-semibold"
@@ -705,7 +733,10 @@ function FieldRow({ entry, value, onChange, comment, onCommentChange, error, onD
   const renderer = rendererFor(entry);
   const [providerModels, setProviderModels] = useState<string[] | null>(null);
   const [modelsFetchFailed, setModelsFetchFailed] = useState(false);
-  const isProviderModelField = /^providers\.models\.[^.]+\.model$/.test(entry.path);
+  // Per-alias model field — `providers.models.<type>.<alias>.model`.
+  const isProviderModelField = /^providers\.models\.[^.]+\.[^.]+\.model$/.test(
+    entry.path,
+  );
 
   // Agent-form alias pickers. Each `agents.<alias>.<field>` row that
   // references another section's aliases (channels, model_provider, etc.)
