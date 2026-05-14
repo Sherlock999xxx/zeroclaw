@@ -46,6 +46,64 @@ function entryValue(entry: ListResponseEntry): unknown {
   return entry.populated ? entry.value : undefined;
 }
 
+/**
+ * Inline switch for a `bool` field. Track + thumb pattern with an
+ * adjacent `true` / `false` label so the form stays readable when
+ * dense. The component is dumb — it takes the current `value` and
+ * fires `onChange(next)` on click; the parent owns the draft state.
+ */
+function BoolSwitch({
+  id,
+  value,
+  onChange,
+}: {
+  id?: string;
+  value: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      id={id}
+      role="switch"
+      aria-checked={value}
+      onClick={() => onChange(!value)}
+      className="inline-flex items-center gap-2 rounded-full px-1 py-1 select-none"
+      style={{
+        background: value
+          ? 'var(--color-status-success-alpha-08)'
+          : 'var(--pc-bg-elevated)',
+        border: '1px solid',
+        borderColor: value
+          ? 'var(--color-status-success-alpha-20)'
+          : 'var(--pc-border)',
+      }}
+    >
+      <span
+        className="relative inline-block h-4 w-7 rounded-full transition-colors"
+        style={{
+          background: value ? 'var(--color-status-success)' : 'var(--pc-border)',
+        }}
+      >
+        <span
+          className="absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all"
+          style={{ left: value ? 'calc(100% - 14px)' : '2px' }}
+        />
+      </span>
+      <span
+        className="text-xs font-medium pr-2"
+        style={{
+          color: value
+            ? 'var(--color-status-success)'
+            : 'var(--pc-text-muted)',
+        }}
+      >
+        {value ? 'true' : 'false'}
+      </span>
+    </button>
+  );
+}
+
 interface FieldFormProps {
   /** Dotted prefix to fetch fields under, e.g. `model_providers.anthropic`. */
   prefix: string;
@@ -916,15 +974,11 @@ function FieldRow({ entry, value, onChange, comment, onCommentChange, error, onD
 
       <div className="mt-2 space-y-1.5">
         {renderer === 'bool' ? (
-          <select
+          <BoolSwitch
             id={entry.path}
-            value={value || 'false'}
-            onChange={(e) => onChange(e.target.value)}
-            className="input-electric w-full px-3 py-2 text-sm appearance-none cursor-pointer"
-          >
-            <option value="true">true</option>
-            <option value="false">false</option>
-          </select>
+            value={value === 'true'}
+            onChange={(next) => onChange(next ? 'true' : 'false')}
+          />
         ) : renderer === 'select' ? (
           <select
             id={entry.path}
@@ -1437,14 +1491,12 @@ function ObjectArrayField({
         </p>
       )}
       {meta.kind === 'bool' ? (
-        <select
-          value={display || 'false'}
-          onChange={(e) => onChange(e.target.value === 'true')}
-          className="input-electric w-full px-2 py-1 mt-1 text-sm appearance-none cursor-pointer"
-        >
-          <option value="true">true</option>
-          <option value="false">false</option>
-        </select>
+        <div className="mt-1">
+          <BoolSwitch
+            value={display === 'true'}
+            onChange={(next) => onChange(next)}
+          />
+        </div>
       ) : meta.kind === 'enum' && meta.enumVariants ? (
         <select
           value={display}

@@ -46,6 +46,7 @@ import type { MemoryEntry } from '@/types/api';
 import { loadAgentSummaries, toggleAgentEnabled, type AgentSummary } from '@/lib/agents';
 import AgentCard from '@/components/AgentCard';
 import EntityLink from '@/components/EntityLink';
+import EntityEnabledToggle from '@/components/EntityEnabledToggle';
 import { useSSE } from '@/hooks/useSSE';
 import { t } from '@/lib/i18n';
 
@@ -1126,21 +1127,18 @@ function ChannelsTab() {
             />
           </div>
 
-          {/* Enabled badge. `status` is a hardcoded "active" placeholder
-              from the gateway and duplicates `enabled` until a real listener
-              status surfaces, so only show enabled here. */}
           <div className="flex items-center gap-2 mb-3">
-            <span
-              className="text-[10px] uppercase font-medium px-2 py-0.5 rounded-full"
-              style={{
-                background: channel.enabled
-                  ? 'rgba(0, 230, 138, 0.1)'
-                  : 'rgba(255, 68, 102, 0.1)',
-                color: channel.enabled ? '#34d399' : '#f87171',
-              }}
-            >
-              {channel.enabled ? t("dashboard.channel_enabled") : t("dashboard.channel_disabled")}
-            </span>
+            <EntityEnabledToggle
+              prefix={`channels.${channel.type}.${channel.alias}`}
+              enabled={channel.enabled}
+              onChange={(next) =>
+                setChannels((prev) =>
+                  prev.map((c) =>
+                    c.name === channel.name ? { ...c, enabled: next } : c,
+                  ),
+                )
+              }
+            />
           </div>
 
           {/* Stats. `message_count` / `last_message_at` come back as
