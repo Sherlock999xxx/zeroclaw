@@ -12,6 +12,17 @@ export interface StatusResponse {
   paired: boolean;
   channels: Record<string, boolean>;
   health: HealthSnapshot;
+  /** Self-process resource snapshot. Present on Linux; on unsupported
+   * platforms `rss_bytes = 0` and `cpu_percent = null`. */
+  process?: ProcessStats;
+}
+
+export interface ProcessStats {
+  rss_bytes: number;
+  /** Average CPU% across logical cores (0..100 * num_cpus). `null` on the
+   * first sample after boot (no baseline) or on unsupported platforms. */
+  cpu_percent: number | null;
+  num_cpus: number;
 }
 
 export interface HealthSnapshot {

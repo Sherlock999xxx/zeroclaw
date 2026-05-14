@@ -13,6 +13,7 @@ pub mod cron;
 pub mod daemon;
 pub mod doctor;
 pub mod health;
+pub mod process_stats;
 pub mod heartbeat;
 pub mod hooks;
 pub mod i18n;

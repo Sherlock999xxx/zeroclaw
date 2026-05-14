@@ -18,6 +18,8 @@ import {
   Filter,
   Heart,
   ChevronRight,
+  Cpu,
+  MemoryStick,
 } from 'lucide-react';
 import type {
   StatusResponse,
@@ -25,6 +27,7 @@ import type {
   Session,
   ChannelDetail,
   SessionMessageRow,
+  ProcessStats,
 } from '@/types/api';
 import {
   getStatus,
@@ -53,6 +56,86 @@ function formatUptime(seconds: number): string {
 
 function formatUSD(value: number): string {
   return `$${value.toFixed(4)}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '—';
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let v = bytes;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)} ${units[i]}`;
+}
+
+function ProcessRamCard({ process }: { process?: ProcessStats }) {
+  const supported = !!process && process.rss_bytes > 0;
+  return (
+    <div className="card p-5 animate-slide-in-up">
+      <div className="flex items-center gap-3 mb-3">
+        <div
+          className="p-2 rounded-2xl"
+          style={{ background: 'rgba(var(--pc-accent-rgb), 0.08)', color: '#fbbf24' }}
+        >
+          <MemoryStick className="h-5 w-5" />
+        </div>
+        <span
+          className="text-xs uppercase tracking-wider font-medium"
+          style={{ color: 'var(--pc-text-muted)' }}
+        >
+          RAM
+        </span>
+      </div>
+      <p
+        className="text-lg font-semibold truncate"
+        style={{ color: 'var(--pc-text-primary)' }}
+      >
+        {supported ? formatBytes(process!.rss_bytes) : '—'}
+      </p>
+      <p className="text-sm truncate" style={{ color: 'var(--pc-text-muted)' }}>
+        {supported ? 'resident (zeroclaw)' : 'not supported on this platform'}
+      </p>
+    </div>
+  );
+}
+
+function ProcessCpuCard({ process }: { process?: ProcessStats }) {
+  const supported = !!process && process.cpu_percent !== null;
+  const pct = supported ? Math.max(0, process!.cpu_percent ?? 0) : 0;
+  const ncpu = process?.num_cpus ?? 0;
+  return (
+    <div className="card p-5 animate-slide-in-up">
+      <div className="flex items-center gap-3 mb-3">
+        <div
+          className="p-2 rounded-2xl"
+          style={{ background: 'rgba(var(--pc-accent-rgb), 0.08)', color: '#a78bfa' }}
+        >
+          <Cpu className="h-5 w-5" />
+        </div>
+        <span
+          className="text-xs uppercase tracking-wider font-medium"
+          style={{ color: 'var(--pc-text-muted)' }}
+        >
+          CPU
+        </span>
+      </div>
+      <p
+        className="text-lg font-semibold truncate"
+        style={{ color: 'var(--pc-text-primary)' }}
+      >
+        {supported ? `${pct.toFixed(1)}%` : '—'}
+      </p>
+      <p className="text-sm truncate" style={{ color: 'var(--pc-text-muted)' }}>
+        {supported
+          ? ncpu > 0
+            ? `${ncpu} cores · ${(pct / ncpu).toFixed(1)}% normalized`
+            : 'across all cores'
+          : 'not supported on this platform'}
+      </p>
+    </div>
+  );
 }
 
 function formatLocalDateTime(iso: string): string {
@@ -197,6 +280,8 @@ function OverviewTab({
             <p className="text-sm truncate" style={{ color: "var(--pc-text-muted)" }}>{getSub(status)}</p>
           </div>
         ))}
+        <ProcessRamCard process={status.process} />
+        <ProcessCpuCard process={status.process} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 stagger-children">
