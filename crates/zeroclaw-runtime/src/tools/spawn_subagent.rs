@@ -105,11 +105,10 @@ impl Tool for SpawnSubagentTool {
             spawn_site = "tool",
         );
 
-        let temperature = self
+        let temperature: Option<f64> = self
             .config
-            .first_model_provider()
-            .and_then(|e| e.temperature)
-            .unwrap_or(0.7);
+            .model_provider_for_agent(&self.parent_alias)
+            .and_then(|e| e.temperature);
         let session_path = std::path::PathBuf::from(format!("subagent-{run_id}"));
 
         // Pass the validated SubAgent context as run-time overrides so

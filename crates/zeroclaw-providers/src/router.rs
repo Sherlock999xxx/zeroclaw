@@ -1183,7 +1183,10 @@ mod tests {
         let router = RouterModelProvider::new(
             vec![
                 ("default".into(), default_provider as Box<dyn ModelProvider>),
-                ("vision".into(), vision_route_provider as Box<dyn ModelProvider>),
+                (
+                    "vision".into(),
+                    vision_route_provider as Box<dyn ModelProvider>,
+                ),
             ],
             vec![(
                 "hint:vision".into(),

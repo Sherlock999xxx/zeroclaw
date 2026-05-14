@@ -410,7 +410,11 @@ mod tests {
         }
 
         let key = &list_rows[0].key;
-        let got = scoped.get(key).await.unwrap().expect("get must find the row");
+        let got = scoped
+            .get(key)
+            .await
+            .unwrap()
+            .expect("get must find the row");
         assert_eq!(got.agent_alias.as_deref(), Some("alpha"));
         assert_eq!(got.agent_id.as_deref(), Some("alpha"));
     }

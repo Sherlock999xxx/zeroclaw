@@ -2364,7 +2364,8 @@ mod tests {
             ChatMessage::assistant("I see the image"),
         ];
 
-        let (contents, system_instruction) = GeminiModelProvider::build_chat_contents(&messages, None);
+        let (contents, system_instruction) =
+            GeminiModelProvider::build_chat_contents(&messages, None);
 
         let system_instruction = system_instruction.expect("system prompt should be separated");
         assert_eq!(system_instruction.role, None);

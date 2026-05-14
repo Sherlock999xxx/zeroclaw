@@ -1666,11 +1666,10 @@ async fn main() -> Result<()> {
             temperature,
             peripheral,
         } => {
-            let final_temperature = temperature.unwrap_or_else(|| {
+            let final_temperature: Option<f64> = temperature.or_else(|| {
                 config
-                    .first_model_provider()
+                    .model_provider_for_agent(&agent_alias)
                     .and_then(|e| e.temperature)
-                    .unwrap_or(0.7)
             });
 
             // Validate up-front: bail with a clear message if the alias

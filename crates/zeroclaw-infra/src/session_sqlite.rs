@@ -258,7 +258,10 @@ impl SessionBackend for SqliteSessionBackend {
         rows.filter_map(|r| r.ok()).collect()
     }
 
-    fn load_with_timestamps(&self, session_key: &str) -> Vec<crate::session_backend::TimestampedMessage> {
+    fn load_with_timestamps(
+        &self,
+        session_key: &str,
+    ) -> Vec<crate::session_backend::TimestampedMessage> {
         use crate::session_backend::TimestampedMessage;
         let conn = self.conn.lock();
         let mut stmt = match conn.prepare(

@@ -338,7 +338,7 @@ async fn run_agent_job(
             config,
             agent_alias,
             config
-                .first_model_provider()
+                .model_provider_for_agent(agent_alias)
                 .and_then(|e| e.api_key.as_deref()),
         )
         .await
@@ -408,9 +408,8 @@ async fn run_agent_job(
                     None,
                     model_override,
                     config
-                        .first_model_provider()
-                        .and_then(|e| e.temperature)
-                        .unwrap_or(0.7),
+                        .model_provider_for_agent(agent_alias)
+                        .and_then(|e| e.temperature),
                     vec![],
                     false,
                     Some(session_path.clone()),
@@ -442,7 +441,7 @@ async fn run_agent_job(
                 config,
                 agent_alias,
                 config
-                    .first_model_provider()
+                    .model_provider_for_agent(agent_alias)
                     .and_then(|e| e.api_key.as_deref()),
             )
             .await

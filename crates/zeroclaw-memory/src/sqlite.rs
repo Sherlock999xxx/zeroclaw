@@ -3435,5 +3435,4 @@ mod tests {
             "every row should carry agent_id"
         );
     }
-
 }

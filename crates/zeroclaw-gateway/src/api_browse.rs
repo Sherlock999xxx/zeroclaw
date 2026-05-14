@@ -162,10 +162,7 @@ pub async fn handle_agent_workspace_read(
     match read_agent_workspace_file(&config, &alias, &raw) {
         Ok(result) => {
             let (content, encoding) = if result.is_text {
-                (
-                    String::from_utf8(result.bytes).unwrap_or_default(),
-                    "utf8",
-                )
+                (String::from_utf8(result.bytes).unwrap_or_default(), "utf8")
             } else {
                 (
                     base64::engine::general_purpose::STANDARD.encode(&result.bytes),

@@ -311,7 +311,10 @@ pub async fn run(
         let _ = handle.await;
     }
 
-    #[cfg(all(target_os = "linux", target_env = "gnu"))] unsafe { libc::malloc_trim(0); }
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    unsafe {
+        libc::malloc_trim(0);
+    }
 
     Ok(exit)
 }
@@ -510,7 +513,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                 Some(decision_prompt),
                 None,
                 None,
-                0.0,
+                Some(0.0),
                 vec![],
                 false,
                 None,
@@ -578,7 +581,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                 &config.memory,
                 &config.data_dir,
                 config
-                    .first_model_provider()
+                    .model_provider_for_agent(&agent_alias)
                     .and_then(|e| e.api_key.as_deref()),
             )
             .ok();
@@ -625,10 +628,9 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                 (None, Some(mc)) => format!("{mc}\n\n{task_prompt}"),
                 (None, None) => task_prompt,
             };
-            let temp = config
-                .first_model_provider()
-                .and_then(|e| e.temperature)
-                .unwrap_or(0.7);
+            let temp: Option<f64> = config
+                .model_provider_for_agent(&agent_alias)
+                .and_then(|e| e.temperature);
             let phase2_fut = Box::pin(crate::agent::run(
                 config.clone(),
                 &agent_alias,

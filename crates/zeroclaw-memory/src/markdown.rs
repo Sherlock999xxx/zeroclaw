@@ -476,7 +476,9 @@ mod tests {
     #[tokio::test]
     async fn markdown_entries_carry_no_agent_attribution() {
         let (_tmp, mem) = temp_workspace();
-        mem.store("k", "v", MemoryCategory::Core, None).await.unwrap();
+        mem.store("k", "v", MemoryCategory::Core, None)
+            .await
+            .unwrap();
         let entry = mem.get("MEMORY.md:0").await.unwrap();
         if let Some(entry) = entry {
             assert!(
@@ -492,7 +494,10 @@ mod tests {
         // surfaced (keyed lookup vs. enumeration).
         let rows = mem.list(None, None).await.unwrap();
         for row in rows {
-            assert!(row.agent_alias.is_none(), "list path must not synthesize aliases");
+            assert!(
+                row.agent_alias.is_none(),
+                "list path must not synthesize aliases"
+            );
             assert!(row.agent_id.is_none(), "list path must not synthesize ids");
         }
     }

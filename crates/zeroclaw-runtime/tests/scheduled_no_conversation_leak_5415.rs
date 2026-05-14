@@ -164,7 +164,7 @@ async fn scheduled_run_does_not_leak_conversation_memory_into_provider_request()
         Some(prompt),
         None,
         None,
-        0.7,
+        Some(0.7),
         vec![],
         false,
         None,

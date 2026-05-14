@@ -180,7 +180,10 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn sample_returns_system_ram_total_and_rss_is_a_subset() {
         let s = sample();
-        assert!(s.system_ram_total_bytes > 0, "MemTotal should be non-zero on Linux");
+        assert!(
+            s.system_ram_total_bytes > 0,
+            "MemTotal should be non-zero on Linux"
+        );
         assert!(
             s.rss_bytes <= s.system_ram_total_bytes,
             "process RSS ({}) cannot exceed system total ({})",
@@ -198,7 +201,10 @@ mod tests {
             std::hint::black_box(0u64);
         }
         let s2 = sample();
-        assert!(s2.cpu_percent.is_some(), "second sample should have cpu_percent");
+        assert!(
+            s2.cpu_percent.is_some(),
+            "second sample should have cpu_percent"
+        );
     }
 
     #[test]

@@ -286,7 +286,12 @@ pub fn move_agent_workspace_path(
     }
     if protected_file(from_trimmed) || protected_file(to_trimmed) {
         return Err(BrowseError::ProtectedFile(
-            if protected_file(from_trimmed) { from_trimmed } else { to_trimmed }.to_string(),
+            if protected_file(from_trimmed) {
+                from_trimmed
+            } else {
+                to_trimmed
+            }
+            .to_string(),
         ));
     }
     let root = agent_root(config, agent_alias);
@@ -507,7 +512,11 @@ mod tests {
     fn delete_agent_workspace_path_removes_file() {
         let (dir, cfg) = workspace_fixture();
         delete_agent_workspace_path(&cfg, "alpha", "notes/draft.md").unwrap();
-        assert!(!dir.path().join("agents/alpha/workspace/notes/draft.md").exists());
+        assert!(
+            !dir.path()
+                .join("agents/alpha/workspace/notes/draft.md")
+                .exists()
+        );
     }
 
     #[test]
@@ -547,8 +556,16 @@ mod tests {
     fn move_agent_workspace_path_renames_within_jail() {
         let (dir, cfg) = workspace_fixture();
         move_agent_workspace_path(&cfg, "alpha", "notes/draft.md", "notes/final.md").unwrap();
-        assert!(!dir.path().join("agents/alpha/workspace/notes/draft.md").exists());
-        assert!(dir.path().join("agents/alpha/workspace/notes/final.md").is_file());
+        assert!(
+            !dir.path()
+                .join("agents/alpha/workspace/notes/draft.md")
+                .exists()
+        );
+        assert!(
+            dir.path()
+                .join("agents/alpha/workspace/notes/final.md")
+                .is_file()
+        );
     }
 
     #[test]
@@ -573,8 +590,8 @@ mod tests {
     #[test]
     fn move_agent_workspace_path_refuses_protected_dst() {
         let (_dir, cfg) = workspace_fixture();
-        let err = move_agent_workspace_path(&cfg, "alpha", "notes/draft.md", "IDENTITY.md")
-            .unwrap_err();
+        let err =
+            move_agent_workspace_path(&cfg, "alpha", "notes/draft.md", "IDENTITY.md").unwrap_err();
         assert!(matches!(err, BrowseError::ProtectedFile(_)));
     }
 
@@ -589,8 +606,8 @@ mod tests {
     #[test]
     fn move_agent_workspace_path_refuses_overwrite() {
         let (_dir, cfg) = workspace_fixture();
-        let err = move_agent_workspace_path(&cfg, "alpha", "notes/draft.md", "notes/sub")
-            .unwrap_err();
+        let err =
+            move_agent_workspace_path(&cfg, "alpha", "notes/draft.md", "notes/sub").unwrap_err();
         assert!(matches!(err, BrowseError::NotADirectory(_)));
     }
 }

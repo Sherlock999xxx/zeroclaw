@@ -3430,10 +3430,18 @@ mod tests {
     #[test]
     fn chunks_for_send_passes_through_non_empty_content() {
         use zeroclaw_config::schema::StreamMode;
-        for mode in [StreamMode::MultiMessage, StreamMode::Partial, StreamMode::Off] {
+        for mode in [
+            StreamMode::MultiMessage,
+            StreamMode::Partial,
+            StreamMode::Off,
+        ] {
             for has_files in [true, false] {
                 let chunks = chunks_for_send("hello", mode, 2000, has_files);
-                assert_eq!(chunks, vec!["hello".to_string()], "mode={mode:?} has_files={has_files}");
+                assert_eq!(
+                    chunks,
+                    vec!["hello".to_string()],
+                    "mode={mode:?} has_files={has_files}"
+                );
             }
         }
     }

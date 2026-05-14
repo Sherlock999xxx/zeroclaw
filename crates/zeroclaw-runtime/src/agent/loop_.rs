@@ -582,7 +582,7 @@ async fn consume_provider_streaming_response(
     messages: &[ChatMessage],
     request_tools: Option<&[crate::tools::ToolSpec]>,
     model: &str,
-    temperature: f64,
+    temperature: Option<f64>,
     cancellation_token: Option<&CancellationToken>,
     on_delta: Option<&tokio::sync::mpsc::Sender<DraftEvent>>,
 ) -> Result<StreamedChatOutcome> {
@@ -592,7 +592,7 @@ async fn consume_provider_streaming_response(
             tools: request_tools,
         },
         model,
-        Some(temperature),
+        temperature,
         zeroclaw_providers::traits::StreamOptions::new(true),
     );
     let mut outcome = StreamedChatOutcome::default();
@@ -699,7 +699,7 @@ pub async fn agent_turn(
     observer: &dyn Observer,
     provider_name: &str,
     model: &str,
-    temperature: f64,
+    temperature: Option<f64>,
     silent: bool,
     channel_name: &str,
     channel_reply_target: Option<&str>,
@@ -861,7 +861,7 @@ pub async fn run_tool_call_loop(
     observer: &dyn Observer,
     provider_name: &str,
     model: &str,
-    temperature: f64,
+    temperature: Option<f64>,
     silent: bool,
     approval: Option<&ApprovalManager>,
     channel_name: &str,
@@ -1189,7 +1189,7 @@ pub async fn run_tool_call_loop(
                                 tools: request_tools,
                             },
                             active_model,
-                            Some(temperature),
+                            temperature,
                         );
                         if let Some(token) = cancellation_token.as_ref() {
                             tokio::select! {
@@ -1211,7 +1211,7 @@ pub async fn run_tool_call_loop(
                     tools: request_tools,
                 },
                 active_model,
-                Some(temperature),
+                temperature,
             );
 
             match pacing.step_timeout_secs {
@@ -2075,7 +2075,7 @@ pub async fn run_tool_call_loop(
         tools: None, // No tools — force a text response
     };
     match model_provider
-        .chat(summary_request, model, Some(temperature))
+        .chat(summary_request, model, temperature)
         .await
     {
         Ok(resp) => {
@@ -2189,7 +2189,7 @@ pub async fn run(
     message: Option<String>,
     provider_override: Option<String>,
     model_override: Option<String>,
-    temperature: f64,
+    temperature: Option<f64>,
     peripheral_overrides: Vec<String>,
     interactive: bool,
     session_state_file: Option<PathBuf>,
@@ -2676,9 +2676,9 @@ pub async fn run(
             &agent.thinking,
         );
         let thinking_params = crate::agent::thinking::apply_thinking_level(thinking_level);
-        let effective_temperature = crate::agent::thinking::clamp_temperature(
-            temperature + thinking_params.temperature_adjustment,
-        );
+        let effective_temperature: Option<f64> = temperature.map(|t| {
+            crate::agent::thinking::clamp_temperature(t + thinking_params.temperature_adjustment)
+        });
 
         // Prepend thinking system prompt prefix when present.
         if let Some(ref prefix) = thinking_params.system_prompt_prefix {
@@ -2956,9 +2956,11 @@ pub async fn run(
                 &agent.thinking,
             );
             let thinking_params = crate::agent::thinking::apply_thinking_level(thinking_level);
-            let turn_temperature = crate::agent::thinking::clamp_temperature(
-                temperature + thinking_params.temperature_adjustment,
-            );
+            let turn_temperature: Option<f64> = temperature.map(|t| {
+                crate::agent::thinking::clamp_temperature(
+                    t + thinking_params.temperature_adjustment,
+                )
+            });
 
             // For non-Medium levels, temporarily patch the system prompt with prefix.
             let turn_system_prompt;
@@ -3596,13 +3598,12 @@ pub async fn process_message(
     let thinking_level =
         crate::agent::thinking::resolve_thinking_level(thinking_directive, None, &agent.thinking);
     let thinking_params = crate::agent::thinking::apply_thinking_level(thinking_level);
-    let effective_temperature = crate::agent::thinking::clamp_temperature(
-        config
-            .first_model_provider()
-            .and_then(|e| e.temperature)
-            .unwrap_or(0.7)
-            + thinking_params.temperature_adjustment,
-    );
+    let effective_temperature: Option<f64> = config
+        .first_model_provider()
+        .and_then(|e| e.temperature)
+        .map(|t| {
+            crate::agent::thinking::clamp_temperature(t + thinking_params.temperature_adjustment)
+        });
 
     // Prepend thinking system prompt prefix when present.
     if let Some(ref prefix) = thinking_params.system_prompt_prefix {
@@ -4915,7 +4916,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -4973,7 +4974,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -5025,7 +5026,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -5076,7 +5077,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -5134,7 +5135,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -5193,7 +5194,7 @@ mod tests {
             &observer,
             "scripted",
             "scripted-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -5252,7 +5253,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -5310,7 +5311,7 @@ mod tests {
             &observer,
             "scripted",
             "scripted-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -5367,7 +5368,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -5508,7 +5509,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             Some(&approval_mgr),
             "telegram",
@@ -5588,7 +5589,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "telegram",
@@ -5660,7 +5661,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "telegram",
@@ -5727,7 +5728,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -5807,7 +5808,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             Some(&approval_mgr),
             "telegram",
@@ -5877,7 +5878,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -5967,7 +5968,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -6031,7 +6032,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "cli",
@@ -6123,7 +6124,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "telegram",
@@ -6191,7 +6192,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "telegram",
@@ -6262,7 +6263,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "telegram",
@@ -6341,7 +6342,7 @@ mod tests {
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "telegram",
@@ -6431,7 +6432,7 @@ mod tests {
             &observer,
             "router",
             "hint:fast",
-            0.0,
+            Some(0.0),
             true,
             None,
             "telegram",
@@ -6524,7 +6525,7 @@ mod tests {
                 &observer,
                 "mock-provider",
                 "mock-model",
-                0.0,
+                Some(0.0),
                 true,
                 "daemon",
                 None,
@@ -7477,7 +7478,7 @@ Let me check the result."#;
             &messages,
             None,
             "deepseek-v4-pro",
-            0.2,
+            Some(0.2),
             None,
             None,
         )
@@ -7557,7 +7558,7 @@ Let me check the result."#;
             &messages,
             None,
             "deepseek-v4-flash",
-            0.2,
+            Some(0.2),
             None,
             None,
         )
@@ -7746,7 +7747,7 @@ Let me check the result."#;
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "telegram",
@@ -7902,7 +7903,7 @@ Let me check the result."#;
                     &observer,
                     "mock-provider",
                     "mock-model",
-                    0.0,
+                    Some(0.0),
                     true,
                     None,
                     "test",
@@ -7958,7 +7959,7 @@ Let me check the result."#;
             &observer,
             "recording-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "test",
@@ -8050,7 +8051,7 @@ Let me check the result."#;
                     &observer,
                     "mock-provider",
                     "mock-model",
-                    0.0,
+                    Some(0.0),
                     true,
                     None,
                     "test",
@@ -8111,7 +8112,7 @@ Let me check the result."#;
             &observer,
             "mock-provider",
             "mock-model",
-            0.0,
+            Some(0.0),
             true,
             None,
             "test",

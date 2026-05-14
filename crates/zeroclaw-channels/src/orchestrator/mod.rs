@@ -85,7 +85,7 @@ use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use tokio_util::sync::CancellationToken;
 use zeroclaw_config::schema::Config;
@@ -279,7 +279,7 @@ struct ModelCacheEntry {
 struct ChannelRuntimeDefaults {
     default_model_provider: String,
     model: String,
-    temperature: f64,
+    temperature: Option<f64>,
     api_key: Option<String>,
     api_url: Option<String>,
     reliability: zeroclaw_config::schema::ReliabilityConfig,
@@ -289,17 +289,6 @@ struct ChannelRuntimeDefaults {
 struct ConfigFileStamp {
     modified: SystemTime,
     len: u64,
-}
-
-#[derive(Debug, Clone)]
-struct RuntimeConfigState {
-    defaults: ChannelRuntimeDefaults,
-    last_applied_stamp: Option<ConfigFileStamp>,
-}
-
-fn runtime_config_store() -> &'static Mutex<HashMap<PathBuf, RuntimeConfigState>> {
-    static STORE: OnceLock<Mutex<HashMap<PathBuf, RuntimeConfigState>>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 const SYSTEMD_STATUS_ARGS: [&str; 3] = ["--user", "is-active", "zeroclaw.service"];
@@ -352,7 +341,7 @@ struct ChannelRuntimeContext {
     observer: Arc<dyn Observer>,
     system_prompt: Arc<String>,
     model: Arc<String>,
-    temperature: f64,
+    temperature: Option<f64>,
     auto_save_memory: bool,
     max_tool_iterations: usize,
     min_relevance_score: f64,
@@ -404,6 +393,7 @@ struct ChannelRuntimeContext {
     /// `process_channel_message` renders the per-turn collector as a trailing
     /// `Tool receipts:` block sent after the main reply.
     show_receipts_in_response: bool,
+    last_applied_config_stamp: Arc<Mutex<Option<ConfigFileStamp>>>,
 }
 
 #[derive(Clone)]
@@ -919,7 +909,7 @@ fn runtime_defaults_from_config(
     Ok(ChannelRuntimeDefaults {
         default_model_provider,
         model,
-        temperature: entry.and_then(|e| e.temperature).unwrap_or(0.7),
+        temperature: entry.and_then(|e| e.temperature),
         api_key: entry.and_then(|e| e.api_key.clone()),
         api_url: entry.and_then(|e| e.uri.clone()),
         reliability: config.reliability.clone(),
@@ -934,15 +924,6 @@ fn runtime_config_path(ctx: &ChannelRuntimeContext) -> Option<PathBuf> {
 }
 
 fn runtime_defaults_snapshot(ctx: &ChannelRuntimeContext) -> ChannelRuntimeDefaults {
-    if let Some(config_path) = runtime_config_path(ctx) {
-        let store = runtime_config_store()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = store.get(&config_path) {
-            return state.defaults.clone();
-        }
-    }
-
     ChannelRuntimeDefaults {
         default_model_provider: ctx.default_model_provider.as_str().to_string(),
         model: ctx.model.as_str().to_string(),
@@ -962,23 +943,6 @@ async fn config_file_stamp(path: &Path) -> Option<ConfigFileStamp> {
     })
 }
 
-fn decrypt_optional_secret_for_runtime_reload(
-    store: &zeroclaw_runtime::security::SecretStore,
-    value: &mut Option<String>,
-    field_name: &str,
-) -> Result<()> {
-    if let Some(raw) = value.clone()
-        && zeroclaw_runtime::security::SecretStore::is_encrypted(&raw)
-    {
-        *value = Some(
-            store
-                .decrypt(&raw)
-                .with_context(|| format!("Failed to decrypt {field_name}"))?,
-        );
-    }
-    Ok(())
-}
-
 async fn load_runtime_defaults_from_config_file(
     path: &Path,
     model_provider: &str,
@@ -993,18 +957,7 @@ async fn load_runtime_defaults_from_config_file(
     if let Some(zeroclaw_dir) = path.parent() {
         let store =
             zeroclaw_runtime::security::SecretStore::new(zeroclaw_dir, parsed.secrets.encrypt);
-        if let Some(fallback_entry) = parsed.first_model_provider_mut() {
-            decrypt_optional_secret_for_runtime_reload(
-                &store,
-                &mut fallback_entry.api_key,
-                "config.providers.models.api_key",
-            )?;
-        }
-        // Decrypt TTS model_provider API keys for runtime reload (typed slots).
-        for (family, alias, instance) in parsed.providers.tts.iter_entries_mut() {
-            let label = format!("config.providers.tts.{family}.{alias}.api_key");
-            decrypt_optional_secret_for_runtime_reload(&store, &mut instance.api_key, &label)?;
-        }
+        parsed.decrypt_secrets(&store)?;
     }
 
     runtime_defaults_from_config(&parsed, model_provider)
@@ -1020,12 +973,11 @@ async fn maybe_apply_runtime_config_update(ctx: &ChannelRuntimeContext) -> Resul
     };
 
     {
-        let store = runtime_config_store()
+        let last = ctx
+            .last_applied_config_stamp
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = store.get(&config_path)
-            && state.last_applied_stamp == Some(stamp)
-        {
+        if *last == Some(stamp) {
             return Ok(());
         }
     }
@@ -1067,24 +1019,16 @@ async fn maybe_apply_runtime_config_update(ctx: &ChannelRuntimeContext) -> Resul
         );
     }
 
-    {
-        let mut store = runtime_config_store()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        store.insert(
-            config_path.clone(),
-            RuntimeConfigState {
-                defaults: next_defaults.clone(),
-                last_applied_stamp: Some(stamp),
-            },
-        );
-    }
+    *ctx.last_applied_config_stamp
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(stamp);
 
     tracing::info!(
         path = %config_path.display(),
         model_provider = %next_defaults.default_model_provider,
         model = %next_defaults.model,
         temperature = next_defaults.temperature,
+        agent_model_provider = %ctx.agent_cfg.model_provider,
         "Applied updated channel runtime config from disk"
     );
 
@@ -2201,7 +2145,7 @@ async fn classify_channel_reply_intent(
     system_prompt: &str,
     history: &[ChatMessage],
     model: &str,
-    temperature: f64,
+    temperature: Option<f64>,
 ) -> anyhow::Result<AssistantChannelOutcome> {
     let mut convo = String::from(
         "Decide whether the assistant should send any visible reply to the latest inbound \
@@ -2235,7 +2179,7 @@ async fn classify_channel_reply_intent(
     }
 
     let response = model_provider
-        .chat_with_system(Some(system_prompt), &convo, model, Some(temperature))
+        .chat_with_system(Some(system_prompt), &convo, model, temperature)
         .await?;
     Ok(parse_reply_intent(&response))
 }
@@ -4038,75 +3982,60 @@ async fn dispatch_worker(
     completion.mark_done();
 }
 
-/// Maps each inbound `ChannelMessage` to the `ChannelRuntimeContext` of the
-/// agent that owns its channel.
-///
-/// Multi-agent installs build one context per enabled `[agents.<alias>]` block
-/// and register `<channel_type>.<alias> -> <agent_alias>` for every channel the
-/// agent claims via its `agents.<alias>.channels` field. Single-agent installs
-/// and unit tests use `AgentRouter::single`, which routes every message at one
-/// shared context (preserving the pre-multi-agent behavior).
+/// Maps each inbound `ChannelMessage` to the owning agent's `ChannelRuntimeContext`.
 ///
 /// Lookup mirrors `find_channel_for_message`: composite `<type>.<alias>` first,
-/// bare `<type>` second. The `fallback` is used when neither key resolves —
-/// keeps tests with synthetic channel names (`"cli"`, `"webhook"`) routing to
-/// the only ctx they configured.
+/// bare `<type>` second. Returns `None` when no agent owns the channel — the
+/// dispatch loop drops the message rather than picking a default.
 #[derive(Clone)]
 struct AgentRouter {
     by_agent: Arc<HashMap<String, Arc<ChannelRuntimeContext>>>,
     owner_by_channel_key: Arc<HashMap<String, String>>,
-    fallback: Arc<ChannelRuntimeContext>,
+    single_ctx: Option<Arc<ChannelRuntimeContext>>,
 }
 
 impl AgentRouter {
-    /// Single-agent / test router: every channel resolves to `ctx`.
-    /// Production builds always use `multi` (every enabled `[agents.<alias>]`
-    /// block gets its own context), so this constructor exists only for the
-    /// orchestrator's unit tests that build a one-context fixture.
     #[cfg(test)]
     fn single(ctx: Arc<ChannelRuntimeContext>) -> Self {
         Self {
             by_agent: Arc::new(HashMap::new()),
             owner_by_channel_key: Arc::new(HashMap::new()),
-            fallback: ctx,
+            single_ctx: Some(ctx),
         }
     }
 
-    /// Multi-agent router. `by_agent` is the per-agent context map;
-    /// `owner_by_channel_key` maps `<type>.<alias>` (and bare `<type>` for
-    /// singleton channels) to the owning agent alias. `fallback` is used when
-    /// a channel has no declared owner (e.g. CLI, ad-hoc internal callers).
     fn multi(
         by_agent: HashMap<String, Arc<ChannelRuntimeContext>>,
         owner_by_channel_key: HashMap<String, String>,
-        fallback: Arc<ChannelRuntimeContext>,
     ) -> Self {
         Self {
             by_agent: Arc::new(by_agent),
             owner_by_channel_key: Arc::new(owner_by_channel_key),
-            fallback,
+            single_ctx: None,
         }
     }
 
-    fn resolve(&self, msg: &zeroclaw_api::channel::ChannelMessage) -> Arc<ChannelRuntimeContext> {
-        // Composite key: `<channel>.<alias>` — primary lookup for multi-bot
-        // platforms (two Discord bots, two Telegram bots, etc.).
+    fn resolve(
+        &self,
+        msg: &zeroclaw_api::channel::ChannelMessage,
+    ) -> Option<Arc<ChannelRuntimeContext>> {
+        if let Some(ctx) = &self.single_ctx {
+            return Some(Arc::clone(ctx));
+        }
         if let Some(alias) = msg.channel_alias.as_deref().filter(|s| !s.is_empty()) {
             let composite = format!("{}.{alias}", msg.channel);
             if let Some(agent) = self.owner_by_channel_key.get(&composite)
                 && let Some(ctx) = self.by_agent.get(agent)
             {
-                return Arc::clone(ctx);
+                return Some(Arc::clone(ctx));
             }
         }
-        // Bare-channel fallback: singleton channels (CLI, webhook, etc.) and
-        // legacy callers that don't supply an alias.
         if let Some(agent) = self.owner_by_channel_key.get(&msg.channel)
             && let Some(ctx) = self.by_agent.get(agent)
         {
-            return Arc::clone(ctx);
+            return Some(Arc::clone(ctx));
         }
-        Arc::clone(&self.fallback)
+        None
     }
 }
 
@@ -4124,7 +4053,15 @@ async fn run_message_dispatch_loop(
     let task_sequence = Arc::new(AtomicU64::new(1));
 
     while let Some(msg) = rx.recv().await {
-        let ctx = router.resolve(&msg);
+        let Some(ctx) = router.resolve(&msg) else {
+            tracing::warn!(
+                channel = %msg.channel,
+                channel_alias = ?msg.channel_alias,
+                sender = %msg.sender,
+                "Dropping inbound message: no agent owns this channel"
+            );
+            continue;
+        };
         // Fast path: /stop cancels the in-flight task for this sender scope without
         // spawning a worker or registering a new task. Handled here — before semaphore
         // acquisition — so the target task is still in the store and is never replaced.
@@ -6038,37 +5975,10 @@ pub async fn start_channels(
     }
 
     // Every `[channels.<type>.<alias>]` block is owned by exactly one agent
-    // (declared via `agents.<alias>.channels = [...]`). We build one
-    // `ChannelRuntimeContext` per enabled agent and route every inbound
-    // message through `AgentRouter::multi` to the owning agent's context.
-    // The Discord/Telegram/Slack/etc. WebSocket connections themselves stay
-    // shared at the channel layer — one per `[channels.<type>.<alias>]`,
-    // not one per agent.
-    //
-    // The "primary" agent (`default` if present, else the first enabled
-    // entry by stable HashMap iteration) is built first because:
-    //   1. its `tool_specs` wire Telegram-style slash commands during
-    //      `collect_configured_channels`;
-    //   2. its ctx serves as the router fallback for messages whose
-    //      channel has no declared owner (e.g. CLI, ad-hoc internal
-    //      delivery from hooks).
-    let primary_alias: String = config
-        .agents
-        .keys()
-        .find(|k| k.as_str() == "default")
-        .or_else(|| {
-            config
-                .agents
-                .iter()
-                .find(|(_, a)| a.enabled)
-                .map(|(alias, _)| alias)
-        })
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "start_channels requires at least one configured [agents.<alias>] entry"
-            )
-        })?
-        .clone();
+    // (declared via `agents.<alias>.channels = [...]`). One
+    // `ChannelRuntimeContext` per enabled agent; `AgentRouter::multi` resolves
+    // each inbound message to the owning agent. Discord/Telegram/Slack/etc.
+    // sockets stay shared at the channel layer.
     let enabled_agents: Vec<String> = {
         let mut v: Vec<String> = config
             .agents
@@ -6076,34 +5986,12 @@ pub async fn start_channels(
             .filter(|(_, a)| a.enabled)
             .map(|(alias, _)| alias.clone())
             .collect();
-        // Primary first so the shared-channel-setup gate inside the loop
-        // wires `tool_specs` from the primary agent (matches single-agent
-        // behavior). Remaining aliases sort alphabetically so daemon
-        // startup logs are deterministic across HashMap reshuffles.
-        v.sort_by_key(|a| (a != &primary_alias, a.clone()));
+        if v.is_empty() {
+            anyhow::bail!("start_channels requires at least one enabled [agents.<alias>] entry");
+        }
+        v.sort();
         v
     };
-
-    // Per-config snapshot of the runtime defaults store, anchored on the
-    // primary agent's model_provider — non-primary agents still read their
-    // own provider when each ctx is constructed below.
-    {
-        let initial_stamp = config_file_stamp(&config.config_path).await;
-        let primary_agent = config
-            .agent(&primary_alias)
-            .with_context(|| format!("agents.{primary_alias} is not configured"))?
-            .clone();
-        let mut store = runtime_config_store()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        store.insert(
-            config.config_path.clone(),
-            RuntimeConfigState {
-                defaults: runtime_defaults_from_config(&config, &primary_agent.model_provider)?,
-                last_applied_stamp: initial_stamp,
-            },
-        );
-    }
 
     let observer: Arc<dyn Observer> =
         Arc::from(observability::create_observer(&config.observability));
@@ -6215,9 +6103,7 @@ pub async fn start_channels(
                      from `agents.{agent_alias}.model_provider`."
                 )
             })?;
-        let temperature = agent_provider_entry
-            .and_then(|e| e.temperature)
-            .unwrap_or(0.7);
+        let temperature: Option<f64> = agent_provider_entry.and_then(|e| e.temperature);
         let mem: Arc<dyn Memory> = zeroclaw_memory::create_memory_for_agent(
             &config,
             agent_alias,
@@ -6431,7 +6317,11 @@ pub async fn start_channels(
             tools_registry.iter().map(|tool| tool.name()).collect();
         tool_descs.retain(|(name, _)| effective_tool_names.contains(name));
 
-        let bootstrap_max_chars = if agent.compact_context { Some(6000) } else { None };
+        let bootstrap_max_chars = if agent.compact_context {
+            Some(6000)
+        } else {
+            None
+        };
         let native_tools = model_provider.supports_native_tools();
         let mut system_prompt = build_system_prompt_with_mode_and_autonomy(
             &workspace,
@@ -6532,7 +6422,11 @@ pub async fn start_channels(
             );
             println!(
                 "  📡 Channels: {}",
-                channels.iter().map(|c| c.name()).collect::<Vec<_>>().join(", ")
+                channels
+                    .iter()
+                    .map(|c| c.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
             println!("  🤖 Agents:   {}", enabled_agents.join(", "));
             println!();
@@ -6550,8 +6444,7 @@ pub async fn start_channels(
                 .channel_max_backoff_secs
                 .max(DEFAULT_CHANNEL_MAX_BACKOFF_SECS);
 
-            let (tx, rx) =
-                tokio::sync::mpsc::channel::<zeroclaw_api::channel::ChannelMessage>(100);
+            let (tx, rx) = tokio::sync::mpsc::channel::<zeroclaw_api::channel::ChannelMessage>(100);
 
             for cc in &configured_channels {
                 listener_handles.push(spawn_supervised_listener(
@@ -6750,16 +6643,11 @@ pub async fn start_channels(
                 None
             },
             show_receipts_in_response: agent.tool_receipts.show_in_response,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         agent_ctxs.insert(agent_alias.clone(), runtime_ctx);
     }
-
-    let primary_ctx = Arc::clone(
-        agent_ctxs
-            .get(&primary_alias)
-            .expect("primary agent context was built first"),
-    );
 
     // Owner map: `<channel_type>.<alias>` (and bare `<channel_type>` for
     // backward-compat with cron callers / singleton channels) → agent_alias.
@@ -6849,7 +6737,7 @@ pub async fn start_channels(
         }
     }
 
-    let router = AgentRouter::multi(agent_ctxs, owner_by_channel_key, Arc::clone(&primary_ctx));
+    let router = AgentRouter::multi(agent_ctxs, owner_by_channel_key);
 
     let rx = rx_holder.expect("rx initialized by first agent's channel setup");
     let max_in_flight =
@@ -7061,10 +6949,7 @@ mod tests {
         fn name(&self) -> &str {
             self.name
         }
-        async fn send(
-            &self,
-            _message: &zeroclaw_api::channel::SendMessage,
-        ) -> anyhow::Result<()> {
+        async fn send(&self, _message: &zeroclaw_api::channel::SendMessage) -> anyhow::Result<()> {
             Ok(())
         }
         async fn listen(
@@ -7079,7 +6964,10 @@ mod tests {
         Arc::new(NamedMockChannel { name })
     }
 
-    fn channel_message(channel: &str, alias: Option<&str>) -> zeroclaw_api::channel::ChannelMessage {
+    fn channel_message(
+        channel: &str,
+        alias: Option<&str>,
+    ) -> zeroclaw_api::channel::ChannelMessage {
         zeroclaw_api::channel::ChannelMessage {
             id: "m1".into(),
             sender: "u1".into(),
@@ -7181,7 +7069,7 @@ mod tests {
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new(String::new()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 0,
             min_relevance_score: 0.0,
@@ -7226,9 +7114,12 @@ mod tests {
             pacing: zeroclaw_config::schema::PacingConfig::default(),
             max_tool_result_chars: 0,
             context_token_budget: 0,
-            debouncer: Arc::new(zeroclaw_infra::debounce::MessageDebouncer::new(Duration::ZERO)),
+            debouncer: Arc::new(zeroclaw_infra::debounce::MessageDebouncer::new(
+                Duration::ZERO,
+            )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -7242,64 +7133,52 @@ mod tests {
         // pipeline and reply with that agent's identity/model.
         let clamps_ctx = router_test_ctx();
         let glados_ctx = router_test_ctx();
-        let fallback_ctx = router_test_ctx();
         let mut by_agent: HashMap<String, Arc<ChannelRuntimeContext>> = HashMap::new();
         by_agent.insert("clamps".to_string(), Arc::clone(&clamps_ctx));
         by_agent.insert("glados".to_string(), Arc::clone(&glados_ctx));
         let mut owners: HashMap<String, String> = HashMap::new();
         owners.insert("discord.clamps".to_string(), "clamps".to_string());
         owners.insert("discord.glados".to_string(), "glados".to_string());
-        let router = AgentRouter::multi(by_agent, owners, Arc::clone(&fallback_ctx));
+        let router = AgentRouter::multi(by_agent, owners);
 
         let msg_clamps = channel_message("discord", Some("clamps"));
         let msg_glados = channel_message("discord", Some("glados"));
 
-        let resolved_clamps = router.resolve(&msg_clamps);
-        let resolved_glados = router.resolve(&msg_glados);
+        let resolved_clamps = router.resolve(&msg_clamps).expect("clamps resolves");
+        let resolved_glados = router.resolve(&msg_glados).expect("glados resolves");
 
         assert!(Arc::ptr_eq(&resolved_clamps, &clamps_ctx), "clamps routing");
         assert!(Arc::ptr_eq(&resolved_glados, &glados_ctx), "glados routing");
-        assert!(!Arc::ptr_eq(&resolved_clamps, &resolved_glados), "ctxs distinct");
-        // Fallback should not have been picked for either owned channel.
-        assert!(!Arc::ptr_eq(&resolved_clamps, &fallback_ctx));
-        assert!(!Arc::ptr_eq(&resolved_glados, &fallback_ctx));
+        assert!(
+            !Arc::ptr_eq(&resolved_clamps, &resolved_glados),
+            "ctxs distinct"
+        );
     }
 
     #[test]
-    fn agent_router_multi_falls_back_for_unowned_channels() {
-        // CLI traffic / hook-driven internal sends arrive with no
-        // declared owner (no `[agents.<a>.channels]` entry references
-        // them). The router must return `fallback` rather than picking
-        // a random agent — silent misrouting was the entire point of
-        // the per-agent refactor.
+    fn agent_router_multi_returns_none_for_unowned_channels() {
         let agent_a_ctx = router_test_ctx();
-        let fallback_ctx = router_test_ctx();
         let mut by_agent: HashMap<String, Arc<ChannelRuntimeContext>> = HashMap::new();
         by_agent.insert("agent_a".to_string(), Arc::clone(&agent_a_ctx));
         let mut owners: HashMap<String, String> = HashMap::new();
         owners.insert("discord.bot_a".to_string(), "agent_a".to_string());
-        let router = AgentRouter::multi(by_agent, owners, Arc::clone(&fallback_ctx));
+        let router = AgentRouter::multi(by_agent, owners);
 
         let cli_msg = channel_message("cli", None);
-        let resolved = router.resolve(&cli_msg);
-        assert!(Arc::ptr_eq(&resolved, &fallback_ctx), "cli falls back");
+        assert!(router.resolve(&cli_msg).is_none(), "cli has no owner");
     }
 
     #[test]
     fn agent_router_multi_resolves_bare_channel_for_singleton_owners() {
-        // Singleton channels (Notion, webhook) declared as bare
-        // `[agents.<a>.channels = ["notion"]]` resolve via the bare-name
-        // entry the orchestrator adds to `owner_by_channel_key`.
         let notion_agent_ctx = router_test_ctx();
-        let fallback_ctx = router_test_ctx();
         let mut by_agent: HashMap<String, Arc<ChannelRuntimeContext>> = HashMap::new();
         by_agent.insert("ops".to_string(), Arc::clone(&notion_agent_ctx));
         let mut owners: HashMap<String, String> = HashMap::new();
         owners.insert("notion".to_string(), "ops".to_string());
-        let router = AgentRouter::multi(by_agent, owners, Arc::clone(&fallback_ctx));
+        let router = AgentRouter::multi(by_agent, owners);
 
         let msg = channel_message("notion", None);
-        let resolved = router.resolve(&msg);
+        let resolved = router.resolve(&msg).expect("notion resolves");
         assert!(Arc::ptr_eq(&resolved, &notion_agent_ctx));
     }
 
@@ -7746,7 +7625,7 @@ mod tests {
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("system".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -7794,6 +7673,7 @@ mod tests {
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         };
 
         assert!(compact_sender_history(&ctx, &sender));
@@ -7874,7 +7754,7 @@ mod tests {
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("system".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -7924,6 +7804,7 @@ mod tests {
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         };
 
         append_sender_turn(&ctx, &sender, ChatMessage::user("hello"));
@@ -7963,7 +7844,7 @@ mod tests {
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("system".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -8011,6 +7892,7 @@ mod tests {
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         };
 
         assert!(rollback_orphan_user_turn(&ctx, &sender, "pending"));
@@ -8068,7 +7950,7 @@ mod tests {
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("system".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -8116,6 +7998,7 @@ mod tests {
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         };
 
         assert!(rollback_orphan_user_turn(
@@ -8705,7 +8588,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -8755,6 +8638,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -8807,7 +8691,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -8858,6 +8742,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
             agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             agent_transcription_provider: String::new(),
         });
@@ -8910,7 +8795,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -8973,6 +8858,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 zeroclaw_runtime::agent::tool_receipts::ReceiptGenerator::new(),
             ),
             show_receipts_in_response: true,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
             agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             agent_transcription_provider: String::new(),
         });
@@ -9052,7 +8938,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -9111,6 +8997,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 zeroclaw_runtime::agent::tool_receipts::ReceiptGenerator::new(),
             ),
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
             agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             agent_transcription_provider: String::new(),
         });
@@ -9165,7 +9052,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -9218,6 +9105,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
             agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
             agent_transcription_provider: String::new(),
         });
@@ -9293,7 +9181,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -9343,6 +9231,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -9404,7 +9293,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -9454,6 +9343,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -9500,7 +9390,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -9550,6 +9440,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -9609,7 +9500,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("default-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -9659,6 +9550,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -9744,7 +9636,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("default-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -9794,6 +9686,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -9860,7 +9753,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("default-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -9910,6 +9803,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -9945,143 +9839,6 @@ BTC is currently around $65,000 based on latest tool output."#
     }
 
     #[tokio::test]
-    async fn process_channel_message_uses_runtime_default_model_from_store() {
-        let channel_impl = Arc::new(TelegramRecordingChannel::default());
-        let channel: Arc<dyn Channel> = channel_impl.clone();
-
-        let mut channels_by_name = HashMap::new();
-        channels_by_name.insert(channel.name().to_string(), channel);
-
-        let provider_impl = Arc::new(ModelCaptureModelProvider::default());
-        let model_provider: Arc<dyn ModelProvider> = provider_impl.clone();
-        let mut provider_cache_seed: HashMap<String, Arc<dyn ModelProvider>> = HashMap::new();
-        provider_cache_seed.insert("test-provider".to_string(), Arc::clone(&model_provider));
-
-        let temp = tempfile::TempDir::new().expect("temp dir");
-        let config_path = temp.path().join("config.toml");
-
-        {
-            let mut store = runtime_config_store()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            store.insert(
-                config_path.clone(),
-                RuntimeConfigState {
-                    defaults: ChannelRuntimeDefaults {
-                        default_model_provider: "test-provider".into(),
-                        model: "hot-reloaded-model".to_string(),
-                        temperature: 0.5,
-                        api_key: None,
-                        api_url: None,
-                        reliability: zeroclaw_config::schema::ReliabilityConfig::default(),
-                    },
-                    last_applied_stamp: None,
-                },
-            );
-        }
-
-        let runtime_ctx = Arc::new(ChannelRuntimeContext {
-            channels_by_name: Arc::new(channels_by_name),
-            model_provider: Arc::clone(&model_provider),
-            default_model_provider: Arc::new("test-provider".to_string()),
-            agent_cfg: Arc::new(zeroclaw_config::schema::AliasedAgentConfig::default()),
-            memory: Arc::new(NoopMemory),
-            tools_registry: Arc::new(vec![]),
-            observer: Arc::new(NoopObserver),
-            system_prompt: Arc::new("test-system-prompt".to_string()),
-            model: Arc::new("startup-model".to_string()),
-            temperature: 0.0,
-            auto_save_memory: false,
-            max_tool_iterations: 5,
-            min_relevance_score: 0.0,
-            conversation_histories: Arc::new(Mutex::new(lru::LruCache::new(
-                std::num::NonZeroUsize::new(MAX_CONVERSATION_SENDERS).unwrap(),
-            ))),
-            pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
-            provider_cache: Arc::new(Mutex::new(provider_cache_seed)),
-            route_overrides: Arc::new(Mutex::new(HashMap::new())),
-            api_key: None,
-            api_url: None,
-            reliability: Arc::new(zeroclaw_config::schema::ReliabilityConfig::default()),
-            provider_runtime_options: zeroclaw_providers::ModelProviderRuntimeOptions {
-                zeroclaw_dir: Some(temp.path().to_path_buf()),
-                ..zeroclaw_providers::ModelProviderRuntimeOptions::default()
-            },
-            workspace_dir: Arc::new(std::env::temp_dir()),
-            prompt_config: Arc::new(zeroclaw_config::schema::Config::default()),
-            message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
-            interrupt_on_new_message: InterruptOnNewMessageConfig {
-                telegram: false,
-                slack: false,
-                discord: false,
-                mattermost: false,
-                matrix: false,
-            },
-            multimodal: zeroclaw_config::schema::MultimodalConfig::default(),
-            media_pipeline: zeroclaw_config::schema::MediaPipelineConfig::default(),
-            transcription_config: zeroclaw_config::schema::TranscriptionConfig::default(),
-            agent_transcription_provider: String::new(),
-            hooks: None,
-            non_cli_excluded_tools: Arc::new(Vec::new()),
-            autonomy_level: AutonomyLevel::default(),
-            tool_call_dedup_exempt: Arc::new(Vec::new()),
-            model_routes: Arc::new(Vec::new()),
-            query_classification: zeroclaw_config::schema::QueryClassificationConfig::default(),
-            ack_reactions: true,
-            show_tool_calls: true,
-            session_store: None,
-            approval_manager: Arc::new(ApprovalManager::for_non_interactive(
-                &zeroclaw_config::schema::RiskProfileConfig::default(),
-            )),
-            activated_tools: None,
-            cost_tracking: None,
-            pacing: zeroclaw_config::schema::PacingConfig::default(),
-            max_tool_result_chars: 0,
-            context_token_budget: 0,
-            debouncer: Arc::new(zeroclaw_infra::debounce::MessageDebouncer::new(
-                Duration::ZERO,
-            )),
-            receipt_generator: None,
-            show_receipts_in_response: false,
-        });
-
-        process_channel_message(
-            runtime_ctx,
-            zeroclaw_api::channel::ChannelMessage {
-                id: "msg-runtime-store-model".to_string(),
-                sender: "alice".to_string(),
-                reply_target: "chat-1".to_string(),
-                content: "hello runtime defaults".to_string(),
-                channel: "telegram".to_string(),
-                channel_alias: None,
-                timestamp: 4,
-                thread_ts: None,
-                interruption_scope_id: None,
-                attachments: vec![],
-            },
-            CancellationToken::new(),
-        )
-        .await;
-
-        {
-            let mut cleanup_store = runtime_config_store()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            cleanup_store.remove(&config_path);
-        }
-
-        assert_eq!(provider_impl.call_count.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            provider_impl
-                .models
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .as_slice(),
-            &["hot-reloaded-model".to_string()]
-        );
-    }
-
-    #[tokio::test]
     async fn process_channel_message_respects_configured_max_tool_iterations_above_default() {
         let channel_impl = Arc::new(RecordingChannel::default());
         let channel: Arc<dyn Channel> = channel_impl.clone();
@@ -10101,7 +9858,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 12,
             min_relevance_score: 0.0,
@@ -10154,6 +9911,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -10202,7 +9960,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 3,
             min_relevance_score: 0.0,
@@ -10255,6 +10013,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -10407,6 +10166,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 importance: None,
                 superseded_by: None,
                 agent_alias: None,
+                agent_id: None,
             }])
         }
 
@@ -10480,7 +10240,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -10530,6 +10290,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<zeroclaw_api::channel::ChannelMessage>(4);
@@ -10564,7 +10325,7 @@ BTC is currently around $65,000 based on latest tool output."#
         drop(tx);
 
         let started = Instant::now();
-        run_message_dispatch_loop(rx, AgentRouter::single(runtime_ctx),2).await;
+        run_message_dispatch_loop(rx, AgentRouter::single(runtime_ctx), 2).await;
         let elapsed = started.elapsed();
 
         assert!(
@@ -10600,7 +10361,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -10650,6 +10411,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<zeroclaw_api::channel::ChannelMessage>(8);
@@ -10685,7 +10447,7 @@ BTC is currently around $65,000 based on latest tool output."#
             .unwrap();
         });
 
-        run_message_dispatch_loop(rx, AgentRouter::single(runtime_ctx),4).await;
+        run_message_dispatch_loop(rx, AgentRouter::single(runtime_ctx), 4).await;
         send_task.await.unwrap();
 
         let sent_messages = channel_impl.sent_messages.lock().await;
@@ -10739,7 +10501,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -10789,6 +10551,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<zeroclaw_api::channel::ChannelMessage>(8);
@@ -10824,7 +10587,7 @@ BTC is currently around $65,000 based on latest tool output."#
             .unwrap();
         });
 
-        run_message_dispatch_loop(rx, AgentRouter::single(runtime_ctx),4).await;
+        run_message_dispatch_loop(rx, AgentRouter::single(runtime_ctx), 4).await;
         send_task.await.unwrap();
 
         let sent_messages = channel_impl.sent_messages.lock().await;
@@ -10875,7 +10638,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -10925,6 +10688,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<zeroclaw_api::channel::ChannelMessage>(8);
@@ -10960,7 +10724,7 @@ BTC is currently around $65,000 based on latest tool output."#
             .unwrap();
         });
 
-        run_message_dispatch_loop(rx, AgentRouter::single(runtime_ctx),4).await;
+        run_message_dispatch_loop(rx, AgentRouter::single(runtime_ctx), 4).await;
         send_task.await.unwrap();
 
         let sent_messages = channel_impl.sent_messages.lock().await;
@@ -10989,7 +10753,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -11039,6 +10803,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -11083,7 +10848,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -11133,6 +10898,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -11177,7 +10943,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -11227,6 +10993,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -12152,7 +11919,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -12202,6 +11969,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -12305,7 +12073,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new(initial_system_prompt),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -12355,6 +12123,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -12499,7 +12268,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -12549,6 +12318,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -12624,7 +12394,7 @@ BTC is currently around $65,000 based on latest tool output."#
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -12672,6 +12442,7 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -13298,7 +13069,7 @@ This is an example JSON object for profile settings."#;
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("You are a helpful assistant.".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -13348,6 +13119,7 @@ This is an example JSON object for profile settings."#;
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         // Simulate a photo attachment message with [IMAGE:] marker.
@@ -13401,7 +13173,7 @@ This is an example JSON object for profile settings."#;
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("You are a helpful assistant.".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -13451,6 +13223,7 @@ This is an example JSON object for profile settings."#;
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -13539,7 +13312,7 @@ This is an example JSON object for profile settings."#;
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("You are a helpful assistant.".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -13586,6 +13359,7 @@ This is an example JSON object for profile settings."#;
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
             media_pipeline: zeroclaw_config::schema::MediaPipelineConfig::default(),
             transcription_config: zeroclaw_config::schema::TranscriptionConfig::default(),
             agent_transcription_provider: String::new(),
@@ -13725,7 +13499,7 @@ This is an example JSON object for profile settings."#;
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("default-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -13775,6 +13549,7 @@ This is an example JSON object for profile settings."#;
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -13863,7 +13638,7 @@ This is an example JSON object for profile settings."#;
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("default-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -13913,6 +13688,7 @@ This is an example JSON object for profile settings."#;
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -13993,7 +13769,7 @@ This is an example JSON object for profile settings."#;
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("default-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -14043,6 +13819,7 @@ This is an example JSON object for profile settings."#;
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -14143,7 +13920,7 @@ This is an example JSON object for profile settings."#;
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("default-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 5,
             min_relevance_score: 0.0,
@@ -14193,6 +13970,7 @@ This is an example JSON object for profile settings."#;
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         process_channel_message(
@@ -14491,7 +14269,7 @@ This is an example JSON object for profile settings."#;
             observer: Arc::new(NoopObserver),
             system_prompt: Arc::new("test-system-prompt".to_string()),
             model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
+            temperature: Some(0.0),
             auto_save_memory: false,
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
@@ -14541,6 +14319,7 @@ This is an example JSON object for profile settings."#;
             )),
             receipt_generator: None,
             show_receipts_in_response: false,
+            last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<zeroclaw_api::channel::ChannelMessage>(8);
@@ -14578,7 +14357,7 @@ This is an example JSON object for profile settings."#;
             .unwrap();
         });
 
-        run_message_dispatch_loop(rx, AgentRouter::single(runtime_ctx),4).await;
+        run_message_dispatch_loop(rx, AgentRouter::single(runtime_ctx), 4).await;
         send_task.await.unwrap();
 
         // Both tasks should have completed — different threads, no cancellation.

@@ -19,11 +19,6 @@ use zeroclaw_config::schema::{
 use zeroclaw_memory::Memory;
 use zeroclaw_providers::{self, ChatMessage, ModelProvider};
 
-/// Default temperature for sub-agent tool loops when the delegate config
-/// leaves it unset; matches the longstanding agentic default that balances
-/// coherence with enough variety to explore tool options.
-const DELEGATE_AGENTIC_DEFAULT_TEMPERATURE: f64 = 0.7;
-
 fn current_tool_loop_session_key() -> Option<String> {
     TOOL_LOOP_SESSION_KEY.try_with(Clone::clone).ok().flatten()
 }
@@ -758,7 +753,7 @@ impl DelegateTool {
                     &model,
                     &*model_provider,
                     &full_prompt,
-                    temperature.unwrap_or(DELEGATE_AGENTIC_DEFAULT_TEMPERATURE),
+                    temperature,
                 )
                 .await;
         }
@@ -1489,7 +1484,7 @@ impl DelegateTool {
         model: &str,
         model_provider: &dyn ModelProvider,
         full_prompt: &str,
-        temperature: f64,
+        temperature: Option<f64>,
     ) -> anyhow::Result<ToolResult> {
         let allowed_tools = self.resolve_allowed_tools(&agent_config.runtime_profile);
 
@@ -2236,7 +2231,7 @@ mod tests {
                 "model-test",
                 &model_provider,
                 "run",
-                0.2,
+                Some(0.2),
             )
             .await
             .unwrap();
@@ -2266,7 +2261,7 @@ mod tests {
                 "model-test",
                 &model_provider,
                 "run",
-                0.2,
+                Some(0.2),
             )
             .await
             .unwrap();
@@ -2297,7 +2292,7 @@ mod tests {
                 "model-test",
                 &model_provider,
                 "run",
-                0.2,
+                Some(0.2),
             )
             .await
             .unwrap();
@@ -2347,7 +2342,7 @@ mod tests {
                     "test-model",
                     &model_provider,
                     "run",
-                    0.2,
+                    Some(0.2),
                 )
                 .await
             })
@@ -2411,7 +2406,7 @@ mod tests {
                 "test-model",
                 &model_provider,
                 "run",
-                0.2,
+                Some(0.2),
             )
             .await
             .unwrap();
@@ -2440,7 +2435,7 @@ mod tests {
                 "model-test",
                 &model_provider,
                 "run",
-                0.2,
+                Some(0.2),
             )
             .await
             .unwrap();
@@ -2548,7 +2543,7 @@ mod tests {
                 "model-test",
                 &model_provider,
                 "run mcp",
-                0.2,
+                Some(0.2),
             )
             .await
             .unwrap();
