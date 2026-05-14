@@ -5,6 +5,7 @@ import {
   Bot,
   Brain,
   Clock,
+  Database,
   DollarSign,
   MessageSquare,
   Pencil,
@@ -196,7 +197,7 @@ export default function AgentCard({ agent, toggling, onToggle }: AgentCardProps)
                 : 'No per-agent override. Inherits the default backend (sqlite) from [memory].'
             }
           >
-            <Brain className="h-3 w-3" />
+            <Database className="h-3 w-3" />
             {agent.memoryBackend || 'sqlite (default)'}
           </EntityLink>
           {agent.runtimeProfile && (

@@ -19,6 +19,11 @@ use std::time::Instant;
 pub struct ProcessStats {
     /// Resident set size in bytes. `0` when unsupported.
     pub rss_bytes: u64,
+    /// Total system RAM in bytes, from `/proc/meminfo`'s `MemTotal`.
+    /// `0` when unsupported. The dashboard renders `rss / system_ram_total`
+    /// as a percentage so the RAM tile is meaningful at a glance regardless
+    /// of host size.
+    pub system_ram_total_bytes: u64,
     /// CPU usage as a percentage averaged across logical cores (0..100*ncpu).
     /// `None` on the first sample (no baseline) or unsupported platforms.
     pub cpu_percent: Option<f32>,
@@ -31,6 +36,7 @@ impl ProcessStats {
     fn unsupported() -> Self {
         Self {
             rss_bytes: 0,
+            system_ram_total_bytes: 0,
             cpu_percent: None,
             num_cpus: 0,
         }
@@ -68,6 +74,7 @@ fn sample_linux() -> Option<ProcessStats> {
     let now = Instant::now();
     let num_cpus = read_num_cpus();
     let clock_ticks = clock_ticks_per_sec();
+    let system_ram_total_bytes = read_system_ram_total().unwrap_or(0);
 
     let mut guard = last().lock();
     let cpu_percent = if let Some(prev) = guard.as_ref() {
@@ -89,9 +96,25 @@ fn sample_linux() -> Option<ProcessStats> {
 
     Some(ProcessStats {
         rss_bytes,
+        system_ram_total_bytes,
         cpu_percent,
         num_cpus,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn read_system_ram_total() -> Option<u64> {
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in meminfo.lines() {
+        if let Some(rest) = line.strip_prefix("MemTotal:") {
+            let kb: u64 = rest
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse().ok())?;
+            return Some(kb.saturating_mul(1024));
+        }
+    }
+    None
 }
 
 #[cfg(target_os = "linux")]
@@ -151,6 +174,19 @@ mod tests {
     fn sample_returns_rss_on_linux() {
         let s = sample();
         assert!(s.rss_bytes > 0, "rss should be non-zero on Linux");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn sample_returns_system_ram_total_and_rss_is_a_subset() {
+        let s = sample();
+        assert!(s.system_ram_total_bytes > 0, "MemTotal should be non-zero on Linux");
+        assert!(
+            s.rss_bytes <= s.system_ram_total_bytes,
+            "process RSS ({}) cannot exceed system total ({})",
+            s.rss_bytes,
+            s.system_ram_total_bytes
+        );
     }
 
     #[test]

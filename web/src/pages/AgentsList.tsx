@@ -109,7 +109,7 @@ export default function AgentsList() {
       ) : state.agents.length === 0 ? (
         <EmptyState />
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {state.agents.map((agent) => (
             <AgentCard
               key={agent.alias}

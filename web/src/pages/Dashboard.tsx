@@ -77,6 +77,10 @@ function formatBytes(bytes: number): string {
 
 function ProcessRamCard({ process }: { process?: ProcessStats }) {
   const supported = !!process && process.rss_bytes > 0;
+  const hasTotal = supported && (process?.system_ram_total_bytes ?? 0) > 0;
+  const pct = hasTotal
+    ? (process!.rss_bytes / process!.system_ram_total_bytes!) * 100
+    : null;
   return (
     <div className="card p-5 animate-slide-in-up">
       <div className="flex items-center gap-3 mb-3">
@@ -97,10 +101,14 @@ function ProcessRamCard({ process }: { process?: ProcessStats }) {
         className="text-lg font-semibold truncate"
         style={{ color: 'var(--pc-text-primary)' }}
       >
-        {supported ? formatBytes(process!.rss_bytes) : '—'}
+        {pct !== null ? `${pct.toFixed(pct < 1 ? 2 : 1)}%` : supported ? formatBytes(process!.rss_bytes) : '—'}
       </p>
       <p className="text-sm truncate" style={{ color: 'var(--pc-text-muted)' }}>
-        {supported ? 'resident (zeroclaw)' : 'not supported on this platform'}
+        {hasTotal
+          ? `${formatBytes(process!.rss_bytes)} / ${formatBytes(process!.system_ram_total_bytes)}`
+          : supported
+            ? 'resident (zeroclaw)'
+            : 'not supported on this platform'}
       </p>
     </div>
   );
@@ -1535,6 +1543,15 @@ function MemoriesTab() {
   const categoryFilter = searchParams.get('category') ?? '';
   const [knownAgents, setKnownAgents] = useState<string[]>([]);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const setFilter = (key: 'agent' | 'category', value: string) =>
     setSearchParams(
@@ -1736,12 +1753,11 @@ function MemoriesTab() {
                     </span>
                   )}
                 </div>
-                <p
-                  className="text-sm whitespace-pre-wrap break-words"
-                  style={{ color: 'var(--pc-text-secondary)' }}
-                >
-                  {entry.content}
-                </p>
+                <MemoryContent
+                  content={entry.content}
+                  expanded={expanded.has(entry.id)}
+                  onToggle={() => toggleExpanded(entry.id)}
+                />
                 <p
                   className="text-[10px] font-mono mt-1"
                   style={{ color: 'var(--pc-text-faint)' }}
@@ -1766,6 +1782,57 @@ function MemoriesTab() {
       )}
     </div>
   );
+}
+
+// Long memory bodies (compressed_context rows, full conversation dumps) can
+// be thousands of lines. Collapse anything past ~6 lines / 600 chars by
+// default and surface an Expand/Collapse toggle.
+const MEMORY_PREVIEW_CHARS = 600;
+const MEMORY_PREVIEW_NEWLINES = 6;
+
+function MemoryContent({
+  content,
+  expanded,
+  onToggle,
+}: {
+  content: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const newlines = (content.match(/\n/g) ?? []).length;
+  const oversize =
+    content.length > MEMORY_PREVIEW_CHARS || newlines > MEMORY_PREVIEW_NEWLINES;
+  const display = !oversize || expanded ? content : truncateForPreview(content);
+  return (
+    <>
+      <p
+        className="text-sm whitespace-pre-wrap break-words"
+        style={{ color: 'var(--pc-text-secondary)' }}
+      >
+        {display}
+      </p>
+      {oversize && (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="text-[11px] mt-1 hover:underline"
+          style={{ color: 'var(--pc-accent)' }}
+        >
+          {expanded
+            ? 'Collapse'
+            : `Expand (${content.length.toLocaleString()} chars, ${newlines + 1} lines)`}
+        </button>
+      )}
+    </>
+  );
+}
+
+function truncateForPreview(content: string): string {
+  const byNewline = content.split('\n').slice(0, MEMORY_PREVIEW_NEWLINES).join('\n');
+  const truncated = byNewline.length > MEMORY_PREVIEW_CHARS
+    ? `${byNewline.slice(0, MEMORY_PREVIEW_CHARS)}…`
+    : `${byNewline}\n…`;
+  return truncated;
 }
 
 // ---------------------------------------------------------------------------
@@ -1807,21 +1874,45 @@ function AgentsSection() {
     }
   }, []);
 
+  // Cap on-dashboard agent cards so 10+ agents don't push the rest of the
+  // dashboard below the fold. The full grid lives at /agents (linked via
+  // "View all"). Show enabled agents first so the glance is informative
+  // even when the cap clips disabled or paused agents.
+  const AGENT_GLANCE_LIMIT = 6;
+  const sortedAgents = agents
+    ? [...agents].sort((a, b) => {
+        if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+        return a.alias.localeCompare(b.alias);
+      })
+    : null;
+  const visibleAgents = sortedAgents ? sortedAgents.slice(0, AGENT_GLANCE_LIMIT) : null;
+  const hiddenCount = sortedAgents ? Math.max(0, sortedAgents.length - AGENT_GLANCE_LIMIT) : 0;
+
   return (
     <section>
       <header className="flex items-center justify-between mb-4">
-        <h2
-          className="text-sm font-semibold uppercase tracking-wider"
-          style={{ color: 'var(--pc-text-primary)' }}
-        >
-          Agents
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2
+            className="text-sm font-semibold uppercase tracking-wider"
+            style={{ color: 'var(--pc-text-primary)' }}
+          >
+            Agents
+          </h2>
+          {sortedAgents && sortedAgents.length > 0 && (
+            <span
+              className="text-xs font-mono px-2 py-0.5 rounded-full"
+              style={{ background: 'rgba(var(--pc-accent-rgb), 0.1)', color: 'var(--pc-accent)' }}
+            >
+              {sortedAgents.length}
+            </span>
+          )}
+        </div>
         <Link
           to="/agents"
-          className="text-xs flex items-center gap-1"
+          className="text-xs flex items-center gap-1 hover:underline"
           style={{ color: 'var(--pc-text-muted)' }}
         >
-          View all
+          {hiddenCount > 0 ? `View all (${sortedAgents!.length})` : 'View all'}
           <ChevronRight className="h-3 w-3" />
         </Link>
       </header>
@@ -1866,8 +1957,8 @@ function AgentsSection() {
           </Link>
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {agents.map((agent) => (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {visibleAgents!.map((agent) => (
             <AgentCard
               key={agent.alias}
               agent={agent}
@@ -1875,6 +1966,24 @@ function AgentsSection() {
               onToggle={() => handleToggle(agent)}
             />
           ))}
+          {hiddenCount > 0 && (
+            <Link
+              to="/agents"
+              className="rounded-2xl border p-5 flex flex-col items-center justify-center text-center transition-colors hover:opacity-90"
+              style={{
+                background: 'var(--pc-bg-surface)',
+                borderColor: 'var(--pc-border)',
+                borderStyle: 'dashed',
+                color: 'var(--pc-text-muted)',
+              }}
+            >
+              <Plus className="h-6 w-6 mb-2" style={{ color: 'var(--pc-accent)' }} />
+              <p className="text-sm font-medium" style={{ color: 'var(--pc-text-primary)' }}>
+                {hiddenCount} more {hiddenCount === 1 ? 'agent' : 'agents'}
+              </p>
+              <p className="text-xs mt-1">View all on /agents</p>
+            </Link>
+          )}
         </div>
       )}
     </section>
