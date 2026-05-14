@@ -218,7 +218,32 @@ impl AnthropicModelProvider {
         request: reqwest::RequestBuilder,
         credential: &str,
     ) -> reqwest::RequestBuilder {
-        if Self::is_setup_token(credential) {
+        let is_setup = Self::is_setup_token(credential);
+        // Diagnostic for "401 invalid x-api-key" mysteries: when a provider
+        // is sending a credential the upstream rejects, this is the only
+        // line that nails what bytes actually went out. Logs header kind,
+        // length, first 8 chars (enough to identify api03 vs oat01 vs an
+        // accidental enc2: blob) and last 4 (smudge for tail integrity).
+        // No full credential — that stays out of logs.
+        let len = credential.len();
+        let head: String = credential.chars().take(8).collect();
+        let tail: String = credential
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        tracing::debug!(
+            target: "zeroclaw_providers::anthropic",
+            header = if is_setup { "Authorization" } else { "x-api-key" },
+            credential_len = len,
+            credential_head = %head,
+            credential_tail = %tail,
+            "Anthropic auth header applied",
+        );
+        if is_setup {
             request
                 .header("Authorization", format!("Bearer {credential}"))
                 .header(
