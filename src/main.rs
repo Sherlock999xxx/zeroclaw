@@ -1943,12 +1943,13 @@ async fn main() -> Result<()> {
                     })),
                     #[cfg(not(feature = "gateway"))]
                     gateway_start: None,
-                    channels_start: Some(Box::new(move |config| {
+                    channels_start: Some(Box::new(move |config, cancel| {
                         let canvas_store = canvas_store_for_channels.clone();
                         Box::pin(async move {
                             Box::pin(zeroclaw_channels::orchestrator::start_channels(
                                 config,
                                 Some(canvas_store),
+                                cancel,
                             ))
                             .await
                         })
@@ -2248,7 +2249,10 @@ async fn main() -> Result<()> {
         },
 
         Commands::Channel { channel_command } => match channel_command {
-            ChannelCommands::Start => Box::pin(channels::start_channels(config, None)).await,
+            ChannelCommands::Start => {
+                let cancel = tokio_util::sync::CancellationToken::new();
+                Box::pin(channels::start_channels(config, None, cancel)).await
+            }
             ChannelCommands::Doctor => Box::pin(channels::doctor_channels(config)).await,
             other => Box::pin(channels::handle_command(other, &config)).await,
         },

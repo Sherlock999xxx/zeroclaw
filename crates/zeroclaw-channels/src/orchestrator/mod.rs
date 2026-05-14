@@ -105,15 +105,11 @@ use zeroclaw_runtime::security::{AutonomyLevel, SecurityPolicy};
 use zeroclaw_runtime::tools::{self, Tool};
 use zeroclaw_runtime::util::truncate_with_ellipsis;
 
-/// Live channel registry populated by `start_channels()`. Used by `deliver_announcement()` to
-/// reuse authenticated channel instances (critical for Matrix E2EE — avoids re-running session
-/// restore on every cron delivery).
-///
-/// Set once at startup; valid for the process lifetime. Daemon restart is required to pick up
-/// channel-config changes — there's no in-flight refresh path. Callers must tolerate the
-/// `OnceLock::get()` returning `None` during the brief window before `start_channels` populates
-/// it; `deliver_announcement` falls back to per-call channel reconstruction in that case.
-static CRON_CHANNEL_REGISTRY: OnceLock<Arc<HashMap<String, Arc<dyn Channel>>>> = OnceLock::new();
+/// Live channel registry consulted by `deliver_announcement` so cron sends reuse the
+/// authenticated channel instance (Matrix E2EE can't tolerate per-send session restore).
+/// Replaced wholesale by each `start_channels` call.
+static CRON_CHANNEL_REGISTRY: std::sync::RwLock<Option<Arc<HashMap<String, Arc<dyn Channel>>>>> =
+    std::sync::RwLock::new(None);
 
 /// Observer wrapper that forwards tool-call events to a channel sender
 /// for real-time threaded notifications.
@@ -2593,6 +2589,7 @@ fn spawn_supervised_listener(
     tx: tokio::sync::mpsc::Sender<zeroclaw_api::channel::ChannelMessage>,
     initial_backoff_secs: u64,
     max_backoff_secs: u64,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     spawn_supervised_listener_with_health_interval(
         ch,
@@ -2600,6 +2597,7 @@ fn spawn_supervised_listener(
         initial_backoff_secs,
         max_backoff_secs,
         Duration::from_secs(CHANNEL_HEALTH_HEARTBEAT_SECS),
+        cancel,
     )
 }
 
@@ -2609,6 +2607,7 @@ fn spawn_supervised_listener_with_health_interval(
     initial_backoff_secs: u64,
     max_backoff_secs: u64,
     health_interval: Duration,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     let health_interval = if health_interval.is_zero() {
         Duration::from_secs(1)
@@ -2631,6 +2630,7 @@ fn spawn_supervised_listener_with_health_interval(
 
                 loop {
                     tokio::select! {
+                        () = cancel.cancelled() => return,
                         _ = health.tick() => {
                             zeroclaw_runtime::health::mark_component_ok(&component);
                         }
@@ -2638,10 +2638,6 @@ fn spawn_supervised_listener_with_health_interval(
                     }
                 }
             };
-
-            if tx.is_closed() {
-                break;
-            }
 
             match result {
                 Ok(()) => {
@@ -2660,7 +2656,10 @@ fn spawn_supervised_listener_with_health_interval(
             }
 
             zeroclaw_runtime::health::bump_component_restart(&component);
-            tokio::time::sleep(Duration::from_secs(backoff)).await;
+            tokio::select! {
+                () = cancel.cancelled() => return,
+                () = tokio::time::sleep(Duration::from_secs(backoff)) => {}
+            }
             // Double backoff AFTER sleeping so first error uses initial_backoff
             backoff = backoff.saturating_mul(2).min(max_backoff);
         }
@@ -6004,6 +6003,7 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
 pub async fn start_channels(
     config: Config,
     canvas_store: Option<zeroclaw_runtime::tools::CanvasStore>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
     // Wrap into the canonical shared handle so channels and persistence
     // paths share one source of truth. The local `config` shadowing
@@ -6550,6 +6550,7 @@ pub async fn start_channels(
                     tx.clone(),
                     initial_backoff_secs,
                     max_backoff_secs,
+                    cancel.clone(),
                 ));
             }
             drop(tx);
@@ -6572,7 +6573,9 @@ pub async fn start_channels(
                 }
                 map
             });
-            let _ = CRON_CHANNEL_REGISTRY.set(Arc::clone(&cbn));
+            *CRON_CHANNEL_REGISTRY
+                .write()
+                .unwrap_or_else(|e| e.into_inner()) = Some(Arc::clone(&cbn));
 
             let in_flight = compute_max_in_flight_messages(channels.len());
             println!("  🚦 In-flight message limit: {in_flight}");
@@ -6867,9 +6870,12 @@ pub async fn deliver_announcement(
         zeroclaw_runtime::security::LeakResult::Clean => output.to_string(),
     };
 
-    // Use the live channel instance when available — critical for Matrix E2EE which must
-    // reuse the authenticated client rather than re-running session restore per delivery.
-    if let Some(registry) = CRON_CHANNEL_REGISTRY.get()
+    // Snapshot out of the sync RwLock before awaiting.
+    let registry_snapshot = CRON_CHANNEL_REGISTRY
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    if let Some(registry) = registry_snapshot
         && let Some(ch) = registry.get(channel.to_ascii_lowercase().as_str())
     {
         return ch.send(&SendMessage::new(&safe_output, target)).await;
@@ -13127,12 +13133,13 @@ This is an example JSON object for profile settings."#;
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<zeroclaw_api::channel::ChannelMessage>(1);
-        let handle = spawn_supervised_listener(channel, tx, 1, 1);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let handle = spawn_supervised_listener(channel, tx, 1, 1, cancel.clone());
 
         tokio::time::sleep(Duration::from_millis(80)).await;
         drop(rx);
-        handle.abort();
-        let _ = handle.await;
+        cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_millis(500), handle).await;
 
         let snapshot = zeroclaw_runtime::health::snapshot_json();
         let component = &snapshot["components"]["channel:test-supervised-fail"];
@@ -13158,12 +13165,14 @@ This is an example JSON object for profile settings."#;
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<zeroclaw_api::channel::ChannelMessage>(1);
+        let cancel = tokio_util::sync::CancellationToken::new();
         let handle = spawn_supervised_listener_with_health_interval(
             channel,
             tx,
             1,
             1,
             Duration::from_millis(20),
+            cancel.clone(),
         );
 
         tokio::time::sleep(Duration::from_millis(35)).await;
@@ -13186,10 +13195,11 @@ This is an example JSON object for profile settings."#;
             .expect("last_ok should be valid RFC3339");
         assert!(second > first, "expected periodic health heartbeat refresh");
 
-        drop(rx);
-        let join = tokio::time::timeout(Duration::from_secs(1), handle).await;
-        assert!(join.is_ok(), "listener should stop after channel shutdown");
+        cancel.cancel();
+        let join = tokio::time::timeout(Duration::from_millis(500), handle).await;
+        assert!(join.is_ok(), "listener should stop on cancel");
         assert!(calls.load(Ordering::SeqCst) >= 1);
+        drop(rx);
     }
 
     #[test]

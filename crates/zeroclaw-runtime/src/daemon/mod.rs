@@ -115,9 +115,14 @@ pub struct DaemonSubsystems {
         >,
     >,
     /// Start supervised channels. Injected by the binary when channels crate is available.
+    /// The cancellation token is fired on reload so listener tasks drop their channel Arcs
+    /// before the new supervisor starts.
     pub channels_start: Option<
         Box<
-            dyn Fn(Config) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send>>
+            dyn Fn(
+                    Config,
+                    tokio_util::sync::CancellationToken,
+                ) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send>>
                 + Send
                 + Sync,
         >,
@@ -184,10 +189,13 @@ pub async fn run(
         ));
     }
 
+    let channels_cancel = tokio_util::sync::CancellationToken::new();
+
     if let Some(channels_start) = subsystems.channels_start {
         if has_supervised_channels(&config) {
             let channels_cfg = config.clone();
             let channels_start = std::sync::Arc::new(channels_start);
+            let cancel_for_supervisor = channels_cancel.clone();
             handles.push(spawn_component_supervisor(
                 "channels",
                 initial_backoff,
@@ -195,7 +203,8 @@ pub async fn run(
                 move || {
                     let cfg = channels_cfg.clone();
                     let start = channels_start.clone();
-                    async move { start(cfg).await }
+                    let cancel = cancel_for_supervisor.clone();
+                    async move { start(cfg, cancel).await }
                 },
             ));
         } else {
@@ -291,12 +300,18 @@ pub async fn run(
         },
     );
 
+    // Fire channel cancellation before aborting supervisors so listener tasks
+    // get a chance to drop their `Arc<dyn Channel>` (and the matrix-sdk SQLite
+    // pools the Arc transitively pins).
+    channels_cancel.cancel();
     for handle in &handles {
         handle.abort();
     }
     for handle in handles {
         let _ = handle.await;
     }
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))] unsafe { libc::malloc_trim(0); }
 
     Ok(exit)
 }
