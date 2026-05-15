@@ -1,42 +1,29 @@
-// Schema-driven enumeration of every `providers.<category>.<type>.<alias>.<resource_field>`
-// the operator has configured. Two consumers right now:
-//   - Dashboard Cost tab — resolves a recorded upstream model id back to
-//     its provider type so the "Spend by model" rows can deep-link to
-//     `cost.rates.providers.models.<type>` editor pages.
-//   - CostRatesEditor — suggests upstream resource ids on the +Add
-//     input when the operator is filling in the rate sheet.
-//
-// Source of truth for the slot list is the macros in
-// `crates/zeroclaw-config/src/providers.rs`; this helper just walks the
-// live config via the existing map-keyed-section + prop endpoints.
-// There is no separate "list configured models" gateway endpoint —
-// adding one would just duplicate `getMapKeys` + `getProp`.
-
-import { getMapKeys, getProp } from './api';
+import { getMapKeys, getProp, getTemplates } from './api';
 
 export type ConfiguredModelCategory = 'models' | 'tts' | 'transcription';
 
 export interface ConfiguredModelBinding {
-  /** Provider type slot (e.g. "anthropic", "openai"). */
   type: string;
-  /** Operator-chosen alias (e.g. "glados", "production"). */
   alias: string;
-  /** Upstream resource id (model / voice / pipeline name) — the key
-   *  the rate sheet uses. May contain hyphens / dots / slashes. */
   resource: string;
 }
 
-/** Walk every configured alias under `providers.<category>` and resolve its
- *  bound resource id. Returns one entry per alias whose resource field is
- *  populated; aliases without a resource set are skipped. */
 export async function walkConfiguredModelBindings(
   category: ConfiguredModelCategory,
 ): Promise<ConfiguredModelBinding[]> {
   const root = `providers.${category}`;
   const out: ConfiguredModelBinding[] = [];
+  // providers.<category> isn't a map-keyed section; the typed wrapper
+  // exposes one HashMap per provider type. Read the slot list from
+  // map_key_sections via the templates endpoint.
   let types: string[];
   try {
-    types = (await getMapKeys(root)).keys;
+    const { templates } = await getTemplates();
+    const prefix = `${root}.`;
+    types = templates
+      .filter((t) => t.kind === 'map' && t.path.startsWith(prefix))
+      .map((t) => t.path.slice(prefix.length))
+      .filter((t) => t && !t.includes('.'));
   } catch {
     return out;
   }
@@ -63,9 +50,6 @@ export async function walkConfiguredModelBindings(
   return out;
 }
 
-/** Build `{ <resource_id>: <provider_type> }` from configured bindings.
- *  First binding wins on duplicates — sufficient for deep-link targets
- *  where any plausible owning provider type is good enough. */
 export async function resolveModelToProviderType(
   category: ConfiguredModelCategory,
 ): Promise<Record<string, string>> {
@@ -76,9 +60,6 @@ export async function resolveModelToProviderType(
   return out;
 }
 
-/** Distinct list of configured resource ids for a given (category, type),
- *  preserving config order so suggestion UIs can present them
- *  deterministically. */
 export async function configuredResourceIds(
   category: ConfiguredModelCategory,
   type: string,

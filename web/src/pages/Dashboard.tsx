@@ -45,7 +45,39 @@ import {
   getMapKeys,
 } from '@/lib/api';
 import { resolveModelToProviderType } from '@/lib/configuredModels';
-import type { CostRange } from '@/lib/api';
+
+type CostWindow = 'today' | '7d' | '30d' | 'month' | 'all';
+
+function costWindowBounds(window: CostWindow): { from?: Date; to?: Date } {
+  const now = new Date();
+  switch (window) {
+    case 'today': {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 1);
+      return { from: start, to: end };
+    }
+    case '7d': {
+      const from = new Date(now);
+      from.setDate(from.getDate() - 7);
+      return { from };
+    }
+    case '30d': {
+      const from = new Date(now);
+      from.setDate(from.getDate() - 30);
+      return { from };
+    }
+    case 'month': {
+      const from = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      const to = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+      return { from, to };
+    }
+    case 'all':
+    default:
+      return {};
+  }
+}
 import type { MemoryEntry } from '@/types/api';
 import { loadAgentSummaries, toggleAgentEnabled, type AgentSummary } from '@/lib/agents';
 import AgentCard from '@/components/AgentCard';
@@ -1275,7 +1307,7 @@ function parseTab(raw: string | null): TabId {
 export default function Dashboard() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [cost, setCost] = useState<CostSummary | null>(null);
-  const [costRange, setCostRange] = useState<CostRange>('today');
+  const [costWindow, setCostWindow] = useState<CostWindow>('today');
   const [error, setError] = useState<string | null>(null);
   const [showAllChannels, setShowAllChannels] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1306,7 +1338,8 @@ export default function Dashboard() {
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
-      Promise.all([getStatus(), getCost(costRange)])
+      const { from, to } = costWindowBounds(costWindow);
+      Promise.all([getStatus(), getCost(from, to)])
         .then(([s, c]) => {
           if (cancelled) return;
           setStatus(s);
@@ -1324,7 +1357,7 @@ export default function Dashboard() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [costRange]);
+  }, [costWindow]);
 
   if (error) {
     return (
@@ -1401,7 +1434,7 @@ export default function Dashboard() {
       {activeTab === 'memories' && <MemoriesTab />}
       {activeTab === 'health' && <HealthTab status={status} />}
       {activeTab === 'cost' && (
-        <CostTab cost={cost} range={costRange} onRangeChange={setCostRange} />
+        <CostTab cost={cost} window={costWindow} onWindowChange={setCostWindow} />
       )}
     </div>
   );
@@ -1509,71 +1542,33 @@ function HealthTab({ status }: { status: StatusResponse }) {
 
 // Cost dashboard: per-day totals plus per-agent and per-model rollups
 // with input / output / cached token splits. Both rollups are daily-scoped
-// at the tracker level so they survive daemon restarts. The model row
-// click-through resolves the provider type by walking configured
-// `providers.models.<type>.<alias>.model` (the model id is the rate
-// sheet key; the alias is its home) and lands on that type's Costs tab.
-const COST_RANGE_OPTIONS: { value: CostRange; label: string; window: string }[] = [
-  { value: 'today', label: 'Today', window: 'today' },
-  { value: 'last_7_days', label: 'Last 7 days', window: 'last 7 days' },
-  { value: 'last_30_days', label: 'Last 30 days', window: 'last 30 days' },
-  { value: 'current_month', label: 'This month', window: 'this month' },
-  { value: 'all_time', label: 'All time', window: 'all time' },
+const COST_WINDOW_OPTIONS: { value: CostWindow; label: string }[] = [
+  { value: 'today', label: 'Today' },
+  { value: '7d', label: 'Last 7 days' },
+  { value: '30d', label: 'Last 30 days' },
+  { value: 'month', label: 'This month' },
+  { value: 'all', label: 'All time' },
 ];
 
 function CostTab({
   cost,
-  range,
-  onRangeChange,
+  window: costWindow,
+  onWindowChange,
 }: {
   cost: CostSummary;
-  range: CostRange;
-  onRangeChange: (next: CostRange) => void;
+  window: CostWindow;
+  onWindowChange: (next: CostWindow) => void;
 }) {
   const byModel = Object.values(cost.by_model);
   const byAgent = Object.values(cost.by_agent);
   const navigate = useNavigate();
   const windowLabel =
-    COST_RANGE_OPTIONS.find((o) => o.value === range)?.window ?? String(range);
-  // Cache the model→type lookup once resolved so consecutive clicks
-  // are instant. Starts empty: the per-row click handler resolves
-  // on-demand, so there's no race with an in-flight initial fetch.
-  const [modelToType, setModelToType] = useState<Record<string, string>>({});
-
-  // Pre-resolve on mount so clicking a model row navigates instantly
-  // without racing the lookup. Clicks before this resolves fall through
-  // to the same async resolve below.
-  useEffect(() => {
-    let cancelled = false;
-    void resolveModelToProviderType('models')
-      .then((map) => {
-        if (!cancelled) setModelToType(map);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    COST_WINDOW_OPTIONS.find((o) => o.value === costWindow)?.label.toLowerCase() ?? costWindow;
 
   const openModelRates = async (modelId: string) => {
-    let map = modelToType;
-    if (!(modelId in map)) {
-      try {
-        const fresh = await resolveModelToProviderType('models');
-        map = fresh;
-        setModelToType(fresh);
-      } catch {
-        return;
-      }
-    }
-    const type = map[modelId];
-    if (!type) {
-      // No configured provider claims this model id. The rate sheet
-      // for a model that isn't bound to a provider has no qualified
-      // route, so the click is a no-op rather than landing on a
-      // dead-end page.
-      return;
-    }
+    const map = await resolveModelToProviderType('models').catch(() => null);
+    const type = map?.[modelId];
+    if (!type) return;
     navigate(
       `/config/providers.models/${encodeURIComponent(type)}?tab=costs`,
     );
@@ -1586,11 +1581,11 @@ function CostTab({
           Window
         </label>
         <select
-          value={range}
-          onChange={(e) => onRangeChange(e.target.value as CostRange)}
+          value={costWindow}
+          onChange={(e) => onWindowChange(e.target.value as CostWindow)}
           className="input-electric text-sm px-2 py-1 appearance-none cursor-pointer"
         >
-          {COST_RANGE_OPTIONS.map((opt) => (
+          {COST_WINDOW_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
             </option>
@@ -1598,38 +1593,6 @@ function CostTab({
         </select>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div className="card p-5 animate-slide-in-up">
-        <div className="flex items-center gap-2 mb-5">
-          <DollarSign className="h-5 w-5" style={{ color: 'var(--pc-accent)' }} />
-          <h2
-            className="text-sm font-semibold uppercase tracking-wider"
-            style={{ color: 'var(--pc-text-primary)' }}
-          >
-            Spend totals
-          </h2>
-        </div>
-        <dl className="space-y-2 text-sm">
-          {[
-            ['Today', formatUSD(cost.daily_cost_usd)],
-            ['This month', formatUSD(cost.monthly_cost_usd)],
-          ].map(([label, value]) => (
-            <div key={label} className="flex justify-between">
-              <dt style={{ color: 'var(--pc-text-muted)' }}>{label}</dt>
-              <dd className="font-mono" style={{ color: 'var(--pc-text-primary)' }}>
-                {value}
-              </dd>
-            </div>
-          ))}
-        </dl>
-        <p
-          className="text-xs mt-3"
-          style={{ color: 'var(--pc-text-faint)' }}
-        >
-          Daily and monthly aggregates over <code>state/costs.jsonl</code>.
-          Per-agent and per-model rows below are scoped to today.
-        </p>
-      </div>
-
       <div className="card p-5 animate-slide-in-up">
         <div className="flex items-center gap-2 mb-5">
           <Bot className="h-5 w-5" style={{ color: 'var(--pc-accent)' }} />

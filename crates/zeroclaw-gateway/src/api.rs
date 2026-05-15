@@ -945,16 +945,19 @@ pub async fn handle_api_memory_delete(
 pub struct CostQuery {
     #[serde(default)]
     pub agent: Option<String>,
+    /// RFC3339 UTC instants — caller-computed window bounds. The
+    /// dashboard derives them in the operator's local timezone so
+    /// "today" means the operator's today, not the daemon's UTC today.
     #[serde(default)]
-    pub range: Option<String>,
+    pub from: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
 }
 
-/// GET /api/cost — cost summary. Pass `?agent=<alias>` for per-agent
-/// rollup; omit it for the global summary which also embeds a
-/// `by_agent` map when per-agent tracking is enabled. `?range=` widens
-/// the rollup window — accepted: today (default), last_7_days, last_30_days,
-/// current_month, all_time. The short aliases `7d`, `30d`, `month`, `all`
-/// also resolve.
+/// GET /api/cost — cost summary over `[from, to)` (either bound omitted
+/// = unbounded on that side). Pass `?agent=<alias>` for the per-agent
+/// view, which ignores from/to and returns the alias's session+daily
+/// rollup.
 pub async fn handle_api_cost(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -964,16 +967,18 @@ pub async fn handle_api_cost(
         return e.into_response();
     }
 
-    let range = query
-        .range
-        .as_deref()
-        .and_then(|s| zeroclaw_runtime::cost::types::CostRange::from_wire(s))
-        .unwrap_or(zeroclaw_runtime::cost::types::CostRange::Today);
+    let parse_bound = |s: &str| {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|d| d.with_timezone(&chrono::Utc))
+    };
+    let from = query.from.as_deref().and_then(parse_bound);
+    let to = query.to.as_deref().and_then(parse_bound);
 
     if let Some(ref tracker) = state.cost_tracker {
         let result = match query.agent.as_deref().filter(|s| !s.is_empty()) {
             Some(alias) => tracker.get_summary_for_agent(alias),
-            None => tracker.get_summary_in_range(range),
+            None => tracker.get_summary_in_bounds(from, to),
         };
         match result {
             Ok(summary) => Json(serde_json::json!({"cost": summary})).into_response(),

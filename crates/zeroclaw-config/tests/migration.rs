@@ -2610,3 +2610,113 @@ fn lookup_dotted<'a>(value: &'a toml::Value, path: &str) -> Option<&'a toml::Val
     }
     Some(cur)
 }
+
+#[test]
+fn get_prop_resolves_model_field_for_typed_provider_alias() {
+    // Reproduce: the dashboard's model-row click handler calls
+    // getProp(`providers.models.<type>.<alias>.model`). If that path
+    // doesn't resolve (or returns the wrong shape), the model→type
+    // map stays empty and the click can't route to the provider's
+    // Costs tab. Pinned with the user's exact config shape.
+    use zeroclaw_config::schema::Config;
+    let raw = r#"
+schema_version = 3
+
+[providers.models.anthropic.glados]
+model = "claude-opus-4-7"
+max_tokens = 25000
+
+[providers.models.anthropic.clamps]
+model = "claude-sonnet-4-6"
+"#;
+    let cfg: Config = toml::from_str(raw).expect("parse");
+    let glados_model = cfg
+        .get_prop("providers.models.anthropic.glados.model")
+        .expect("get_prop must resolve for typed provider alias .model field");
+    let clamps_model = cfg
+        .get_prop("providers.models.anthropic.clamps.model")
+        .expect("get_prop must resolve for the other alias too");
+    eprintln!("glados.model = {glados_model:?}");
+    eprintln!("clamps.model = {clamps_model:?}");
+    assert_eq!(glados_model, "claude-opus-4-7");
+    assert_eq!(clamps_model, "claude-sonnet-4-6");
+}
+
+#[test]
+fn prop_fields_includes_providers_models_alias_model_path() {
+    // The gateway's /api/config/prop handler does lookup_prop_field(&config, &path).
+    // lookup_prop_field walks Config::prop_fields() and finds a matching entry.
+    // If the model path isn't in prop_fields(), the gateway returns 404 and
+    // the frontend's resolveModelToProviderType walk silently drops the alias.
+    use zeroclaw_config::schema::Config;
+    let raw = r#"
+schema_version = 3
+
+[providers.models.anthropic.glados]
+model = "claude-opus-4-7"
+"#;
+    let cfg: Config = toml::from_str(raw).expect("parse");
+    let want = "providers.models.anthropic.glados.model";
+    let all = cfg.prop_fields();
+    let found = all.iter().any(|f| f.name == want);
+    if !found {
+        let candidates: Vec<String> = all
+            .iter()
+            .filter(|f| f.name.contains("anthropic.glados"))
+            .map(|f| f.name.clone())
+            .collect();
+        panic!(
+            "prop_fields() missing `{want}` — candidates: {candidates:?}",
+        );
+    }
+}
+
+#[test]
+fn typed_family_root_is_not_a_map_keyed_section() {
+    // Regression: ModelProviders is a typed struct (anthropic, openai, …
+    // HashMap fields), not a single HashMap, so the typed-family root
+    // doesn't resolve as a map-keyed section. Any frontend code that
+    // walks providers.<category> must route through map_key_sections /
+    // GET /api/config/templates instead.
+    use zeroclaw_config::schema::Config;
+    let raw = r#"
+schema_version = 3
+[providers.models.anthropic.glados]
+model = "claude-opus-4-7"
+"#;
+    let cfg: Config = toml::from_str(raw).expect("parse");
+    assert!(
+        cfg.get_map_keys("providers.models").is_none(),
+        "typed-family root must NOT resolve as a single map — typed wrapper has per-type HashMap fields",
+    );
+    assert_eq!(
+        cfg.get_map_keys("providers.models.anthropic"),
+        Some(vec!["glados".to_string()]),
+        "the per-type slot IS a map keyed by alias",
+    );
+}
+
+#[test]
+fn map_key_sections_exposes_typed_family_slots() {
+    // Regression: the dashboard's walkConfiguredModelBindings now reads
+    // the slot list from /api/config/templates (backed by
+    // Config::map_key_sections()). Verify every providers.<category>
+    // typed-family root has its per-type slots registered there.
+    use zeroclaw_config::schema::Config;
+    let paths: std::collections::HashSet<&'static str> = Config::map_key_sections()
+        .iter()
+        .filter(|s| matches!(s.kind, zeroclaw_config::traits::MapKeyKind::Map))
+        .map(|s| s.path)
+        .collect();
+    for required in [
+        "providers.models.anthropic",
+        "providers.models.openai",
+        "providers.tts.openai",
+        "providers.transcription.openai",
+    ] {
+        assert!(
+            paths.contains(required),
+            "map_key_sections() must expose `{required}` — frontend depends on this via /api/config/templates",
+        );
+    }
+}
