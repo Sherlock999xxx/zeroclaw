@@ -6,6 +6,8 @@
 //! consumers parse `serde_json::Value` and walk the keys. This struct is
 //! `pub(crate)` to keep external consumers off the typed surface.
 
+use std::collections::BTreeMap;
+
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -184,78 +186,124 @@ impl Default for ServiceDescriptor {
     }
 }
 
-/// ZeroClaw-domain attribution fields. Every field is alias-bound where
-/// applicable: `channel` is `<type>.<alias>` composite, `model_provider`
-/// is `<type>.<alias>`, etc. Each composite also has its decomposed
-/// pieces so filters can match either coarse or precise.
+/// Plain alias-bound attribution fields. Adding to this list is the ONLY
+/// per-field change needed — Layer/reader/gateway/UI all read this list
+/// at runtime instead of hardcoding the per-field plumbing.
+pub const ATTRIBUTION_FIELDS: &[&str] = &[
+    "agent_alias",
+    "tool",
+    "session_key",
+    "cron_job_id",
+    "risk_profile",
+    "runtime_profile",
+    "memory_namespace",
+    "skill_bundle",
+    "knowledge_bundle",
+    "mcp_bundle",
+    "peer_group",
+    "model",
+    "embedding_provider",
+];
+
+/// Composite alias-bound prefixes. Each prefix gets three on-disk keys:
+/// `<prefix>` (full `<type>.<alias>`), `<prefix>_type`, `<prefix>_alias`.
+/// Adding to this list propagates to every consumer the same way as
+/// [`ATTRIBUTION_FIELDS`].
+pub const COMPOSITE_PREFIXES: &[&str] = &[
+    "channel",
+    "model_provider",
+    "tts_provider",
+    "transcription_provider",
+    "tunnel_provider",
+];
+
+/// True when `name` matches a known plain attribution field, a composite
+/// prefix, or a composite's decomposed `_type` / `_alias` suffix.
+#[must_use]
+pub fn is_attribution_field(name: &str) -> bool {
+    if ATTRIBUTION_FIELDS.contains(&name) {
+        return true;
+    }
+    for prefix in COMPOSITE_PREFIXES {
+        if name == *prefix {
+            return true;
+        }
+        if let Some(suffix) = name.strip_prefix(prefix)
+            && (suffix == "_type" || suffix == "_alias")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// ZeroClaw-domain attribution. Every field is alias-bound where
+/// applicable: `channel` is the `<type>.<alias>` composite, `model_provider`
+/// is the `<type>.<alias>` composite, etc. Composites are stored as three
+/// keys (`<prefix>`, `<prefix>_type`, `<prefix>_alias`) so filters can
+/// match either coarse or precise.
+///
+/// The shape is a flat string map flattened into the parent on-disk JSON,
+/// driven by [`ATTRIBUTION_FIELDS`] + [`COMPOSITE_PREFIXES`]. Adding a new
+/// attribution key requires extending those constants — nothing else.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ZeroclawAttribution {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_alias: Option<String>,
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, String>,
 
-    /// Composite `<type>.<alias>`, e.g. `"discord.clamps"`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel_alias: Option<String>,
-
-    /// Composite `<type>.<alias>`, e.g. `"anthropic.clamps"`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_provider: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_provider_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_provider_alias: Option<String>,
-
-    /// Model name (provider-scoped, e.g. `"claude-sonnet-4-6"`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-
-    /// Tool name when applicable (e.g. `"shell"`, `"file_read"`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool: Option<String>,
-
-    /// Conversation session key (channel-scoped).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_key: Option<String>,
-
-    /// Cron job id (UUID) when the event was emitted from cron flow.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cron_job_id: Option<String>,
-
-    /// Per-event duration when applicable.
+    /// Per-event duration when applicable. Kept off `fields` so JSON
+    /// readers see a number, not a stringified number.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
 }
 
 impl ZeroclawAttribution {
-    /// Split a composite `<type>.<alias>` into its parts and populate the
-    /// channel + channel_type + channel_alias fields in one call.
-    pub fn set_channel_composite(&mut self, composite: &str) {
-        self.channel = Some(composite.to_string());
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.fields.get(key).map(String::as_str)
+    }
+
+    pub fn set(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.fields.insert(key.into(), value.into());
+    }
+
+    /// Set a composite-prefixed attribution by splitting `composite` at
+    /// the first `.` — populates `<prefix>`, `<prefix>_type`, and
+    /// (when the dotted form is present) `<prefix>_alias` in one call.
+    pub fn set_composite(&mut self, prefix: &str, composite: &str) {
+        self.set(prefix.to_string(), composite.to_string());
         if let Some((ty, alias)) = composite.split_once('.') {
-            self.channel_type = Some(ty.to_string());
-            self.channel_alias = Some(alias.to_string());
+            self.set(format!("{prefix}_type"), ty.to_string());
+            self.set(format!("{prefix}_alias"), alias.to_string());
         } else {
-            // Bare type (e.g. legacy single-instance channel, or non-aliased
-            // channel like webhook/cli). Type is the whole thing, alias is
-            // absent.
-            self.channel_type = Some(composite.to_string());
-            self.channel_alias = None;
+            self.set(format!("{prefix}_type"), composite.to_string());
         }
     }
 
-    pub fn set_model_provider_composite(&mut self, composite: &str) {
-        self.model_provider = Some(composite.to_string());
-        if let Some((ty, alias)) = composite.split_once('.') {
-            self.model_provider_type = Some(ty.to_string());
-            self.model_provider_alias = Some(alias.to_string());
-        } else {
-            self.model_provider_type = Some(composite.to_string());
-            self.model_provider_alias = None;
+    /// Fill any `key` absent on `self` from `other`. The flat-map shape
+    /// means composite groups move as a unit naturally (all three keys
+    /// merge independently, but the composite-prefix setter always
+    /// writes all three together, so the parent's set is consistent).
+    pub fn merge_from(&mut self, other: &Self) {
+        for (k, v) in &other.fields {
+            self.fields.entry(k.clone()).or_insert_with(|| v.clone());
         }
+        if self.duration_ms.is_none() {
+            self.duration_ms = other.duration_ms;
+        }
+    }
+
+    /// True when every plain field in [`ATTRIBUTION_FIELDS`] and every
+    /// composite in [`COMPOSITE_PREFIXES`] has been populated — the
+    /// span-walk uses this as a "no point looking further up" check.
+    #[must_use]
+    pub fn is_fully_populated(&self) -> bool {
+        ATTRIBUTION_FIELDS
+            .iter()
+            .all(|k| self.fields.contains_key(*k))
+            && COMPOSITE_PREFIXES
+                .iter()
+                .all(|p| self.fields.contains_key(*p))
     }
 }
 
@@ -397,48 +445,70 @@ mod tests {
     }
 
     #[test]
-    fn set_channel_composite_splits() {
-        let mut z = ZeroclawAttribution::default();
-        z.set_channel_composite("discord.clamps");
-        assert_eq!(z.channel.as_deref(), Some("discord.clamps"));
-        assert_eq!(z.channel_type.as_deref(), Some("discord"));
-        assert_eq!(z.channel_alias.as_deref(), Some("clamps"));
+    fn set_composite_splits_channel() {
+        let mut attribution = ZeroclawAttribution::default();
+        attribution.set_composite("channel", "discord.clamps");
+        assert_eq!(attribution.get("channel"), Some("discord.clamps"));
+        assert_eq!(attribution.get("channel_type"), Some("discord"));
+        assert_eq!(attribution.get("channel_alias"), Some("clamps"));
     }
 
     #[test]
-    fn set_channel_composite_bare_type() {
-        let mut z = ZeroclawAttribution::default();
-        z.set_channel_composite("webhook");
-        assert_eq!(z.channel_type.as_deref(), Some("webhook"));
-        assert!(z.channel_alias.is_none());
+    fn set_composite_bare_type() {
+        let mut attribution = ZeroclawAttribution::default();
+        attribution.set_composite("channel", "webhook");
+        assert_eq!(attribution.get("channel_type"), Some("webhook"));
+        assert!(attribution.get("channel_alias").is_none());
     }
 
     #[test]
-    fn set_model_provider_composite_splits() {
-        let mut z = ZeroclawAttribution::default();
-        z.set_model_provider_composite("anthropic.clamps");
-        assert_eq!(z.model_provider.as_deref(), Some("anthropic.clamps"));
-        assert_eq!(z.model_provider_type.as_deref(), Some("anthropic"));
-        assert_eq!(z.model_provider_alias.as_deref(), Some("clamps"));
+    fn set_composite_splits_model_provider() {
+        let mut attribution = ZeroclawAttribution::default();
+        attribution.set_composite("model_provider", "anthropic.clamps");
+        assert_eq!(attribution.get("model_provider"), Some("anthropic.clamps"));
+        assert_eq!(attribution.get("model_provider_type"), Some("anthropic"));
+        assert_eq!(attribution.get("model_provider_alias"), Some("clamps"));
+    }
+
+    #[test]
+    fn merge_from_fills_missing_only() {
+        let mut child = ZeroclawAttribution::default();
+        child.set("agent_alias", "clamps");
+        let mut parent = ZeroclawAttribution::default();
+        parent.set("agent_alias", "glados");
+        parent.set("risk_profile", "strict");
+        child.merge_from(&parent);
+        assert_eq!(child.get("agent_alias"), Some("clamps"));
+        assert_eq!(child.get("risk_profile"), Some("strict"));
+    }
+
+    #[test]
+    fn is_attribution_field_recognises_composites() {
+        assert!(is_attribution_field("channel"));
+        assert!(is_attribution_field("channel_type"));
+        assert!(is_attribution_field("channel_alias"));
+        assert!(is_attribution_field("model_provider_alias"));
+        assert!(is_attribution_field("agent_alias"));
+        assert!(!is_attribution_field("not_a_real_field"));
     }
 
     #[test]
     fn event_serializes_with_at_timestamp_key() {
-        let e = LogEvent::new(Severity::Info, "test", EventCategory::Agent);
-        let v = serde_json::to_value(&e).unwrap();
-        assert!(v.get("@timestamp").is_some());
-        assert!(v.get("timestamp").is_none());
-        assert_eq!(v["severity_text"], "INFO");
-        assert_eq!(v["severity_number"], 9);
-        assert_eq!(v["event"]["category"], "agent");
-        assert_eq!(v["event"]["action"], "test");
-        assert_eq!(v["schema_version"], LogEvent::SCHEMA_VERSION);
+        let event = LogEvent::new(Severity::Info, "test", EventCategory::Agent);
+        let serialized = serde_json::to_value(&event).unwrap();
+        assert!(serialized.get("@timestamp").is_some());
+        assert!(serialized.get("timestamp").is_none());
+        assert_eq!(serialized["severity_text"], "INFO");
+        assert_eq!(serialized["severity_number"], 9);
+        assert_eq!(serialized["event"]["category"], "agent");
+        assert_eq!(serialized["event"]["action"], "test");
+        assert_eq!(serialized["schema_version"], LogEvent::SCHEMA_VERSION);
     }
 
     #[test]
     fn unknown_outcome_omitted_from_serialization() {
-        let e = LogEvent::new(Severity::Info, "test", EventCategory::Agent);
-        let v = serde_json::to_value(&e).unwrap();
-        assert!(v["event"].get("outcome").is_none());
+        let event = LogEvent::new(Severity::Info, "test", EventCategory::Agent);
+        let serialized = serde_json::to_value(&event).unwrap();
+        assert!(serialized["event"].get("outcome").is_none());
     }
 }

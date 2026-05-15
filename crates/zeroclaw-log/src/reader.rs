@@ -16,7 +16,7 @@
 //! filters: the whole file is scanned. Best case (no filter): only
 //! `limit` lines decoded.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -28,6 +28,12 @@ use crate::event::LogEvent;
 
 /// Filter parameters for [`load_page`]. Each field is independent; an
 /// event must match ALL provided constraints to be included.
+///
+/// Per-attribution-field equality filters live in [`Self::field_eq`]:
+/// keys are any `zeroclaw.*` attribution name (e.g. `"agent_alias"`,
+/// `"channel"`, `"channel_type"`, `"risk_profile"`, `"model_provider"`).
+/// Adding a new attribution field anywhere in the schema requires no
+/// changes here — the filter looks it up dynamically.
 #[derive(Debug, Clone, Default)]
 pub struct LogFilter {
     /// RFC 3339 lower bound (inclusive).
@@ -44,20 +50,15 @@ pub struct LogFilter {
     pub outcome: Option<String>,
     /// Minimum severity_number.
     pub severity_min: Option<u8>,
-    /// Match exact zeroclaw.agent_alias.
-    pub agent: Option<String>,
-    /// Match exact zeroclaw.channel (composite `<type>.<alias>`).
-    pub channel: Option<String>,
-    /// Match exact zeroclaw.channel_type.
-    pub channel_type: Option<String>,
-    /// Match exact zeroclaw.tool.
-    pub tool: Option<String>,
     /// Match exact trace_id.
     pub trace_id: Option<String>,
     /// Substring search across message + attributes.
     pub q: Option<String>,
     /// Hide events with event.category == "internal" by default.
     pub hide_internal: bool,
+    /// Per-attribution-field exact-match constraints. Key is any
+    /// `zeroclaw.*` attribution name. Empty map = no attribution filter.
+    pub field_eq: BTreeMap<String, String>,
 }
 
 /// One page returned by [`load_page`].
@@ -111,7 +112,7 @@ pub fn load_page(path: &Path, filter: &LogFilter, limit: usize) -> Result<LogPag
         }
 
         let event: LogEvent = match serde_json::from_str(trimmed) {
-            Ok(e) => e,
+            Ok(event) => event,
             Err(err) => {
                 tracing::trace!(
                     target: "zeroclaw_log",
@@ -198,25 +199,10 @@ fn matches_filter(event: &LogEvent, filter: &LogFilter, needle: Option<&str>) ->
     {
         return false;
     }
-    if let Some(ref agent) = filter.agent
-        && event.zeroclaw.agent_alias.as_deref() != Some(agent.as_str())
-    {
-        return false;
-    }
-    if let Some(ref channel) = filter.channel
-        && event.zeroclaw.channel.as_deref() != Some(channel.as_str())
-    {
-        return false;
-    }
-    if let Some(ref ty) = filter.channel_type
-        && event.zeroclaw.channel_type.as_deref() != Some(ty.as_str())
-    {
-        return false;
-    }
-    if let Some(ref tool) = filter.tool
-        && event.zeroclaw.tool.as_deref() != Some(tool.as_str())
-    {
-        return false;
+    for (key, want) in &filter.field_eq {
+        if event.zeroclaw.get(key) != Some(want.as_str()) {
+            return false;
+        }
     }
     if let Some(ref tid) = filter.trace_id
         && event.trace_id.as_deref() != Some(tid.as_str())
@@ -269,18 +255,20 @@ mod tests {
     use std::io::Write;
 
     fn write_jsonl(path: &Path, events: &[LogEvent]) {
-        let mut f = std::fs::File::create(path).unwrap();
-        for e in events {
-            let line = serde_json::to_string(e).unwrap();
-            f.write_all(line.as_bytes()).unwrap();
-            f.write_all(b"\n").unwrap();
+        let mut file = std::fs::File::create(path).unwrap();
+        for event in events {
+            let line = serde_json::to_string(event).unwrap();
+            file.write_all(line.as_bytes()).unwrap();
+            file.write_all(b"\n").unwrap();
         }
     }
 
     fn make_event(action: &str, agent: Option<&str>) -> LogEvent {
-        let mut e = LogEvent::new(Severity::Info, action, EventCategory::Agent);
-        e.zeroclaw.agent_alias = agent.map(String::from);
-        e
+        let mut event = LogEvent::new(Severity::Info, action, EventCategory::Agent);
+        if let Some(alias) = agent {
+            event.zeroclaw.set("agent_alias", alias);
+        }
+        event
     }
 
     #[test]
@@ -297,12 +285,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("trace.jsonl");
         let mut events = Vec::new();
-        for i in 0..5 {
-            let mut e = make_event("test", None);
+        for index in 0..5 {
+            let mut event = make_event("test", None);
             // Force monotonically increasing timestamp.
-            e.timestamp = format!("2026-05-15T19:00:0{i}.000Z");
-            e.message = Some(format!("event-{i}"));
-            events.push(e);
+            event.timestamp = format!("2026-05-15T19:00:0{index}.000Z");
+            event.message = Some(format!("event-{index}"));
+            events.push(event);
         }
         write_jsonl(&path, &events);
 
@@ -325,8 +313,10 @@ mod tests {
         ];
         write_jsonl(&path, &events);
 
+        let mut field_eq = BTreeMap::new();
+        field_eq.insert("agent_alias".into(), "clamps".into());
         let filter = LogFilter {
-            agent: Some("clamps".into()),
+            field_eq,
             ..Default::default()
         };
         let page = load_page(&path, &filter, 10).unwrap();
@@ -337,11 +327,11 @@ mod tests {
     fn hide_internal_drops_internal_category() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("trace.jsonl");
-        let mut e1 = make_event("a", None);
-        e1.event.category = "agent".into();
-        let mut e2 = make_event("b", None);
-        e2.event.category = "internal".into();
-        write_jsonl(&path, &[e1, e2]);
+        let mut agent_event = make_event("a", None);
+        agent_event.event.category = "agent".into();
+        let mut internal_event = make_event("b", None);
+        internal_event.event.category = "internal".into();
+        write_jsonl(&path, &[agent_event, internal_event]);
 
         let filter = LogFilter {
             hide_internal: true,
@@ -356,13 +346,16 @@ mod tests {
     fn substring_query_matches_message_and_attributes() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("trace.jsonl");
-        let mut e1 = make_event("a", None);
-        e1.message = Some("alpha bravo".into());
-        let mut e2 = make_event("b", None);
-        e2.attributes = serde_json::json!({ "k": "delta echo" });
-        let mut e3 = make_event("c", None);
-        e3.message = Some("foxtrot".into());
-        write_jsonl(&path, &[e1, e2, e3]);
+        let mut with_alpha_message = make_event("a", None);
+        with_alpha_message.message = Some("alpha bravo".into());
+        let mut with_attr_payload = make_event("b", None);
+        with_attr_payload.attributes = serde_json::json!({ "k": "delta echo" });
+        let mut with_foxtrot_message = make_event("c", None);
+        with_foxtrot_message.message = Some("foxtrot".into());
+        write_jsonl(
+            &path,
+            &[with_alpha_message, with_attr_payload, with_foxtrot_message],
+        );
 
         let filter = LogFilter {
             q: Some("bravo".into()),
@@ -372,13 +365,13 @@ mod tests {
         assert_eq!(page.events.len(), 1);
         assert_eq!(page.events[0].event.action, "a");
 
-        let filter2 = LogFilter {
+        let attr_filter = LogFilter {
             q: Some("delta".into()),
             ..Default::default()
         };
-        let page2 = load_page(&path, &filter2, 10).unwrap();
-        assert_eq!(page2.events.len(), 1);
-        assert_eq!(page2.events[0].event.action, "b");
+        let attr_page = load_page(&path, &attr_filter, 10).unwrap();
+        assert_eq!(attr_page.events.len(), 1);
+        assert_eq!(attr_page.events[0].event.action, "b");
     }
 
     #[test]
@@ -386,27 +379,27 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("trace.jsonl");
         let mut events = Vec::new();
-        for i in 0..6 {
-            let mut e = make_event("test", None);
-            e.timestamp = format!("2026-05-15T19:00:0{i}.000Z");
-            e.message = Some(format!("event-{i}"));
-            events.push(e);
+        for index in 0..6 {
+            let mut event = make_event("test", None);
+            event.timestamp = format!("2026-05-15T19:00:0{index}.000Z");
+            event.message = Some(format!("event-{index}"));
+            events.push(event);
         }
         write_jsonl(&path, &events);
 
-        let page1 = load_page(&path, &LogFilter::default(), 3).unwrap();
-        assert_eq!(page1.events[0].message.as_deref(), Some("event-5"));
-        let (cur_ts, cur_id) = page1.next_cursor.unwrap();
+        let first_page = load_page(&path, &LogFilter::default(), 3).unwrap();
+        assert_eq!(first_page.events[0].message.as_deref(), Some("event-5"));
+        let (cursor_ts, cursor_id) = first_page.next_cursor.unwrap();
 
-        let filter = LogFilter {
-            until_ts: Some(cur_ts),
-            until_id: Some(cur_id),
+        let older_filter = LogFilter {
+            until_ts: Some(cursor_ts),
+            until_id: Some(cursor_id),
             ..Default::default()
         };
-        let page2 = load_page(&path, &filter, 3).unwrap();
-        assert_eq!(page2.events[0].message.as_deref(), Some("event-2"));
-        assert_eq!(page2.events[1].message.as_deref(), Some("event-1"));
-        assert_eq!(page2.events[2].message.as_deref(), Some("event-0"));
-        assert!(page2.at_end);
+        let older_page = load_page(&path, &older_filter, 3).unwrap();
+        assert_eq!(older_page.events[0].message.as_deref(), Some("event-2"));
+        assert_eq!(older_page.events[1].message.as_deref(), Some("event-1"));
+        assert_eq!(older_page.events[2].message.as_deref(), Some("event-0"));
+        assert!(older_page.at_end);
     }
 }

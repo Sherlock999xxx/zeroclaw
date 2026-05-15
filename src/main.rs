@@ -91,8 +91,8 @@ where
             // semantic for nested SubAgent / cron spans.
             scope.into_iter().find_map(|span| {
                 span.extensions()
-                    .get::<AgentAliasField>()
-                    .map(|f| f.alias.clone())
+                    .get::<ZeroclawAttribution>()
+                    .and_then(|a| a.get("agent_alias").map(str::to_string))
             })
         });
 
@@ -102,7 +102,7 @@ where
     }
 }
 
-use zeroclaw_log::AgentAliasField;
+use zeroclaw_log::ZeroclawAttribution;
 
 /// Decorate the value at `path` in `config.toml` with a leading `# {comment}`
 /// line, preserving any non-comment whitespace. Mirrors the gateway's

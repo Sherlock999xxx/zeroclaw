@@ -85,19 +85,19 @@ pub fn record_event_with_agent(
     };
     event.set_outcome(outcome);
     if let Some(channel) = channel {
-        event.zeroclaw.set_channel_composite(channel);
+        event.zeroclaw.set_composite("channel", channel);
     }
-    if let Some(mp) = model_provider {
-        event.zeroclaw.set_model_provider_composite(mp);
+    if let Some(provider_composite) = model_provider {
+        event.zeroclaw.set_composite("model_provider", provider_composite);
     }
     if let Some(model) = model {
-        event.zeroclaw.model = Some(model.to_string());
+        event.zeroclaw.set("model", model);
     }
     if let Some(turn) = turn_id {
         event.trace_id = Some(turn.to_string());
     }
     if let Some(agent) = agent_alias {
-        event.zeroclaw.agent_alias = Some(agent.to_string());
+        event.zeroclaw.set("agent_alias", agent);
     }
     if let Some(msg) = message {
         event.message = Some(msg.to_string());

@@ -41,12 +41,11 @@ pub use broadcast::{
 pub use chain::display_chain;
 pub use config::{ResolvedPolicy, StoragePolicy, ToolIoPolicy};
 pub use event::{
-    EventCategory, EventOutcome, LogEvent, Severity, severity_text_from_number,
+    ATTRIBUTION_FIELDS, COMPOSITE_PREFIXES, EventCategory, EventOutcome, LogEvent, Severity,
+    ZeroclawAttribution, is_attribution_field, severity_text_from_number,
     severity_text_from_tracing_level,
 };
-pub use layer::{
-    AgentAliasField, ChannelContextField, CronJobIdField, LogCaptureLayer, SessionKeyField,
-};
+pub use layer::LogCaptureLayer;
 pub use migrate::migrate_legacy_jsonl_in_place;
 pub use observer_bridge::{clear_observer_bridge, set_observer_bridge};
 pub use reader::{LogFilter, LogPage, current_log_path, find_event_by_id, load_page};

@@ -1,9 +1,17 @@
 //! `GET /api/logs` — paginated query over the persisted JSONL log.
 //!
-//! Thin HTTP adapter over [`zeroclaw_log::load_page`]. Filter parameters
-//! map 1:1 onto `LogFilter` fields. Pagination is cursor-based:
-//! responses include `next_cursor: (timestamp, id)` which callers pass
-//! back as `until_ts` / `until_id` to fetch older events.
+//! Thin HTTP adapter over [`zeroclaw_log::load_page`]. Pagination is
+//! cursor-based: responses include `next_cursor: (timestamp, id)` which
+//! callers pass back as `until_ts` / `until_id` to fetch older events.
+//!
+//! Top-level query params: `since_ts`, `until_ts`, `until_id`, `action`,
+//! `category`, `outcome`, `severity_min`, `trace_id`, `q`,
+//! `hide_internal`, `limit`. Every other `?key=value` is treated as a
+//! per-attribution exact-match (`zeroclaw.<key> == value`), driven by
+//! [`zeroclaw_log::is_attribution_field`]. Adding a new attribution
+//! field anywhere in the schema requires no changes here.
+
+use std::collections::{BTreeMap, HashMap};
 
 use axum::{
     Json,
@@ -11,60 +19,27 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use serde::{Deserialize, Serialize};
-use zeroclaw_log::{LogFilter, LogPage};
+use serde::Serialize;
+use zeroclaw_log::{
+    ATTRIBUTION_FIELDS, COMPOSITE_PREFIXES, LogFilter, LogPage, is_attribution_field,
+};
 
 use super::AppState;
 use super::api::require_auth;
 
-#[derive(Debug, Default, Deserialize)]
-pub struct LogsQuery {
-    /// RFC 3339 lower bound (inclusive).
-    #[serde(default)]
-    pub since_ts: Option<String>,
-    /// RFC 3339 upper bound (exclusive — used by pagination cursor).
-    #[serde(default)]
-    pub until_ts: Option<String>,
-    /// Event id at the cursor when timestamps tie.
-    #[serde(default)]
-    pub until_id: Option<String>,
-    /// Match exact `event.action`.
-    #[serde(default)]
-    pub action: Option<String>,
-    /// Match exact `event.category`.
-    #[serde(default)]
-    pub category: Option<String>,
-    /// Match exact `event.outcome`.
-    #[serde(default)]
-    pub outcome: Option<String>,
-    /// Minimum OTel severity_number (e.g. `13` = WARN+).
-    #[serde(default)]
-    pub severity_min: Option<u8>,
-    /// Match `zeroclaw.agent_alias`.
-    #[serde(default)]
-    pub agent: Option<String>,
-    /// Match alias-bound `<type>.<alias>` composite.
-    #[serde(default)]
-    pub channel: Option<String>,
-    /// Match `zeroclaw.channel_type` only (no alias filter).
-    #[serde(default)]
-    pub channel_type: Option<String>,
-    /// Match `zeroclaw.tool`.
-    #[serde(default)]
-    pub tool: Option<String>,
-    /// Match `trace_id`.
-    #[serde(default)]
-    pub trace_id: Option<String>,
-    /// Substring search across `message` + `attributes`.
-    #[serde(default)]
-    pub q: Option<String>,
-    /// Hide `event.category = "internal"` events. Default `false`.
-    #[serde(default)]
-    pub hide_internal: bool,
-    /// Page size. Default 200, capped at 10_000 by the reader.
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
+const TOP_LEVEL_PARAMS: &[&str] = &[
+    "since_ts",
+    "until_ts",
+    "until_id",
+    "action",
+    "category",
+    "outcome",
+    "severity_min",
+    "trace_id",
+    "q",
+    "hide_internal",
+    "limit",
+];
 
 #[derive(Debug, Serialize)]
 pub struct LogsResponse {
@@ -76,13 +51,27 @@ pub struct LogsResponse {
     /// Daemon start time so callers can implement "since daemon start"
     /// without an extra `/api/status` round-trip.
     pub daemon_started_at: String,
+    /// Canonical attribution-field names — `ATTRIBUTION_FIELDS` plus, for
+    /// each entry in `COMPOSITE_PREFIXES`, the bare prefix and its
+    /// `<prefix>_type` / `<prefix>_alias` decomposed keys. The dashboard
+    /// reads this instead of enumerating schema fields client-side.
+    pub attribution_keys: Vec<String>,
 }
 
-/// `GET /api/logs?since_ts=&until_ts=&until_id=&action=&category=&outcome=&severity_min=&agent=&channel=&channel_type=&tool=&trace_id=&q=&hide_internal=&limit=`
+fn attribution_keys_for_response() -> Vec<String> {
+    let mut keys: Vec<String> = ATTRIBUTION_FIELDS.iter().map(|name| (*name).to_string()).collect();
+    for prefix in COMPOSITE_PREFIXES {
+        keys.push((*prefix).to_string());
+        keys.push(format!("{prefix}_type"));
+        keys.push(format!("{prefix}_alias"));
+    }
+    keys
+}
+
 pub async fn handle_api_logs(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(q): Query<LogsQuery>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     if let Err(e) = require_auth(&state, &headers) {
         return e.into_response();
@@ -94,27 +83,60 @@ pub async fn handle_api_logs(
             next_cursor: None,
             at_end: true,
             daemon_started_at: zeroclaw_runtime::health::daemon_started_at(),
+            attribution_keys: attribution_keys_for_response(),
         })
         .into_response();
     };
 
-    let filter = LogFilter {
-        since_ts: q.since_ts,
-        until_ts: q.until_ts,
-        until_id: q.until_id,
-        action: q.action,
-        category: q.category,
-        outcome: q.outcome,
-        severity_min: q.severity_min,
-        agent: q.agent,
-        channel: q.channel,
-        channel_type: q.channel_type,
-        tool: q.tool,
-        trace_id: q.trace_id,
-        q: q.q,
-        hide_internal: q.hide_internal,
+    let take = |key: &str| -> Option<String> {
+        params.get(key).map(String::from).filter(|s| !s.is_empty())
     };
-    let limit = q.limit.unwrap_or(200);
+
+    let severity_min = params
+        .get("severity_min")
+        .and_then(|raw| raw.parse::<u8>().ok());
+    let hide_internal = params
+        .get("hide_internal")
+        .map(|raw| matches!(raw.as_str(), "true" | "1" | "yes"))
+        .unwrap_or(false);
+    let limit = params
+        .get("limit")
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(200);
+
+    let mut field_eq: BTreeMap<String, String> = BTreeMap::new();
+    for (key, value) in &params {
+        if TOP_LEVEL_PARAMS.contains(&key.as_str()) {
+            continue;
+        }
+        if !is_attribution_field(key) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("unknown query parameter: {key}"),
+                })),
+            )
+                .into_response();
+        }
+        if value.is_empty() {
+            continue;
+        }
+        field_eq.insert(key.clone(), value.clone());
+    }
+
+    let filter = LogFilter {
+        since_ts: take("since_ts"),
+        until_ts: take("until_ts"),
+        until_id: take("until_id"),
+        action: take("action"),
+        category: take("category"),
+        outcome: take("outcome"),
+        severity_min,
+        trace_id: take("trace_id"),
+        q: take("q"),
+        hide_internal,
+        field_eq,
+    };
 
     let LogPage {
         events,
@@ -135,7 +157,7 @@ pub async fn handle_api_logs(
 
     let events_json: Vec<serde_json::Value> = events
         .into_iter()
-        .filter_map(|e| serde_json::to_value(e).ok())
+        .filter_map(|event| serde_json::to_value(event).ok())
         .collect();
 
     Json(LogsResponse {
@@ -143,6 +165,7 @@ pub async fn handle_api_logs(
         next_cursor,
         at_end,
         daemon_started_at: zeroclaw_runtime::health::daemon_started_at(),
+        attribution_keys: attribution_keys_for_response(),
     })
     .into_response()
 }

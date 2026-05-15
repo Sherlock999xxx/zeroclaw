@@ -759,6 +759,10 @@ export interface BrowseEntry {
   kind: 'dir' | 'file';
   /** Bytes; absent for directories. */
   size?: number;
+  /** True for top-level entries the runtime owns (e.g. `sessions/`,
+   *  `IDENTITY.md`). Server-side mutations on these are rejected; the
+   *  dashboard hides delete/rename affordances when this is set. */
+  protected?: boolean;
 }
 
 export interface BrowseResponse {
@@ -838,6 +842,16 @@ export function moveAgentWorkspacePath(
   return apiFetch<{ from: string; to: string }>(
     `/api/agents/${encodeURIComponent(alias)}/workspace/move`,
     { method: 'POST', body: JSON.stringify({ from, to }) },
+  );
+}
+
+export function createAgentWorkspaceDirectory(
+  alias: string,
+  path: string,
+): Promise<{ created: string }> {
+  return apiFetch<{ created: string }>(
+    `/api/agents/${encodeURIComponent(alias)}/workspace/mkdir`,
+    { method: 'POST', body: JSON.stringify({ path }) },
   );
 }
 
@@ -1217,15 +1231,17 @@ export function storeMemory(
   key: string,
   content: string,
   category?: string,
+  agent?: string,
 ): Promise<void> {
   return apiFetch<unknown>('/api/memory', {
     method: 'POST',
-    body: JSON.stringify({ key, content, category }),
+    body: JSON.stringify({ key, content, category, agent }),
   }).then(() => undefined);
 }
 
-export function deleteMemory(key: string): Promise<void> {
-  return apiFetch<void>(`/api/memory/${encodeURIComponent(key)}`, {
+export function deleteMemory(key: string, agent?: string): Promise<void> {
+  const qs = agent ? `?agent=${encodeURIComponent(agent)}` : '';
+  return apiFetch<void>(`/api/memory/${encodeURIComponent(key)}${qs}`, {
     method: 'DELETE',
   });
 }
@@ -1300,6 +1316,73 @@ export function getChannels(): Promise<ChannelDetail[]> {
     return Array.isArray(result) ? result : [];
   });
 }
+
+// ---------------------------------------------------------------------------
+// Logs (persisted JSONL via zeroclaw-log)
+// ---------------------------------------------------------------------------
+
+/** Mirrors `zeroclaw_log::event::LogEvent` (Rust is the source of truth). */
+export interface LogEvent {
+  id: string;
+  '@timestamp': string;
+  severity_number: number;
+  severity_text: string;
+  event: { category: string; action: string; outcome?: string };
+  service?: { name: string; version: string };
+  trace_id?: string | null;
+  span_id?: string | null;
+  zeroclaw: Record<string, string> & { duration_ms?: number };
+  message?: string;
+  attributes?: Record<string, unknown>;
+  schema_version?: number;
+}
+
+export interface LogsResponse {
+  events: LogEvent[];
+  /** `[timestamp, id]` to feed back as `until_ts` + `until_id` for older. */
+  next_cursor: [string, string] | null;
+  at_end: boolean;
+  daemon_started_at: string;
+  /** Canonical attribution-field names the daemon currently emits. Sourced
+   *  from `ATTRIBUTION_FIELDS` + `COMPOSITE_PREFIXES` in zeroclaw-log so
+   *  the UI never enumerates schema fields itself. */
+  attribution_keys: string[];
+}
+
+/** Non-attribution top-level filters. Per-attribution exact matches live
+ *  in `field_eq` — any `zeroclaw.*` key the daemon emits is valid there. */
+export interface LogsQueryParams {
+  since_ts?: string;
+  until_ts?: string;
+  until_id?: string;
+  action?: string;
+  category?: string;
+  outcome?: string;
+  severity_min?: number;
+  trace_id?: string;
+  q?: string;
+  hide_internal?: boolean;
+  limit?: number;
+  field_eq?: Record<string, string>;
+}
+
+export function getLogs(params: LogsQueryParams = {}): Promise<LogsResponse> {
+  const usp = new URLSearchParams();
+  const { field_eq, ...rest } = params;
+  for (const [key, value] of Object.entries(rest)) {
+    if (value === undefined || value === null || value === '') continue;
+    usp.set(key, String(value));
+  }
+  if (field_eq) {
+    for (const [key, value] of Object.entries(field_eq)) {
+      if (value === undefined || value === null || value === '') continue;
+      usp.set(key, value);
+    }
+  }
+  const qs = usp.toString();
+  return apiFetch<LogsResponse>(`/api/logs${qs ? `?${qs}` : ''}`);
+}
+
 
 // ---------------------------------------------------------------------------
 // CLI Tools

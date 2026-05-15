@@ -2181,7 +2181,14 @@ pub struct AgentRunOverrides {
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 #[tracing::instrument(
     skip_all,
-    fields(agent_alias = %agent_alias)
+    fields(
+        agent_alias = %agent_alias,
+        risk_profile = tracing::field::Empty,
+        runtime_profile = tracing::field::Empty,
+        memory_namespace = tracing::field::Empty,
+        model_provider = tracing::field::Empty,
+        model = tracing::field::Empty,
+    )
 )]
 pub async fn run(
     config: Config,
@@ -2208,6 +2215,26 @@ pub async fn run(
             )
         })?
         .clone();
+    {
+        use zeroclaw_config::multi_agent::MemoryBackendKind;
+        let span = tracing::Span::current();
+        span.record("risk_profile", agent.risk_profile.as_str());
+        span.record("runtime_profile", agent.runtime_profile.as_str());
+        let memory_composite = match agent.memory.backend {
+            MemoryBackendKind::Markdown => format!("markdown.{agent_alias}"),
+            MemoryBackendKind::None => "none".to_string(),
+            _ => {
+                let raw = config.memory.backend.trim();
+                if raw.is_empty() || raw.eq_ignore_ascii_case("none") {
+                    "none".to_string()
+                } else {
+                    let (kind, alias) = raw.split_once('.').unwrap_or((raw, "default"));
+                    format!("{kind}.{alias}")
+                }
+            }
+        };
+        span.record("memory_namespace", memory_composite.as_str());
+    }
 
     // ── Wire up agnostic subsystems ──────────────────────────────
     let base_observer = observability::create_observer(&config.observability);
@@ -2409,6 +2436,16 @@ pub async fn run(
              [model_providers.{provider_name}.<alias>].model is unset and --model was not passed"
         ),
     };
+
+    {
+        let span = tracing::Span::current();
+        let mp_composite = match agent_provider_resolved.as_ref() {
+            Some((ty, alias, _)) => format!("{ty}.{alias}"),
+            None => provider_name.clone(),
+        };
+        span.record("model_provider", mp_composite.as_str());
+        span.record("model", model_name.as_str());
+    }
 
     let provider_runtime_options =
         zeroclaw_providers::provider_runtime_options_from_config(&config);

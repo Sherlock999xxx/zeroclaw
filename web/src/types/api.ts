@@ -6,6 +6,10 @@ export interface StatusResponse {
   model: string;
   temperature: number;
   uptime_seconds: number;
+  /** RFC 3339 wall-clock of daemon start. Stable across the daemon's
+   *  lifetime so the Logs page can default `since_ts` to "since daemon
+   *  start" without a separate `/api/logs` round-trip. */
+  daemon_started_at?: string;
   gateway_port: number;
   locale: string;
   memory_backend: string;

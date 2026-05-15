@@ -53,15 +53,16 @@ pub(crate) fn forward(event: &LogEvent) {
 
 fn project(event: &LogEvent) -> Option<ObserverEvent> {
     let action = event.event.action.as_str();
-    let model_provider = event
-        .zeroclaw
-        .model_provider_type
-        .clone()
-        .or_else(|| event.zeroclaw.model_provider.clone())
-        .unwrap_or_default();
-    let model = event.zeroclaw.model.clone().unwrap_or_default();
-    let duration = event
-        .zeroclaw
+    let attribution = &event.zeroclaw;
+    let model_provider = attribution
+        .get("model_provider_type")
+        .or_else(|| attribution.get("model_provider"))
+        .unwrap_or_default()
+        .to_string();
+    let model = attribution.get("model").unwrap_or_default().to_string();
+    let tool = attribution.get("tool").unwrap_or_default().to_string();
+    let channel = attribution.get("channel").unwrap_or_default().to_string();
+    let duration = attribution
         .duration_ms
         .map(Duration::from_millis)
         .unwrap_or_default();
@@ -114,30 +115,29 @@ fn project(event: &LogEvent) -> Option<ObserverEvent> {
                 .and_then(serde_json::Value::as_u64),
         }),
         "tool_call_start" => Some(ObserverEvent::ToolCallStart {
-            tool: event.zeroclaw.tool.clone().unwrap_or_default(),
+            tool,
             arguments: None,
         }),
         "tool_call" | "tool_call_result" => Some(ObserverEvent::ToolCall {
-            tool: event.zeroclaw.tool.clone().unwrap_or_default(),
+            tool,
             duration,
             success,
         }),
         "channel_message_inbound" => Some(ObserverEvent::ChannelMessage {
-            channel: event.zeroclaw.channel.clone().unwrap_or_default(),
+            channel,
             direction: "inbound".to_string(),
         }),
         "channel_send" => Some(ObserverEvent::ChannelMessage {
-            channel: event.zeroclaw.channel.clone().unwrap_or_default(),
+            channel,
             direction: "outbound".to_string(),
         }),
         "turn_complete" => Some(ObserverEvent::TurnComplete),
         "heartbeat_tick" => Some(ObserverEvent::HeartbeatTick),
         "error" => Some(ObserverEvent::Error {
-            component: event
-                .zeroclaw
-                .channel_type
-                .clone()
-                .unwrap_or_else(|| "system".to_string()),
+            component: attribution
+                .get("channel_type")
+                .unwrap_or("system")
+                .to_string(),
             message: event.message.clone().unwrap_or_default(),
         }),
         _ => None,
@@ -176,19 +176,19 @@ mod tests {
     fn projects_llm_request() {
         let _guard = BRIDGE_LOCK.lock();
         clear_observer_bridge();
-        let obs = Arc::new(CapturingObserver::default());
-        set_observer_bridge(obs.clone());
+        let observer = Arc::new(CapturingObserver::default());
+        set_observer_bridge(observer.clone());
 
-        let mut ev = LogEvent::new(Severity::Info, "llm_request", EventCategory::Agent);
-        ev.zeroclaw.set_model_provider_composite("anthropic.clamps");
-        ev.zeroclaw.model = Some("claude-sonnet-4-6".into());
-        ev.attributes = serde_json::json!({ "messages_count": 4 });
+        let mut event = LogEvent::new(Severity::Info, "llm_request", EventCategory::Agent);
+        event.zeroclaw.set_composite("model_provider", "anthropic.clamps");
+        event.zeroclaw.set("model", "claude-sonnet-4-6");
+        event.attributes = serde_json::json!({ "messages_count": 4 });
 
-        forward(&ev);
+        forward(&event);
 
-        let events = obs.events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        let projected = observer.events.lock().unwrap();
+        assert_eq!(projected.len(), 1);
+        match &projected[0] {
             ObserverEvent::LlmRequest {
                 model_provider,
                 model,
@@ -198,7 +198,7 @@ mod tests {
                 assert_eq!(model, "claude-sonnet-4-6");
                 assert_eq!(*messages_count, 4);
             }
-            _ => panic!("expected LlmRequest, got {:?}", events[0]),
+            other => panic!("expected LlmRequest, got {other:?}"),
         }
 
         clear_observer_bridge();
@@ -208,19 +208,19 @@ mod tests {
     fn projects_tool_call_success() {
         let _guard = BRIDGE_LOCK.lock();
         clear_observer_bridge();
-        let obs = Arc::new(CapturingObserver::default());
-        set_observer_bridge(obs.clone());
+        let observer = Arc::new(CapturingObserver::default());
+        set_observer_bridge(observer.clone());
 
-        let mut ev = LogEvent::new(Severity::Info, "tool_call", EventCategory::Tool);
-        ev.zeroclaw.tool = Some("shell".into());
-        ev.zeroclaw.duration_ms = Some(120);
-        ev.set_outcome(EventOutcome::Success);
+        let mut event = LogEvent::new(Severity::Info, "tool_call", EventCategory::Tool);
+        event.zeroclaw.set("tool", "shell");
+        event.zeroclaw.duration_ms = Some(120);
+        event.set_outcome(EventOutcome::Success);
 
-        forward(&ev);
+        forward(&event);
 
-        let events = obs.events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        let projected = observer.events.lock().unwrap();
+        assert_eq!(projected.len(), 1);
+        match &projected[0] {
             ObserverEvent::ToolCall {
                 tool,
                 duration,
@@ -230,7 +230,7 @@ mod tests {
                 assert_eq!(*duration, Duration::from_millis(120));
                 assert!(*success);
             }
-            _ => panic!("expected ToolCall, got {:?}", events[0]),
+            other => panic!("expected ToolCall, got {other:?}"),
         }
 
         clear_observer_bridge();
@@ -240,13 +240,13 @@ mod tests {
     fn unknown_action_is_noop() {
         let _guard = BRIDGE_LOCK.lock();
         clear_observer_bridge();
-        let obs = Arc::new(CapturingObserver::default());
-        set_observer_bridge(obs.clone());
+        let observer = Arc::new(CapturingObserver::default());
+        set_observer_bridge(observer.clone());
 
-        let ev = LogEvent::new(Severity::Info, "totally_made_up", EventCategory::System);
-        forward(&ev);
+        let event = LogEvent::new(Severity::Info, "totally_made_up", EventCategory::System);
+        forward(&event);
 
-        assert!(obs.events.lock().unwrap().is_empty());
+        assert!(observer.events.lock().unwrap().is_empty());
         clear_observer_bridge();
     }
 }
