@@ -104,6 +104,8 @@ pub struct DelegateTool {
     /// unset (legacy unit-test constructors), DelegateTool falls back
     /// to using `self.security` for the spawned inner DelegateTool.
     root_config: Option<Arc<Config>>,
+    /// Skills prompt injection mode inherited from root config.
+    skills_prompt_mode: zeroclaw_config::schema::SkillsPromptInjectionMode,
 }
 
 impl DelegateTool {
@@ -143,6 +145,7 @@ impl DelegateTool {
             runtime_profiles: Arc::new(HashMap::new()),
             skill_bundles: Arc::new(HashMap::new()),
             root_config: None,
+            skills_prompt_mode: zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
         }
     }
 
@@ -188,7 +191,17 @@ impl DelegateTool {
             runtime_profiles: Arc::new(HashMap::new()),
             skill_bundles: Arc::new(HashMap::new()),
             root_config: None,
+            skills_prompt_mode: zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
         }
+    }
+
+    /// Attach skills prompt injection mode from root config.
+    pub fn with_skills_prompt_mode(
+        mut self,
+        mode: zeroclaw_config::schema::SkillsPromptInjectionMode,
+    ) -> Self {
+        self.skills_prompt_mode = mode;
+        self
     }
 
     /// Attach parent tools used to build sub-agent allowlist registries.
@@ -951,6 +964,7 @@ impl DelegateTool {
         let delegate_config = self.delegate_config.clone();
         let workspace_dir = self.workspace_dir.clone();
         let child_token = self.cancellation_token.child_token();
+        let skills_prompt_mode = self.skills_prompt_mode;
         let task_id_clone = task_id.clone();
         let providers_models = Arc::clone(&self.providers_models);
         let risk_profiles = Arc::clone(&self.risk_profiles);
@@ -984,6 +998,7 @@ impl DelegateTool {
                     runtime_profiles,
                     skill_bundles,
                     root_config,
+                    skills_prompt_mode,
                 };
 
                 let args_inner = json!({
@@ -1170,6 +1185,7 @@ impl DelegateTool {
             let delegate_config = self.delegate_config.clone();
             let workspace_dir = self.workspace_dir.clone();
             let cancellation_token = self.cancellation_token.child_token();
+            let skills_prompt_mode = self.skills_prompt_mode;
             let agent_name = agent_name.clone();
             let prompt = prompt.to_string();
             let args_clone = args.clone();
@@ -1199,6 +1215,7 @@ impl DelegateTool {
                     runtime_profiles,
                     skill_bundles,
                     root_config,
+                    skills_prompt_mode,
                 };
                 let agent_name_for_return = agent_name.clone();
                 let result = scope_delegate_session_key(session_key, async move {
@@ -1486,7 +1503,7 @@ impl DelegateTool {
             model_name,
             tools: prompt_tools,
             skills: &skills,
-            skills_prompt_mode: zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
+            skills_prompt_mode: self.skills_prompt_mode.clone(),
             identity_config: None,
             dispatcher_instructions: "",
             sends_native_tool_specs: sends_native_tool_specs && !prompt_tools.is_empty(),
@@ -3074,6 +3091,81 @@ mod tests {
         assert!(
             prompt.contains("deploy"),
             "should contain skills from default workspace skills/ directory"
+        );
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn enriched_prompt_respects_compact_skills_prompt_mode() {
+        let workspace = std::env::temp_dir().join(format!(
+            "zeroclaw_delegate_compact_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let default_skills_dir = workspace.join("skills");
+        std::fs::create_dir_all(default_skills_dir.join("review")).unwrap();
+        std::fs::write(
+            default_skills_dir.join("review/SKILL.toml"),
+            "[skill]\nname = \"review\"\ndescription = \"Code review\"\nversion = \"1.0.0\"\nprompts = [\"Always check for security issues\"]\n",
+        )
+        .unwrap();
+
+        let config = DelegateAgentConfig {
+            provider: "openrouter".to_string(),
+            model: "test-model".to_string(),
+            system_prompt: None,
+            api_key: None,
+            temperature: None,
+            max_depth: 3,
+            agentic: true,
+            allowed_tools: vec!["echo_tool".to_string()],
+            max_iterations: 10,
+            timeout_secs: None,
+            agentic_timeout_secs: None,
+            skills_directory: None,
+            memory_namespace: None,
+        };
+
+        let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
+
+        // Compact mode: should NOT inline <instructions>, should mention on-demand loading.
+        let compact_tool = DelegateTool::new(HashMap::new(), None, test_security())
+            .with_workspace_dir(workspace.clone())
+            .with_skills_prompt_mode(
+                zeroclaw_config::schema::SkillsPromptInjectionMode::Compact,
+            );
+
+        let compact_prompt = compact_tool
+            .build_enriched_system_prompt(&config, &tools, &workspace)
+            .unwrap();
+
+        assert!(
+            compact_prompt.contains("review"),
+            "compact mode should still list the skill"
+        );
+        assert!(
+            !compact_prompt.contains("<instructions>"),
+            "compact mode must not inline skill instructions"
+        );
+        assert!(
+            compact_prompt.contains("Skill summaries are preloaded"),
+            "compact mode should use the compact header"
+        );
+
+        // Full mode: should inline <instructions>.
+        let full_tool = DelegateTool::new(HashMap::new(), None, test_security())
+            .with_workspace_dir(workspace.clone())
+            .with_skills_prompt_mode(
+                zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
+            );
+
+        let full_prompt = full_tool
+            .build_enriched_system_prompt(&config, &tools, &workspace)
+            .unwrap();
+
+        assert!(
+            full_prompt.contains("<instructions>"),
+            "full mode should inline skill instructions"
         );
 
         let _ = std::fs::remove_dir_all(workspace);
