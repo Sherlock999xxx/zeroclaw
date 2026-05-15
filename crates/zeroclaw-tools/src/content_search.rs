@@ -879,7 +879,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.success, "absolute path under read-only root must search: {result:?}");
+        assert!(
+            result.success,
+            "absolute path under read-only root must search: {result:?}"
+        );
         assert!(result.output.contains("shared"));
     }
 

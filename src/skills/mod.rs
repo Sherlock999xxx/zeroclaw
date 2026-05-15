@@ -282,10 +282,14 @@ fn handle_add(
     )?;
 
     println!(
-        "  {} Scaffolded skill {} at {}",
-        console::style("✓").green().bold(),
-        target,
-        skill_dir.display(),
+        "{}",
+        zeroclaw_runtime::i18n::get_required_cli_string_with_args(
+            "cli-skills-add-scaffolded",
+            &[
+                ("target", &target.to_string()),
+                ("dir", &skill_dir.display().to_string()),
+            ],
+        )
     );
 
     if edit {
@@ -325,33 +329,50 @@ fn handle_edit(
 }
 
 fn handle_bundle_add(alias: String, directory: Option<String>) -> Result<()> {
-    // Bundle CRUD is config CRUD. Route through `zeroclaw config` semantics
-    // by suggesting the equivalent commands rather than reaching into the
-    // config writer here — keeps the config-mutation path single-sourced
-    // through api_config / handle_map_key.
+    // Bundle CRUD is config CRUD. Suggest the `zeroclaw config` invocations
+    // so the config writer stays single-sourced through api_config /
+    // handle_map_key rather than reaching it from here.
     let directory_path = directory.unwrap_or_else(|| format!("shared/skills/{alias}"));
     println!(
-        "  {} To create skill-bundle '{alias}' with directory '{directory_path}', run:",
-        console::style("→").cyan().bold(),
-    );
-    println!("    zeroclaw config map-key skill-bundles {alias}");
-    println!("    zeroclaw config set skill-bundles.{alias}.directory {directory_path}");
-    println!();
-    println!(
-        "  (Direct bundle creation through `zeroclaw skills bundle add` would duplicate the config mutation surface.)"
+        "{}",
+        zeroclaw_runtime::i18n::get_required_cli_string_with_args(
+            "cli-skills-bundle-add-prompt",
+            &[("alias", &alias), ("dir", &directory_path)],
+        )
     );
     Ok(())
 }
 
 fn handle_bundle_remove(alias: String) -> Result<()> {
     println!(
-        "  {} To remove skill-bundle '{alias}', run:",
-        console::style("→").cyan().bold(),
+        "{}",
+        zeroclaw_runtime::i18n::get_required_cli_string_with_args(
+            "cli-skills-bundle-remove-prompt",
+            &[("alias", &alias)],
+        )
     );
-    println!("    zeroclaw config map-key-delete skill-bundles {alias}");
-    println!();
-    println!("  (Removes the config entry; the bundle's directory on disk is left in place.)");
     Ok(())
+}
+
+fn print_bundle_include_exclude(include: &[String], exclude: &[String]) {
+    if !include.is_empty() {
+        println!(
+            "  {}",
+            zeroclaw_runtime::i18n::get_required_cli_string_with_args(
+                "cli-skills-bundle-include",
+                &[("values", &include.join(", "))],
+            )
+        );
+    }
+    if !exclude.is_empty() {
+        println!(
+            "  {}",
+            zeroclaw_runtime::i18n::get_required_cli_string_with_args(
+                "cli-skills-bundle-exclude",
+                &[("values", &exclude.join(", "))],
+            )
+        );
+    }
 }
 
 fn handle_bundle_list(config: &crate::config::Config) -> Result<()> {
@@ -359,28 +380,32 @@ fn handle_bundle_list(config: &crate::config::Config) -> Result<()> {
     let service = SkillsService::new(config, install_root);
     let bundles = service.list_bundles()?;
     if bundles.is_empty() {
-        println!("No skill bundles configured.");
         println!(
-            "  Create one: zeroclaw config set skill-bundles.default.directory shared/skills/default"
+            "{}",
+            zeroclaw_runtime::i18n::get_required_cli_string("cli-skills-bundle-list-empty")
         );
         return Ok(());
     }
-    println!("Skill bundles ({}):", bundles.len());
-    println!();
+    println!(
+        "{}",
+        zeroclaw_runtime::i18n::get_required_cli_string_with_args(
+            "cli-skills-bundle-list-header",
+            &[("count", &bundles.len().to_string())],
+        )
+    );
     for b in &bundles {
         println!(
-            "  {} → {}",
-            console::style(&b.alias).white().bold(),
-            console::style(b.directory.display()).dim(),
+            "  {}",
+            zeroclaw_runtime::i18n::get_required_cli_string_with_args(
+                "cli-skills-bundle-entry",
+                &[
+                    ("alias", &b.alias),
+                    ("dir", &b.directory.display().to_string()),
+                ],
+            )
         );
-        if !b.include.is_empty() {
-            println!("    include: {}", b.include.join(", "));
-        }
-        if !b.exclude.is_empty() {
-            println!("    exclude: {}", b.exclude.join(", "));
-        }
+        print_bundle_include_exclude(&b.include, &b.exclude);
     }
-    println!();
     Ok(())
 }
 
@@ -394,27 +419,41 @@ fn handle_bundle_show(config: &crate::config::Config, alias: String) -> Result<(
         .ok_or_else(|| anyhow::anyhow!("skill bundle '{alias}' not configured"))?;
 
     println!(
-        "{} → {}",
-        console::style(&bundle.alias).white().bold(),
-        bundle.directory.display(),
+        "{}",
+        zeroclaw_runtime::i18n::get_required_cli_string_with_args(
+            "cli-skills-bundle-entry",
+            &[
+                ("alias", &bundle.alias),
+                ("dir", &bundle.directory.display().to_string()),
+            ],
+        )
     );
-    if !bundle.include.is_empty() {
-        println!("  include: {}", bundle.include.join(", "));
-    }
-    if !bundle.exclude.is_empty() {
-        println!("  exclude: {}", bundle.exclude.join(", "));
-    }
+    print_bundle_include_exclude(&bundle.include, &bundle.exclude);
 
     let skills = service.list_skills(Some(&alias))?;
     if skills.is_empty() {
-        println!("  (no skills installed)");
+        println!(
+            "  {}",
+            zeroclaw_runtime::i18n::get_required_cli_string("cli-skills-bundle-show-no-skills")
+        );
     } else {
-        println!("  skills ({}):", skills.len());
+        println!(
+            "  {}",
+            zeroclaw_runtime::i18n::get_required_cli_string_with_args(
+                "cli-skills-bundle-show-skills-header",
+                &[("count", &skills.len().to_string())],
+            )
+        );
         for s in &skills {
             println!(
-                "    {} — {}",
-                console::style(s.r#ref.name()).white(),
-                s.frontmatter.description,
+                "    {}",
+                zeroclaw_runtime::i18n::get_required_cli_string_with_args(
+                    "cli-skills-bundle-show-skill",
+                    &[
+                        ("name", &s.r#ref.name().to_string()),
+                        ("description", &s.frontmatter.description),
+                    ],
+                )
             );
         }
     }

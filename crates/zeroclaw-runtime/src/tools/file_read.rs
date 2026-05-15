@@ -536,7 +536,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.success, "absolute path under read-only root must read: {result:?}");
+        assert!(
+            result.success,
+            "absolute path under read-only root must read: {result:?}"
+        );
         assert!(result.output.contains("cross-agent read"));
 
         let _ = tokio::fs::remove_dir_all(&root).await;

@@ -72,6 +72,32 @@ cli-skills-install-about = Install a new skill from a URL or local path
 cli-skills-remove-about = Remove an installed skill
 cli-skills-test-about = Run TEST.sh validation for a skill (or all skills)
 
+cli-skills-add-scaffolded = Scaffolded skill {$target} at {$dir}
+
+cli-skills-bundle-add-prompt =
+    To create skill-bundle '{$alias}' with directory '{$dir}', run:
+      zeroclaw config map-key skill-bundles {$alias}
+      zeroclaw config set skill-bundles.{$alias}.directory {$dir}
+
+    (Direct bundle creation through `zeroclaw skills bundle add` would duplicate the config mutation surface.)
+
+cli-skills-bundle-remove-prompt =
+    To remove skill-bundle '{$alias}', run:
+      zeroclaw config map-key-delete skill-bundles {$alias}
+
+    (Removes the config entry; the bundle's directory on disk is left in place.)
+
+cli-skills-bundle-list-empty =
+    No skill bundles configured.
+      Create one: zeroclaw config set skill-bundles.default.directory shared/skills/default
+cli-skills-bundle-list-header = Skill bundles ({$count}):
+cli-skills-bundle-entry = {$alias} -> {$dir}
+cli-skills-bundle-include = include: {$values}
+cli-skills-bundle-exclude = exclude: {$values}
+cli-skills-bundle-show-no-skills = (no skills installed)
+cli-skills-bundle-show-skills-header = skills ({$count}):
+cli-skills-bundle-show-skill = {$name}: {$description}
+
 cli-cron-list-about = List all scheduled tasks
 cli-cron-add-about = Add a new recurring scheduled task
 cli-cron-add-at-about = Add a one-shot task that fires at a specific UTC timestamp
