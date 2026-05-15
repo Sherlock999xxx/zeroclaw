@@ -6678,13 +6678,14 @@ pub async fn start_channels(
                         slot.insert(key.clone(), *value);
                     }
                 }
-                // Merge the new top-level `[costs.providers.models.<type>.<model>]`
+                // Merge the `[cost.rates.providers.models.<type>.<model>]`
                 // section. Keys land as `"<model>.input"` / `"<model>.output"`
-                // so the existing lookup (`resolve_rates`) finds them with no
-                // further changes. The new section wins on conflict — it's the
-                // forward-looking surface, the legacy `pricing` table is the
+                // / `"<model>.cached_input"` so the existing lookup
+                // (`resolve_rates`) finds them with no further changes. The
+                // rate sheet wins on conflict — it's the forward-looking
+                // surface, the legacy per-alias `pricing` table is the
                 // fallback for installs that haven't migrated.
-                for (type_k, models) in &config.costs.providers.models {
+                for (type_k, models) in &config.cost.rates.providers.models {
                     let slot = by_type.entry(type_k.clone()).or_default();
                     for (model_k, rates) in models {
                         if let Some(input) = rates.input_per_mtok {

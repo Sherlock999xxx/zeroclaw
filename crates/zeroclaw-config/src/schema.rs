@@ -341,20 +341,11 @@ pub struct Config {
     pub proxy: ProxyConfig,
 
     /// Cost tracking and budget enforcement configuration (`[cost]`).
+    /// Also hosts the operator-managed rate sheet at
+    /// `[cost.rates.<type>.<model>]`.
     #[serde(default)]
     #[nested]
     pub cost: CostConfig,
-
-    /// Per-provider, per-model token cost rates (`[costs.providers.models.<type>.<model>]`).
-    /// Operator-managed rate sheet that drives the CostTracker. Rates
-    /// are per (provider type, model) — not per provider alias, since
-    /// the same vendor charges the same regardless of which configured
-    /// alias holds the API key. Legacy `[model_providers.<type>.<alias>].pricing`
-    /// is still read as a fallback; entries in this section win on
-    /// conflict.
-    #[serde(default)]
-    #[nested]
-    pub costs: CostsConfig,
 
     /// Peripheral board configuration for hardware integration (`[peripherals]`).
     #[serde(default)]
@@ -4754,6 +4745,30 @@ pub struct CostConfig {
     /// HashMap aggregation shows up in profiles (default: true).
     #[serde(default = "default_track_per_agent")]
     pub track_per_agent: bool,
+
+    /// Operator-managed rate sheet at `[cost.rates.*]`. Sections mirror
+    /// the `[providers.*]` dotted-path exactly with the trailing `alias`
+    /// segment replaced by the resource the rate applies to (model id,
+    /// tool name, …). Layout:
+    ///
+    /// ```toml
+    /// [cost.rates.providers.models.anthropic."claude-opus-4-7"]
+    /// input_per_mtok        = 15.0
+    /// output_per_mtok       = 75.0
+    /// cached_input_per_mtok = 1.5
+    ///
+    /// [cost.rates.providers.tts.openai."tts-1-hd"]
+    /// per_mchar = 30.0
+    ///
+    /// [cost.rates.providers.transcription.openai.whisper-1]
+    /// per_minute = 0.006
+    ///
+    /// [cost.rates.tools.web_search]
+    /// per_call = 0.005
+    /// ```
+    #[serde(default)]
+    #[nested]
+    pub rates: CostRatesConfig,
 }
 
 /// Configuration for cost enforcement behavior when budget limits are reached.
@@ -4810,43 +4825,82 @@ fn default_track_per_agent() -> bool {
     true
 }
 
-/// Top-level token-cost rate sheet (`[costs]` section).
-///
-/// Currently just a wrapper around the per-provider per-model rate map.
-/// Kept as its own struct so future cost-related top-level knobs
-/// (currency, rounding policy, override hooks) have a place to live
-/// without re-nesting.
+/// `[cost.rates]` — top-level rate-sheet namespace. Mirrors the
+/// `[providers.*]` shape so each subsection here points at the same
+/// kind of resource its `[providers.*]` counterpart configures.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
-#[prefix = "costs"]
-pub struct CostsConfig {
-    /// `[costs.providers]` namespace.
+#[prefix = "cost.rates"]
+pub struct CostRatesConfig {
+    /// `[cost.rates.providers.*]` — rates for everything under
+    /// `[providers.*]` (models, TTS, transcription, …).
     #[serde(default)]
     #[nested]
-    pub providers: CostsProvidersConfig,
+    pub providers: ProviderCostRates,
+
+    /// `[cost.rates.tools.<name>]` — per-call rates for tools that
+    /// hit paid APIs. Keyed by the tool's registered name.
+    #[serde(default)]
+    pub tools: std::collections::HashMap<String, ToolCostRates>,
 }
 
-/// `[costs.providers]` — currently only `.models`. The split mirrors
-/// `[providers.models]` / `[providers.tts]` so future provider-shaped
-/// cost surfaces (e.g. transcription, embedding) have a parallel home.
+impl CostRatesConfig {
+    /// Lookup model token rates by `(provider_type, model)`. Returns
+    /// `None` when the operator hasn't priced this pair.
+    #[must_use]
+    pub fn model_rates(&self, provider_type: &str, model: &str) -> Option<&ModelCostRates> {
+        self.providers.models.get(provider_type)?.get(model)
+    }
+
+    /// Lookup TTS rates by `(provider_type, model)`.
+    #[must_use]
+    pub fn tts_rates(&self, provider_type: &str, model: &str) -> Option<&TtsCostRates> {
+        self.providers.tts.get(provider_type)?.get(model)
+    }
+
+    /// Lookup transcription rates by `(provider_type, model)`.
+    #[must_use]
+    pub fn transcription_rates(
+        &self,
+        provider_type: &str,
+        model: &str,
+    ) -> Option<&TranscriptionCostRates> {
+        self.providers.transcription.get(provider_type)?.get(model)
+    }
+
+    /// Lookup tool per-call rate by registered name.
+    #[must_use]
+    pub fn tool_rates(&self, tool_name: &str) -> Option<&ToolCostRates> {
+        self.tools.get(tool_name)
+    }
+}
+
+/// `[cost.rates.providers.*]` — provider-shaped rate sheets. Each field
+/// here mirrors a corresponding field on `[providers.*]` with the
+/// trailing alias segment replaced by the resource the rate prices
+/// (model id, etc.).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
-#[prefix = "costs.providers"]
-pub struct CostsProvidersConfig {
-    /// `[costs.providers.models.<type>.<model>]` — per (provider type,
-    /// model) token rates. Outer key = provider type (`"anthropic"`,
-    /// `"openai"`, …); inner key = model identifier as the provider
-    /// reports it (`"claude-opus-4-7"`, `"gpt-4o-2024-08-06"`, …).
+#[prefix = "cost.rates.providers"]
+pub struct ProviderCostRates {
+    /// `[cost.rates.providers.models.<type>.<model>]`.
     #[serde(default)]
     pub models: std::collections::HashMap<String, std::collections::HashMap<String, ModelCostRates>>,
+    /// `[cost.rates.providers.tts.<type>.<model>]`.
+    #[serde(default)]
+    pub tts: std::collections::HashMap<String, std::collections::HashMap<String, TtsCostRates>>,
+    /// `[cost.rates.providers.transcription.<type>.<model>]`.
+    #[serde(default)]
+    pub transcription:
+        std::collections::HashMap<String, std::collections::HashMap<String, TranscriptionCostRates>>,
 }
 
-/// Token-cost rates for a single (provider type, model) pair, in USD
-/// per 1M tokens. Every field is optional so partial sheets (e.g.
-/// input-only for embedding-style providers) work without ceremony.
+/// Token-cost rates for a single chat / completion model, in USD per
+/// 1M tokens. Every field optional so partial sheets work without
+/// ceremony (an operator who only knows the input rate can record it).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
-#[prefix = "costs.providers.models"]
+#[prefix = "cost.rates.providers.models"]
 pub struct ModelCostRates {
     /// Input tokens (USD per 1M).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4860,6 +4914,37 @@ pub struct ModelCostRates {
     pub cached_input_per_mtok: Option<f64>,
 }
 
+/// Rates for a TTS model, in USD per 1M characters.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "cost.rates.providers.tts"]
+pub struct TtsCostRates {
+    /// Characters synthesised (USD per 1M).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_mchar: Option<f64>,
+}
+
+/// Rates for a transcription model, in USD per minute of audio.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "cost.rates.providers.transcription"]
+pub struct TranscriptionCostRates {
+    /// Audio transcribed (USD per minute).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_minute: Option<f64>,
+}
+
+/// Rates for a tool that hits a paid external API. Keyed in
+/// `[cost.rates.tools.<name>]` by the tool's registered name.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "cost.rates.tools"]
+pub struct ToolCostRates {
+    /// Per-call cost (USD).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_call: Option<f64>,
+}
+
 impl Default for CostConfig {
     fn default() -> Self {
         Self {
@@ -4870,6 +4955,7 @@ impl Default for CostConfig {
             allow_override: false,
             enforcement: CostEnforcementConfig::default(),
             track_per_agent: default_track_per_agent(),
+            rates: CostRatesConfig::default(),
         }
     }
 }
@@ -12549,7 +12635,6 @@ impl Default for Config {
             google_workspace: GoogleWorkspaceConfig::default(),
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),
-            costs: CostsConfig::default(),
             peripherals: PeripheralsConfig::default(),
             delegate: DelegateToolConfig::default(),
             agents: HashMap::new(),
@@ -15633,7 +15718,6 @@ auto_save = true
             proxy: ProxyConfig::default(),
             pacing: PacingConfig::default(),
             cost: CostConfig::default(),
-            costs: CostsConfig::default(),
             peripherals: PeripheralsConfig::default(),
             delegate: DelegateToolConfig::default(),
             agents: HashMap::new(),
@@ -16222,7 +16306,6 @@ default_temperature = 0.7
             proxy: ProxyConfig::default(),
             pacing: PacingConfig::default(),
             cost: CostConfig::default(),
-            costs: CostsConfig::default(),
             peripherals: PeripheralsConfig::default(),
             delegate: DelegateToolConfig::default(),
             agents: HashMap::new(),
