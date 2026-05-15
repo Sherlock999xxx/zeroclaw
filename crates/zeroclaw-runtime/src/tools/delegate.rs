@@ -83,11 +83,6 @@ pub struct DelegateTool {
     delegate_config: DelegateToolConfig,
     /// Workspace directory inherited from the root agent context.
     workspace_dir: PathBuf,
-    /// The install root (`<install>`) used to resolve per-agent
-    /// workspace dirs when DelegateTool dispatches to a sub-agent.
-    /// Defaults to empty until the runtime factory plumbs it in via
-    /// `with_install_root`.
-    install_root: PathBuf,
     /// Cancellation token for cascade control of background tasks.
     cancellation_token: CancellationToken,
     /// Optional memory instance for namespace isolation on delegate agents.
@@ -141,7 +136,6 @@ impl DelegateTool {
             multimodal_config: zeroclaw_config::schema::MultimodalConfig::default(),
             delegate_config: DelegateToolConfig::default(),
             workspace_dir: PathBuf::new(),
-            install_root: PathBuf::new(),
             cancellation_token: CancellationToken::new(),
             memory: None,
             providers_models: Arc::new(HashMap::new()),
@@ -187,7 +181,6 @@ impl DelegateTool {
             multimodal_config: zeroclaw_config::schema::MultimodalConfig::default(),
             delegate_config: DelegateToolConfig::default(),
             workspace_dir: PathBuf::new(),
-            install_root: PathBuf::new(),
             cancellation_token: CancellationToken::new(),
             memory: None,
             providers_models: Arc::new(HashMap::new()),
@@ -231,30 +224,15 @@ impl DelegateTool {
         self
     }
 
-    /// Attach the install root used to resolve per-agent workspace
-    /// dirs when DelegateTool dispatches to a sub-agent. Combined
-    /// with each agent's `[agents.<alias>.workspace.path]` override
-    /// (when set) and the alias, this gives the per-agent identity
-    /// path: `<install>/agents/<alias>/workspace/`.
-    pub fn with_install_root(mut self, install_root: PathBuf) -> Self {
-        self.install_root = install_root;
-        self
-    }
-
     /// Resolve a target sub-agent's workspace dir for identity-file
-    /// loading. Mirrors `Config::agent_workspace_dir` but operates on
-    /// the cached agent map + install root, since DelegateTool does
-    /// not carry a `Config` reference.
-    fn agent_workspace(&self, agent_alias: &str) -> PathBuf {
-        if let Some(cfg) = self.agents.get(agent_alias)
-            && let Some(custom) = cfg.workspace.path.as_ref()
-        {
-            return custom.clone();
-        }
-        self.install_root
-            .join("agents")
-            .join(agent_alias)
-            .join("workspace")
+    /// loading. Delegates to `Config::agent_workspace_dir` so the
+    /// per-agent path lives in one place; returns `None` when no
+    /// `root_config` is attached (legacy unit-test constructors), which
+    /// callers treat as "no identity files to load".
+    fn agent_workspace(&self, agent_alias: &str) -> Option<PathBuf> {
+        self.root_config
+            .as_ref()
+            .map(|cfg| cfg.agent_workspace_dir(agent_alias))
     }
 
     /// Attach a cancellation token for cascade control of background tasks.
@@ -921,7 +899,6 @@ impl DelegateTool {
         let multimodal_config = self.multimodal_config.clone();
         let delegate_config = self.delegate_config.clone();
         let workspace_dir = self.workspace_dir.clone();
-        let install_root = self.install_root.clone();
         let child_token = self.cancellation_token.child_token();
         let task_id_clone = task_id.clone();
         let providers_models = Arc::clone(&self.providers_models);
@@ -949,7 +926,6 @@ impl DelegateTool {
                     multimodal_config,
                     delegate_config,
                     workspace_dir: workspace_dir.clone(),
-                    install_root,
                     cancellation_token: child_token.clone(),
                     memory: None,
                     providers_models,
@@ -1132,7 +1108,6 @@ impl DelegateTool {
             let multimodal_config = self.multimodal_config.clone();
             let delegate_config = self.delegate_config.clone();
             let workspace_dir = self.workspace_dir.clone();
-            let install_root = self.install_root.clone();
             let cancellation_token = self.cancellation_token.child_token();
             let agent_name = agent_name.clone();
             let prompt = prompt.to_string();
@@ -1156,7 +1131,6 @@ impl DelegateTool {
                     multimodal_config,
                     delegate_config,
                     workspace_dir,
-                    install_root,
                     cancellation_token,
                     memory: None,
                     providers_models,
@@ -1449,21 +1423,24 @@ impl DelegateTool {
         // Append the per-agent identity files from the target
         // sub-agent's own workspace dir. Each missing file is silently
         // skipped — the operator may not have authored every file.
-        let target_workspace = self.agent_workspace(agent_alias);
-        let identity_files = [
-            "AGENTS.md",
-            "SOUL.md",
-            "IDENTITY.md",
-            "USER.md",
-            "BOOTSTRAP.md",
-        ];
-        for filename in identity_files {
-            let path = target_workspace.join(filename);
-            if let Ok(contents) = std::fs::read_to_string(&path) {
-                let trimmed = contents.trim();
-                if !trimmed.is_empty() {
-                    enriched.push_str(trimmed);
-                    enriched.push_str("\n\n");
+        // Skipped entirely when no `root_config` is attached (legacy
+        // unit-test constructors); production paths always attach it.
+        if let Some(target_workspace) = self.agent_workspace(agent_alias) {
+            let identity_files = [
+                "AGENTS.md",
+                "SOUL.md",
+                "IDENTITY.md",
+                "USER.md",
+                "BOOTSTRAP.md",
+            ];
+            for filename in identity_files {
+                let path = target_workspace.join(filename);
+                if let Ok(contents) = std::fs::read_to_string(&path) {
+                    let trimmed = contents.trim();
+                    if !trimmed.is_empty() {
+                        enriched.push_str(trimmed);
+                        enriched.push_str("\n\n");
+                    }
                 }
             }
         }
