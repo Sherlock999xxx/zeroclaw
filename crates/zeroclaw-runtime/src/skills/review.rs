@@ -153,14 +153,18 @@ pub async fn maybe_run_skill_review(
 
 fn build_review_tools(
     workspace_dir: PathBuf,
-    config: SkillImprovementConfig,
+    improvement_config: SkillImprovementConfig,
     allow_scripts: bool,
 ) -> Vec<Box<dyn Tool>> {
     let wd = Arc::new(workspace_dir);
     vec![
         Box::new(SkillsListTool::new((*wd).clone())),
         Box::new(SkillViewTool::new((*wd).clone())),
-        Box::new(SkillManageTool::new((*wd).clone(), config, allow_scripts)),
+        Box::new(SkillManageTool::new(
+            (*wd).clone(),
+            improvement_config,
+            allow_scripts,
+        )),
     ]
 }
 

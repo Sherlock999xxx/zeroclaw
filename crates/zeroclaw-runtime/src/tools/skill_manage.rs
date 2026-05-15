@@ -297,21 +297,27 @@ async fn collect_support_files(skill_dir: &Path) -> Vec<String> {
 /// Mutating: patch a SKILL.md, write a support file, or archive a skill.
 pub struct SkillManageTool {
     workspace_dir: PathBuf,
-    config: zeroclaw_config::schema::SkillImprovementConfig,
+    improvement_config: zeroclaw_config::schema::SkillImprovementConfig,
     /// Mirrors `config.skills.allow_scripts` so post-mutation audit applies
     /// the same script policy that the loader/installer enforces.
     allow_scripts: bool,
 }
 
 impl SkillManageTool {
+    /// Construct with the runtime's `SkillImprovementConfig`. The
+    /// `cooldown_secs` field gates repeat `patch` calls on the same skill
+    /// via `SkillImprover::should_improve_skill` — see the patch handler
+    /// below. `allow_scripts` is mirrored from `config.skills.allow_scripts`
+    /// so the post-mutation audit applies the same script policy that the
+    /// loader/installer enforces.
     pub fn new(
         workspace_dir: PathBuf,
-        config: zeroclaw_config::schema::SkillImprovementConfig,
+        improvement_config: zeroclaw_config::schema::SkillImprovementConfig,
         allow_scripts: bool,
     ) -> Self {
         Self {
             workspace_dir,
-            config,
+            improvement_config,
             allow_scripts,
         }
     }
@@ -493,15 +499,24 @@ impl SkillManageTool {
             .and_then(|v| v.as_str())
             .unwrap_or("Skill review");
 
+        // Construct the improver with the *real* cooldown from runtime config,
+        // not the cooldown_secs=0 we used to pass. The `should_improve_skill`
+        // check reads the skill's SKILL.md `updated_at:` front-matter field
+        // and bounces the patch if it was rewritten within `cooldown_secs`.
         let mut improver = crate::skills::improver::SkillImprover::new(
             self.workspace_dir.clone(),
-            self.config.clone(),
+            self.improvement_config.clone(),
         );
         if !improver.should_improve_skill(slug) {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("Skill '{slug}' is on cooldown — try again later")),
+                error: Some(format!(
+                    "Skill '{slug}' is on cooldown ({}s window since last update). \
+                     Try a different skill, add a `references/` file, or emit \
+                     'Nothing to save.' if there is no other signal worth keeping.",
+                    self.improvement_config.cooldown_secs
+                )),
             });
         }
 
@@ -826,6 +841,17 @@ mod tests {
         let dir = workspace.join("skills").join(slug);
         tokio::fs::create_dir_all(&dir).await.unwrap();
         tokio::fs::write(dir.join("SKILL.md"), md).await.unwrap();
+    }
+
+    /// Tests that aren't specifically exercising the cooldown gate use
+    /// `cooldown_secs: 0` so `should_improve_skill` always lets the patch
+    /// through and the assertion under test fires.
+    fn cfg_no_cooldown() -> zeroclaw_config::schema::SkillImprovementConfig {
+        zeroclaw_config::schema::SkillImprovementConfig {
+            enabled: true,
+            cooldown_secs: 0,
+            ..Default::default()
+        }
     }
 
     const VALID_SKILL: &str = "---\nname: deploy\ndescription: Run a production deploy\nversion: \"0.1.0\"\n---\n\n# Deploy\nDoes a production deploy.\n";
@@ -1373,5 +1399,159 @@ mod tests {
         let canonical_skills = dir.path().join("skills").canonicalize().unwrap();
         let canonical_archived = archived.canonicalize().unwrap();
         assert!(canonical_archived.starts_with(&canonical_skills));
+    }
+
+    // ─── skill_manage: patch cooldown enforcement (#6683) ───
+
+    /// Helper: build a config with a one-hour cooldown so the on-disk gate
+    /// is exercised when `updated_at:` is recent.
+    fn cfg_with_cooldown(secs: u64) -> zeroclaw_config::schema::SkillImprovementConfig {
+        zeroclaw_config::schema::SkillImprovementConfig {
+            enabled: true,
+            cooldown_secs: secs,
+            ..Default::default()
+        }
+    }
+
+    const IMPROVED_SKILL_V2: &str = "---\nname: deploy\ndescription: Run a production deploy (v2)\nversion: \"0.1.2\"\n---\n\n# Deploy\nDoes a production deploy with a v2 tweak.\n";
+
+    #[tokio::test]
+    async fn skill_manage_patch_blocks_when_skill_is_on_cooldown() {
+        // A skill freshly patched within the cooldown window should be refused
+        // — `should_improve_skill` reads `updated_at:` from the YAML front-matter
+        // and gates the second write.
+        let dir = tempdir();
+        let recent = chrono::Utc::now().to_rfc3339();
+        let md = format!(
+            "---\nname: deploy\ndescription: Recent\nversion: \"0.1.0\"\nupdated_at: \"{recent}\"\n---\n\nBody.\n"
+        );
+        write_skill(dir.path(), "deploy", &md).await;
+
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_with_cooldown(3600), true);
+        let result = tool
+            .execute(json!({
+                "action": "patch",
+                "slug": "deploy",
+                "content": IMPROVED_SKILL_V2,
+                "reason": "second pass within cooldown window",
+            }))
+            .await
+            .unwrap();
+        assert!(!result.success, "patch should have been refused");
+        let err = result.error.unwrap_or_default();
+        assert!(
+            err.to_lowercase().contains("cooldown"),
+            "error should mention cooldown; got: {err}"
+        );
+
+        // Original file must be untouched.
+        let on_disk = tokio::fs::read_to_string(
+            dir.path().join("skills").join("deploy").join("SKILL.md"),
+        )
+        .await
+        .unwrap();
+        assert!(on_disk.contains("Recent"));
+        assert!(!on_disk.contains("v2 tweak"));
+    }
+
+    #[tokio::test]
+    async fn skill_manage_patch_proceeds_when_skill_is_stale() {
+        // A skill whose `updated_at:` is older than `cooldown_secs` is fair
+        // game — the patch should write.
+        let dir = tempdir();
+        let stale = (chrono::Utc::now() - chrono::Duration::seconds(10_000)).to_rfc3339();
+        let md = format!(
+            "---\nname: deploy\ndescription: Stale\nversion: \"0.1.0\"\nupdated_at: \"{stale}\"\n---\n\nBody.\n"
+        );
+        write_skill(dir.path(), "deploy", &md).await;
+
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_with_cooldown(3600), true);
+        let result = tool
+            .execute(json!({
+                "action": "patch",
+                "slug": "deploy",
+                "content": IMPROVED_SKILL_V2,
+                "reason": "stale skill, eligible for refresh",
+            }))
+            .await
+            .unwrap();
+        assert!(result.success, "patch should have proceeded: {:?}", result.error);
+
+        let on_disk = tokio::fs::read_to_string(
+            dir.path().join("skills").join("deploy").join("SKILL.md"),
+        )
+        .await
+        .unwrap();
+        assert!(on_disk.contains("v2 tweak"));
+    }
+
+    #[tokio::test]
+    async fn skill_manage_patch_proceeds_when_no_updated_at() {
+        // A skill with no `updated_at:` field at all (never improved before)
+        // is eligible even with a non-zero cooldown.
+        let dir = tempdir();
+        write_skill(dir.path(), "deploy", VALID_SKILL).await;
+
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_with_cooldown(3600), true);
+        let result = tool
+            .execute(json!({
+                "action": "patch",
+                "slug": "deploy",
+                "content": IMPROVED_SKILL_V2,
+                "reason": "first improvement",
+            }))
+            .await
+            .unwrap();
+        assert!(result.success, "first patch should proceed: {:?}", result.error);
+    }
+
+    #[tokio::test]
+    async fn skill_manage_patch_blocked_when_improvement_disabled() {
+        // `enabled = false` short-circuits `should_improve_skill` regardless
+        // of timestamps. This is the per-tool kill switch.
+        let dir = tempdir();
+        write_skill(dir.path(), "deploy", VALID_SKILL).await;
+        let cfg = zeroclaw_config::schema::SkillImprovementConfig {
+            enabled: false,
+            cooldown_secs: 0,
+            ..Default::default()
+        };
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg, true);
+        let result = tool
+            .execute(json!({
+                "action": "patch",
+                "slug": "deploy",
+                "content": IMPROVED_SKILL_V2,
+                "reason": "should be blocked by feature flag",
+            }))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        let err = result.error.unwrap_or_default();
+        assert!(err.to_lowercase().contains("cooldown"));
+    }
+
+    #[tokio::test]
+    async fn skill_manage_write_file_ignores_cooldown() {
+        // write_file is a different operation (adds a sibling file under
+        // references/) and should NOT be gated by the SKILL.md cooldown.
+        let dir = tempdir();
+        let recent = chrono::Utc::now().to_rfc3339();
+        let md = format!(
+            "---\nname: deploy\nupdated_at: \"{recent}\"\n---\n\nBody.\n"
+        );
+        write_skill(dir.path(), "deploy", &md).await;
+
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_with_cooldown(3600), true);
+        let result = tool
+            .execute(json!({
+                "action": "write_file",
+                "slug": "deploy",
+                "file_path": "references/notes.md",
+                "content": "# Notes\n",
+            }))
+            .await
+            .unwrap();
+        assert!(result.success, "write_file should bypass the cooldown gate");
     }
 }
