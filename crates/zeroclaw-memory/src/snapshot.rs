@@ -163,7 +163,7 @@ pub fn hydrate_from_snapshot(workspace_dir: &Path) -> Result<usize> {
                 tracing::debug!("hydrate: key '{key}' already exists, skipping");
             }
             Err(e) => {
-                tracing::warn!("hydrate: failed to insert key '{key}': {e}");
+                tracing::warn!(error = ?e, "hydrate: failed to insert key '{key}'");
             }
         }
     }

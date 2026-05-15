@@ -84,7 +84,7 @@ pub async fn run_mqtt_sop_listener(
             }
             Err(e) => {
                 zeroclaw_runtime::health::mark_component_error("mqtt", e.to_string());
-                warn!("MQTT SOP listener: connection error: {e}");
+                warn!(error = ?e, "MQTT SOP listener: connection error");
                 // rumqttc handles auto-reconnect; loop continues
             }
         }

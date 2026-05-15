@@ -208,7 +208,7 @@ impl Channel for WebhookChannel {
             let payload: IncomingWebhook = match serde_json::from_slice(&body) {
                 Ok(p) => p,
                 Err(e) => {
-                    tracing::warn!("Webhook: invalid JSON payload: {e}");
+                    tracing::warn!(error = ?e, "Webhook: invalid JSON payload");
                     return StatusCode::BAD_REQUEST;
                 }
             };

@@ -1643,7 +1643,7 @@ pub async fn run_tool_call_loop(
                             Ok(Some(r)) => Some(r),
                             Ok(None) => None,
                             Err(e) => {
-                                tracing::warn!("Channel approval request failed: {e}");
+                                tracing::warn!(error = ?e, "Channel approval request failed");
                                 None
                             }
                         }
@@ -2836,7 +2836,7 @@ pub async fn run(
                     Ok(None) => {
                         tracing::debug!("Skill creation skipped (duplicate or disabled)");
                     }
-                    Err(e) => tracing::warn!("Skill creation failed: {e}"),
+                    Err(e) => tracing::warn!(error = ?e, "Skill creation failed"),
                 }
             }
         }

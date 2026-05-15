@@ -88,7 +88,7 @@ impl EscalateToHumanTool {
         for (name, ch) in targets {
             let msg = SendMessage::new(text, "");
             if let Err(e) = ch.send(&msg).await {
-                tracing::warn!("escalate_to_human: alert to channel '{name}' failed: {e}");
+                tracing::warn!(error = ?e, "escalate_to_human: alert to channel '{name}' failed");
             }
         }
     }

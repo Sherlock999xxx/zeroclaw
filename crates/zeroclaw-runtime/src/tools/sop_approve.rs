@@ -85,7 +85,7 @@ impl Tool for SopApproveTool {
             && let Some(ref run) = run_snapshot
             && let Err(e) = audit.log_approval(run, run.current_step).await
         {
-            warn!("SOP audit log after approve failed: {e}");
+            warn!(error = ?e, "SOP audit log after approve failed");
         }
 
         // Metrics collector (independent of audit)

@@ -644,8 +644,8 @@ async fn write_file_secure(path: &Path, content: &str) {
 
     match result {
         Ok(Ok(())) => {}
-        Ok(Err(err)) => warn!("Failed to write secure file: {err}"),
-        Err(err) => warn!("Failed to spawn blocking write: {err}"),
+        Ok(Err(err)) => warn!(error = ?err, "Failed to write secure file"),
+        Err(err) => warn!(error = ?err, "Failed to spawn blocking write"),
     }
 }
 

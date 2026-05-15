@@ -606,7 +606,7 @@ impl SopEngine {
                 );
                 match self.approve_step(&run_id) {
                     Ok(action) => actions.push(action),
-                    Err(e) => warn!("SOP run {run_id}: auto-approve failed: {e}"),
+                    Err(e) => warn!(error = ?e, "SOP run {run_id}: auto-approve failed"),
                 }
             } else {
                 info!("SOP run {run_id}: approval timeout — waiting indefinitely (non-critical)");

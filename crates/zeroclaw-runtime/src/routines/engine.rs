@@ -196,12 +196,12 @@ pub fn load_routines_from_file(path: &std::path::Path) -> Vec<Routine> {
         Ok(content) => match toml::from_str::<RoutinesManifest>(&content) {
             Ok(manifest) => manifest.routines,
             Err(e) => {
-                warn!("Failed to parse routines file {}: {e}", path.display());
+                warn!(error = ?e, "Failed to parse routines file {}", path.display());
                 Vec::new()
             }
         },
         Err(e) => {
-            debug!("Routines file not found at {}: {e}", path.display());
+            debug!(error = ?e, "Routines file not found at {}", path.display());
             Vec::new()
         }
     }

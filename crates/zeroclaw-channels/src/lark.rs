@@ -629,7 +629,7 @@ impl LarkChannel {
         let mut token = match self.get_tenant_access_token().await {
             Ok(token) => token,
             Err(err) => {
-                tracing::warn!("Lark: failed to fetch token for reaction: {err}");
+                tracing::warn!(error = ?err, "Lark: failed to fetch token for reaction");
                 return;
             }
         };
@@ -642,7 +642,7 @@ impl LarkChannel {
             {
                 Ok(resp) => resp,
                 Err(err) => {
-                    tracing::warn!("Lark: failed to add reaction for {message_id}: {err}");
+                    tracing::warn!(error = ?err, "Lark: failed to add reaction for {message_id}");
                     return;
                 }
             };
@@ -674,7 +674,7 @@ impl LarkChannel {
             let payload: serde_json::Value = match response.json().await {
                 Ok(v) => v,
                 Err(err) => {
-                    tracing::warn!("Lark: add reaction decode failed for {message_id}: {err}");
+                    tracing::warn!(error = ?err, "Lark: add reaction decode failed for {message_id}");
                     return;
                 }
             };
@@ -819,12 +819,12 @@ impl LarkChannel {
                             }
                         }
                         None => { tracing::info!("Lark: WS closed — reconnecting"); break; }
-                        Some(Err(e)) => { tracing::error!("Lark: WS read error: {e}"); break; }
+                        Some(Err(e)) => { tracing::error!(error = ?e, "Lark: WS read error"); break; }
                     };
 
                     let frame = match PbFrame::decode(&raw[..]) {
                         Ok(f) => f,
-                        Err(e) => { tracing::error!("Lark: proto decode: {e}"); continue; }
+                        Err(e) => { tracing::error!(error = ?e, "Lark: proto decode"); continue; }
                     };
 
                     // CONTROL frame
@@ -879,7 +879,7 @@ impl LarkChannel {
 
                     let event: LarkEvent = match serde_json::from_slice(&payload) {
                         Ok(e) => e,
-                        Err(e) => { tracing::error!("Lark: event JSON: {e}"); continue; }
+                        Err(e) => { tracing::error!(error = ?e, "Lark: event JSON"); continue; }
                     };
                     if event.header.event_type != "im.message.receive_v1" { continue; }
 
@@ -887,7 +887,7 @@ impl LarkChannel {
 
                     let recv: MsgReceivePayload = match serde_json::from_value(event_payload.clone()) {
                         Ok(r) => r,
-                        Err(e) => { tracing::error!("Lark: payload parse: {e}"); continue; }
+                        Err(e) => { tracing::error!(error = ?e, "Lark: payload parse"); continue; }
                     };
 
                     if recv.sender.sender_type == "app" || recv.sender.sender_type == "bot" { continue; }
@@ -1112,7 +1112,7 @@ impl LarkChannel {
         let token = match self.get_tenant_access_token().await {
             Ok(t) => t,
             Err(e) => {
-                tracing::warn!("Lark: failed to get token for image download: {e}");
+                tracing::warn!(error = ?e, "Lark: failed to get token for image download");
                 return None;
             }
         };
@@ -1127,7 +1127,7 @@ impl LarkChannel {
         {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!("Lark: image download request failed for {image_key}: {e}");
+                tracing::warn!(error = ?e, "Lark: image download request failed for {image_key}");
                 return None;
             }
         };
@@ -1156,7 +1156,7 @@ impl LarkChannel {
         let bytes = match resp.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                tracing::warn!("Lark: image body read failed for {image_key}: {e}");
+                tracing::warn!(error = ?e, "Lark: image body read failed for {image_key}");
                 return None;
             }
         };
@@ -1190,7 +1190,7 @@ impl LarkChannel {
         let token = match self.get_tenant_access_token().await {
             Ok(t) => t,
             Err(e) => {
-                tracing::warn!("Lark: failed to get token for file download: {e}");
+                tracing::warn!(error = ?e, "Lark: failed to get token for file download");
                 return None;
             }
         };
@@ -1205,7 +1205,7 @@ impl LarkChannel {
         {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!("Lark: file download request failed for {file_key}: {e}");
+                tracing::warn!(error = ?e, "Lark: file download request failed for {file_key}");
                 return None;
             }
         };
@@ -1237,7 +1237,7 @@ impl LarkChannel {
         let bytes = match resp.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                tracing::warn!("Lark: file body read failed for {file_key}: {e}");
+                tracing::warn!(error = ?e, "Lark: file body read failed for {file_key}");
                 return None;
             }
         };
@@ -1442,7 +1442,7 @@ impl LarkChannel {
         {
             Ok(result) => result,
             Err(e) => {
-                tracing::warn!("Lark: audio download failed for {message_id}: {e}");
+                tracing::warn!(error = ?e, "Lark: audio download failed for {message_id}");
                 return None;
             }
         };
@@ -1453,7 +1453,7 @@ impl LarkChannel {
                 Some(transcript)
             }
             Err(e) => {
-                tracing::warn!("Lark: transcription failed for {message_id}: {e}");
+                tracing::warn!(error = ?e, "Lark: transcription failed for {message_id}");
                 None
             }
         }

@@ -117,7 +117,7 @@ impl Channel for VoiceWakeChannel {
                     let _ = audio_tx_clone.try_send(data.to_vec());
                 },
                 move |err| {
-                    warn!("VoiceWake: audio stream error: {err}");
+                    warn!(error = ?err, "VoiceWake: audio stream error");
                 },
                 None,
             )?;
@@ -194,7 +194,7 @@ impl Channel for VoiceWakeChannel {
                                 }
                             }
                             Err(e) => {
-                                warn!("VoiceWake: transcription error during wake check: {e}");
+                                warn!(error = ?e, "VoiceWake: transcription error during wake check");
                                 state = WakeState::Listening;
                                 capture_buf.clear();
                             }
@@ -242,12 +242,12 @@ impl Channel for VoiceWakeChannel {
                                     };
 
                                     if let Err(e) = tx.send(msg).await {
-                                        warn!("VoiceWake: failed to dispatch message: {e}");
+                                        warn!(error = ?e, "VoiceWake: failed to dispatch message");
                                     }
                                 }
                             }
                             Err(e) => {
-                                warn!("VoiceWake: transcription error for utterance: {e}");
+                                warn!(error = ?e, "VoiceWake: transcription error for utterance");
                             }
                         }
 

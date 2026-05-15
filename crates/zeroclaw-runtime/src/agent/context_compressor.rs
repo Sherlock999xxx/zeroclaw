@@ -374,7 +374,7 @@ impl ContextCompressor {
                 )
                 .await
             {
-                tracing::debug!("Failed to save compression summary to memory: {e}");
+                tracing::debug!(error = ?e, "Failed to save compression summary to memory");
             } else {
                 tracing::debug!(
                     "Saved compression summary to memory before discarding {message_count} messages"

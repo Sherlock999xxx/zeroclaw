@@ -124,7 +124,7 @@ pub async fn consolidate_turn(
         )
         .await
         {
-            tracing::debug!("conflict check skipped: {e}");
+            tracing::debug!(error = ?e, "conflict check skipped");
         }
 
         // Store with importance metadata.

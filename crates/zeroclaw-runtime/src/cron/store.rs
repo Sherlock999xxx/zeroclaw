@@ -191,7 +191,7 @@ pub fn due_jobs(config: &Config, now: DateTime<Utc>) -> Result<Vec<CronJob>> {
         for row in rows {
             match row {
                 Ok(job) => jobs.push(job),
-                Err(e) => tracing::warn!("Skipping cron job with unparseable row data: {e}"),
+                Err(e) => tracing::warn!(error = ?e, "Skipping cron job with unparseable row data"),
             }
         }
         Ok(jobs)
@@ -220,7 +220,7 @@ pub fn all_overdue_jobs(config: &Config, now: DateTime<Utc>) -> Result<Vec<CronJ
         for row in rows {
             match row {
                 Ok(job) => jobs.push(job),
-                Err(e) => tracing::warn!("Skipping cron job with unparseable row data: {e}"),
+                Err(e) => tracing::warn!(error = ?e, "Skipping cron job with unparseable row data"),
             }
         }
         Ok(jobs)
@@ -883,7 +883,7 @@ fn add_column_if_missing(conn: &Connection, name: &str, sql_type: &str) -> Resul
         Err(rusqlite::Error::SqliteFailure(err, Some(ref msg)))
             if msg.contains("duplicate column name") =>
         {
-            tracing::debug!("Column cron_jobs.{name} already exists (concurrent migration): {err}");
+            tracing::debug!(error = ?err, "Column cron_jobs.{name} already exists (concurrent migration)");
             Ok(())
         }
         Err(e) => Err(e).with_context(|| format!("Failed to add cron_jobs.{name}")),

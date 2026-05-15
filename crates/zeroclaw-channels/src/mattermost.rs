@@ -197,7 +197,7 @@ impl MattermostChannel {
         let token = match self.token().await {
             Ok(t) => t.to_string(),
             Err(e) => {
-                tracing::warn!("Mattermost auth failed in get_bot_identity: {e}");
+                tracing::warn!(error = ?e, "Mattermost auth failed in get_bot_identity");
                 return (String::new(), String::new());
             }
         };
@@ -261,7 +261,7 @@ impl MattermostChannel {
         let token = match self.token().await {
             Ok(t) => t.to_string(),
             Err(e) => {
-                tracing::warn!("Mattermost: audio download auth failed for {file_id}: {e}");
+                tracing::warn!(error = ?e, "Mattermost: audio download auth failed for {file_id}");
                 return None;
             }
         };
@@ -274,7 +274,7 @@ impl MattermostChannel {
         {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!("Mattermost: audio download failed for {file_id}: {e}");
+                tracing::warn!(error = ?e, "Mattermost: audio download failed for {file_id}");
                 return None;
             }
         };
@@ -297,7 +297,7 @@ impl MattermostChannel {
         let bytes = match response.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                tracing::warn!("Mattermost: failed to read audio bytes for {file_id}: {e}");
+                tracing::warn!(error = ?e, "Mattermost: failed to read audio bytes for {file_id}");
                 return None;
             }
         };
@@ -313,7 +313,7 @@ impl MattermostChannel {
                 }
             }
             Err(e) => {
-                tracing::warn!("Mattermost audio transcription failed: {e}");
+                tracing::warn!(error = ?e, "Mattermost audio transcription failed");
                 None
             }
         }
@@ -407,7 +407,7 @@ impl Channel for MattermostChannel {
             {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::warn!("Mattermost poll error: {e}");
+                    tracing::warn!(error = ?e, "Mattermost poll error");
                     continue;
                 }
             };
@@ -415,7 +415,7 @@ impl Channel for MattermostChannel {
             let data: serde_json::Value = match resp.json().await {
                 Ok(d) => d,
                 Err(e) => {
-                    tracing::warn!("Mattermost parse error: {e}");
+                    tracing::warn!(error = ?e, "Mattermost parse error");
                     continue;
                 }
             };

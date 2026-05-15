@@ -306,7 +306,7 @@ pub fn create_memory_with_storage_and_routes(
 
     // Best-effort memory hygiene/retention pass (throttled by state file).
     if let Err(e) = hygiene::run_if_due(config, workspace_dir) {
-        tracing::warn!("memory hygiene skipped: {e}");
+        tracing::warn!(error = ?e, "memory hygiene skipped");
     }
 
     // If snapshot_on_hygiene is enabled, export core memories during hygiene.
@@ -318,7 +318,7 @@ pub fn create_memory_with_storage_and_routes(
         )
         && let Err(e) = snapshot::export_snapshot(workspace_dir)
     {
-        tracing::warn!("memory snapshot skipped: {e}");
+        tracing::warn!(error = ?e, "memory snapshot skipped");
     }
 
     // Auto-hydration: if brain.db is missing but MEMORY_SNAPSHOT.md exists,
@@ -338,7 +338,7 @@ pub fn create_memory_with_storage_and_routes(
                 }
             }
             Err(e) => {
-                tracing::warn!("memory hydration failed: {e}");
+                tracing::warn!(error = ?e, "memory hydration failed");
             }
         }
     }
@@ -557,7 +557,7 @@ pub fn create_response_cache(config: &MemoryConfig, workspace_dir: &Path) -> Opt
             Some(cache)
         }
         Err(e) => {
-            tracing::warn!("Response cache disabled due to error: {e}");
+            tracing::warn!(error = ?e, "Response cache disabled due to error");
             None
         }
     }

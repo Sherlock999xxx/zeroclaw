@@ -640,7 +640,7 @@ impl Channel for NextcloudTalkChannel {
             Err(e) => {
                 // Non-fatal: log and continue. The final send will still deliver the
                 // complete response even if mid-stream edits fail.
-                tracing::debug!("Nextcloud Talk update_draft skipped: {e}");
+                tracing::debug!(error = ?e, "Nextcloud Talk update_draft skipped");
             }
         }
 
@@ -677,7 +677,7 @@ impl Channel for NextcloudTalkChannel {
 
     async fn cancel_draft(&self, recipient: &str, message_id: &str) -> anyhow::Result<()> {
         if let Err(e) = self.delete_message(recipient, message_id).await {
-            tracing::debug!("Nextcloud Talk cancel_draft delete failed (non-fatal): {e}");
+            tracing::debug!(error = ?e, "Nextcloud Talk cancel_draft delete failed (non-fatal)");
         }
         self.last_draft_edit.lock().remove(recipient);
         Ok(())

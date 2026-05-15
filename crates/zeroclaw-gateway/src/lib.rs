@@ -917,7 +917,7 @@ pub async fn run_gateway(
                 Some(backend)
             }
             Err(e) => {
-                tracing::warn!("Session persistence disabled: {e}");
+                tracing::warn!(error = ?e, "Session persistence disabled");
                 None
             }
         }
@@ -1504,7 +1504,7 @@ pub async fn run_gateway(
                         let tls_stream = match tls_acceptor.accept(tcp_stream).await {
                             Ok(s) => s,
                             Err(e) => {
-                                tracing::debug!("TLS handshake failed from {remote_addr}: {e}");
+                                tracing::debug!(error = ?e, "TLS handshake failed from {remote_addr}");
                                 return;
                             }
                         };
@@ -1521,7 +1521,7 @@ pub async fn run_gateway(
                         .serve_connection(io, hyper_svc)
                         .await
                         {
-                            tracing::debug!("connection error from {remote_addr}: {e}");
+                            tracing::debug!(error = ?e, "connection error from {remote_addr}");
                         }
                     });
                 }
@@ -1946,7 +1946,7 @@ async fn handle_webhook(
     let Json(webhook_body) = match body {
         Ok(b) => b,
         Err(e) => {
-            tracing::warn!("Webhook JSON parse error: {e}");
+            tracing::warn!(error = ?e, "Webhook JSON parse error");
             let err = serde_json::json!({
                 "error": "Invalid JSON body. Expected: {\"message\": \"...\"}"
             });
@@ -2270,7 +2270,7 @@ async fn handle_whatsapp_message(
                     .send(&SendMessage::new(response, &msg.reply_target))
                     .await
                 {
-                    tracing::error!("Failed to send WhatsApp reply: {e}");
+                    tracing::error!(error = ?e, "Failed to send WhatsApp reply");
                 }
             }
             Err(e) => {
@@ -2394,7 +2394,7 @@ async fn handle_linq_webhook(
                     .send(&SendMessage::new(response, &msg.reply_target))
                     .await
                 {
-                    tracing::error!("Failed to send Linq reply: {e}");
+                    tracing::error!(error = ?e, "Failed to send Linq reply");
                 }
             }
             Err(e) => {
@@ -2513,7 +2513,7 @@ async fn handle_wati_webhook(State(state): State<AppState>, body: Bytes) -> impl
                     .send(&SendMessage::new(response, &msg.reply_target))
                     .await
                 {
-                    tracing::error!("Failed to send WATI reply: {e}");
+                    tracing::error!(error = ?e, "Failed to send WATI reply");
                 }
             }
             Err(e) => {
@@ -2639,7 +2639,7 @@ async fn handle_nextcloud_talk_webhook(
                         .send(&SendMessage::new(response, &msg.reply_target))
                         .await
                     {
-                        tracing::error!("Failed to send Nextcloud Talk reply: {e}");
+                        tracing::error!(error = ?e, "Failed to send Nextcloud Talk reply");
                     }
                 }
                 Err(e) => {
@@ -2712,7 +2712,7 @@ async fn handle_gmail_push_webhook(
         match serde_json::from_str(&body_str) {
             Ok(e) => e,
             Err(e) => {
-                tracing::warn!("Gmail push webhook: invalid payload: {e}");
+                tracing::warn!(error = ?e, "Gmail push webhook: invalid payload");
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({"error": "Invalid Pub/Sub envelope"})),

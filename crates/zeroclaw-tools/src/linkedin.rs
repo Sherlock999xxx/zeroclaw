@@ -277,7 +277,7 @@ impl Tool for LinkedInTool {
                         }
                         Err(e) => {
                             // Image generation failed entirely — post without image
-                            tracing::warn!("Image generation failed, posting without image: {e}");
+                            tracing::warn!(error = ?e, "Image generation failed, posting without image");
                         }
                     }
                 }

@@ -1582,7 +1582,7 @@ impl Channel for DiscordChannel {
                                 )
                                 .await
                             {
-                                tracing::warn!("discord: archive store failed: {e}");
+                                tracing::warn!(error = ?e, "discord: archive store failed");
                             }
                         }
                     }
@@ -1874,7 +1874,7 @@ impl Channel for DiscordChannel {
                             .insert(recipient.to_string(), std::time::Instant::now());
                     }
                     Err(e) => {
-                        tracing::debug!("Discord draft update failed: {e}");
+                        tracing::debug!(error = ?e, "Discord draft update failed");
                     }
                 }
 
@@ -1943,7 +1943,7 @@ impl Channel for DiscordChannel {
                 if let Some(paragraph) = paragraph {
                     let msg = SendMessage::new(&paragraph, recipient).in_thread(thread_ts.clone());
                     if let Err(e) = self.send(&msg).await {
-                        tracing::debug!("Discord multi-message paragraph send failed: {e}");
+                        tracing::debug!(error = ?e, "Discord multi-message paragraph send failed");
                     }
                     if self.multi_message_delay_ms > 0 {
                         tokio::time::sleep(std::time::Duration::from_millis(
@@ -1983,7 +1983,7 @@ impl Channel for DiscordChannel {
                 if !remaining.is_empty() {
                     let msg = SendMessage::new(&remaining, recipient).in_thread(thread_ts);
                     if let Err(e) = self.send(&msg).await {
-                        tracing::debug!("Discord multi-message final flush failed: {e}");
+                        tracing::debug!(error = ?e, "Discord multi-message final flush failed");
                     }
                 }
             }
@@ -2097,7 +2097,7 @@ impl Channel for DiscordChannel {
         if let Err(e) =
             delete_discord_message(&client, &self.bot_token, recipient, message_id).await
         {
-            tracing::debug!("Discord cancel_draft delete failed: {e}");
+            tracing::debug!(error = ?e, "Discord cancel_draft delete failed");
         }
 
         Ok(())

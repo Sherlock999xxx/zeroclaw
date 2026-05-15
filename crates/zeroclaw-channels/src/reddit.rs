@@ -331,7 +331,7 @@ impl Channel for RedditChannel {
             let items = match self.fetch_inbox().await {
                 Ok(items) => items,
                 Err(e) => {
-                    tracing::warn!("Reddit poll error: {e}");
+                    tracing::warn!(error = ?e, "Reddit poll error");
                     continue;
                 }
             };
@@ -349,7 +349,7 @@ impl Channel for RedditChannel {
             }
 
             if let Err(e) = self.mark_read(&read_ids).await {
-                tracing::warn!("Reddit mark_read error: {e}");
+                tracing::warn!(error = ?e, "Reddit mark_read error");
             }
         }
     }

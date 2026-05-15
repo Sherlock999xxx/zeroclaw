@@ -69,7 +69,7 @@ impl XmlToolDispatcher {
                         });
                     }
                     Err(e) => {
-                        tracing::warn!("Malformed <tool_call> JSON: {e}");
+                        tracing::warn!(error = ?e, "Malformed <tool_call> JSON");
                     }
                 }
                 remaining = &remaining[start + end + 12..];

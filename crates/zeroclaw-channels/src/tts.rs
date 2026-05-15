@@ -602,7 +602,7 @@ impl TtsManager {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Skipping TTS provider {dotted}: {e}");
+                    tracing::warn!(error = ?e, "Skipping TTS provider {dotted}");
                 }
             }
         }

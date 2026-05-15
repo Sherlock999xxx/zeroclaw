@@ -198,7 +198,7 @@ impl Channel for DingTalkChannel {
                 Ok(Message::Text(t)) => t,
                 Ok(Message::Close(_)) => break,
                 Err(e) => {
-                    tracing::warn!("DingTalk WebSocket error: {e}");
+                    tracing::warn!(error = ?e, "DingTalk WebSocket error");
                     break;
                 }
                 _ => continue,
@@ -231,7 +231,7 @@ impl Channel for DingTalkChannel {
                     });
 
                     if let Err(e) = write.send(Message::Text(pong.to_string().into())).await {
-                        tracing::warn!("DingTalk: failed to send pong: {e}");
+                        tracing::warn!(error = ?e, "DingTalk: failed to send pong");
                         break;
                     }
                 }

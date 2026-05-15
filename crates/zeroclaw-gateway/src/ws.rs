@@ -988,7 +988,7 @@ async fn process_chat_message(
                     )
                     .await
                     {
-                        tracing::debug!("WS memory consolidation skipped: {e}");
+                        tracing::debug!(error = ?e, "WS memory consolidation skipped");
                     }
                 });
             }

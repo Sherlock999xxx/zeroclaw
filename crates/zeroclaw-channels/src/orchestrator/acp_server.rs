@@ -448,7 +448,7 @@ impl AcpServer {
                 });
             }
             Err(e) => {
-                warn!("Failed to parse JSON-RPC request: {e}");
+                warn!(error = ?e, "Failed to parse JSON-RPC request");
                 self.write_error(Value::Null, PARSE_ERROR, &format!("Parse error: {e}"))
                     .await;
             }
@@ -983,7 +983,7 @@ impl AcpServer {
                 }
             }
             Err(e) => {
-                error!("Failed to serialize JSON-RPC message: {e}");
+                error!(error = ?e, "Failed to serialize JSON-RPC message");
             }
         }
     }
@@ -996,15 +996,15 @@ async fn writer_task(mut rx: mpsc::Receiver<String>) {
     let mut stdout = tokio::io::stdout();
     while let Some(line) = rx.recv().await {
         if let Err(e) = stdout.write_all(line.as_bytes()).await {
-            error!("Failed to write to stdout: {e}");
+            error!(error = ?e, "Failed to write to stdout");
             continue;
         }
         if let Err(e) = stdout.write_all(b"\n").await {
-            error!("Failed to write newline to stdout: {e}");
+            error!(error = ?e, "Failed to write newline to stdout");
             continue;
         }
         if let Err(e) = stdout.flush().await {
-            error!("Failed to flush stdout: {e}");
+            error!(error = ?e, "Failed to flush stdout");
         }
     }
 }

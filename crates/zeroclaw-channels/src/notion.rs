@@ -243,7 +243,7 @@ impl NotionChannel {
                     .api_call(reqwest::Method::PATCH, &page_url, Some(payload))
                     .await
                 {
-                    tracing::error!("Could not reset stale task {short_id}: {e}");
+                    tracing::error!(error = ?e, "Could not reset stale task {short_id}");
                 } else {
                     tracing::info!("Reset stale task {short_id} to pending");
                 }
@@ -292,7 +292,7 @@ impl Channel for NotionChannel {
         if self.recover_stale
             && let Err(e) = self.recover_stale().await
         {
-            tracing::error!("Notion stale task recovery failed: {e}");
+            tracing::error!(error = ?e, "Notion stale task recovery failed");
         }
 
         // Polling loop
@@ -328,7 +328,7 @@ impl Channel for NotionChannel {
 
                         // Set status to running
                         if let Err(e) = self.set_status(&page_id, "running").await {
-                            tracing::error!("Notion: failed to set running status: {e}");
+                            tracing::error!(error = ?e, "Notion: failed to set running status");
                             self.release_task(&page_id).await;
                             continue;
                         }
@@ -360,7 +360,7 @@ impl Channel for NotionChannel {
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Notion poll error: {e}");
+                    tracing::error!(error = ?e, "Notion poll error");
                 }
             }
 

@@ -317,7 +317,7 @@ impl WatiChannel {
         {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!("WATI: media download request failed: {e}");
+                tracing::warn!(error = ?e, "WATI: media download request failed");
                 return None;
             }
         };
@@ -342,7 +342,7 @@ impl WatiChannel {
         match manager.transcribe(&audio_bytes, file_name).await {
             Ok(transcript) => Some(transcript),
             Err(e) => {
-                tracing::warn!("WATI: transcription failed: {e}");
+                tracing::warn!(error = ?e, "WATI: transcription failed");
                 None
             }
         }

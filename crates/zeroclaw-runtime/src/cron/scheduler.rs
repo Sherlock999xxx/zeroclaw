@@ -65,7 +65,7 @@ pub async fn run(config: Config, event_tx: EventBroadcast) -> Result<()> {
                 );
             }
         }
-        Err(e) => tracing::warn!("Failed to sync declarative cron jobs: {e}"),
+        Err(e) => tracing::warn!(error = ?e, "Failed to sync declarative cron jobs"),
     }
 
     // ── Startup catch-up: run ALL overdue jobs before entering the
@@ -89,7 +89,7 @@ pub async fn run(config: Config, event_tx: EventBroadcast) -> Result<()> {
             Ok(jobs) => jobs,
             Err(e) => {
                 crate::health::mark_component_error(SCHEDULER_COMPONENT, e.to_string());
-                tracing::warn!("Scheduler query failed: {e}");
+                tracing::warn!(error = ?e, "Scheduler query failed");
                 continue;
             }
         };
@@ -118,7 +118,7 @@ async fn catch_up_overdue_jobs(config: &Config, event_tx: &EventBroadcast) {
     let jobs = match all_overdue_jobs(config, now) {
         Ok(jobs) => jobs,
         Err(e) => {
-            tracing::warn!("Startup catch-up query failed: {e}");
+            tracing::warn!(error = ?e, "Startup catch-up query failed");
             return;
         }
     };
@@ -468,13 +468,13 @@ async fn persist_job_result(
 
     if let Err(e) = deliver_if_configured(config, job, output).await {
         if job.delivery.best_effort {
-            tracing::warn!("Cron delivery failed (best_effort): {e}");
+            tracing::warn!(error = ?e, "Cron delivery failed (best_effort)");
             if success {
                 persisted_status = "degraded".to_string();
             }
         } else {
             success = false;
-            tracing::warn!("Cron delivery failed: {e}");
+            tracing::warn!(error = ?e, "Cron delivery failed");
             persisted_status = "error".to_string();
         }
 
@@ -499,7 +499,7 @@ async fn persist_job_result(
     if is_one_shot_auto_delete(job) {
         if success {
             if let Err(e) = remove_job(config, &job.id) {
-                tracing::warn!("Failed to remove one-shot cron job after success: {e}");
+                tracing::warn!(error = ?e, "Failed to remove one-shot cron job after success");
                 // Fall back to disabling the job so it won't re-trigger.
                 let _ = update_job(
                     config,
@@ -526,7 +526,7 @@ async fn persist_job_result(
                     ..CronJobPatch::default()
                 },
             ) {
-                tracing::warn!("Failed to disable failed one-shot cron job: {e}");
+                tracing::warn!(error = ?e, "Failed to disable failed one-shot cron job");
             }
         }
         return success;
@@ -535,7 +535,7 @@ async fn persist_job_result(
     if let Err(e) =
         reschedule_after_run_with_status(config, job, &persisted_status, &persisted_output)
     {
-        tracing::warn!("Failed to persist scheduler run result: {e}");
+        tracing::warn!(error = ?e, "Failed to persist scheduler run result");
     }
 
     success

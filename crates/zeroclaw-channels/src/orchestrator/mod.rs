@@ -1207,7 +1207,7 @@ fn append_sender_turn(ctx: &ChannelRuntimeContext, sender_key: &str, turn: ChatM
     if let Some(ref store) = ctx.session_store
         && let Err(e) = store.append(sender_key, &turn)
     {
-        tracing::warn!("Failed to persist session turn: {e}");
+        tracing::warn!(error = ?e, "Failed to persist session turn");
     }
 
     // Use the user-configured max_history_messages (fall back to
@@ -1346,7 +1346,7 @@ fn rollback_orphan_user_turn(
     if let Some(ref store) = ctx.session_store
         && let Err(e) = store.remove_last(sender_key)
     {
-        tracing::warn!("Failed to rollback session store entry: {e}");
+        tracing::warn!(error = ?e, "Failed to rollback session store entry");
     }
 
     true
@@ -1849,7 +1849,7 @@ async fn handle_runtime_command_if_needed(
             if let Some(ref store) = ctx.session_store
                 && let Err(e) = store.delete_session(&sender_key)
             {
-                tracing::warn!("Failed to delete persisted session for {sender_key}: {e}");
+                tracing::warn!(error = ?e, "Failed to delete persisted session for {sender_key}");
             }
             mark_sender_for_new_session(ctx, &sender_key);
             "Conversation history cleared. Starting fresh.".to_string()
@@ -2654,14 +2654,14 @@ fn spawn_scoped_typing_task(
                 () = stop_signal.cancelled() => break,
                 _ = interval.tick() => {
                     if let Err(e) = channel.start_typing(&recipient).await {
-                        tracing::debug!("Failed to start typing on {}: {e}", channel.name());
+                        tracing::debug!(error = ?e, "Failed to start typing on {}", channel.name());
                     }
                 }
             }
         }
 
         if let Err(e) = channel.stop_typing(&recipient).await {
-            tracing::debug!("Failed to stop typing on {}: {e}", channel.name());
+            tracing::debug!(error = ?e, "Failed to stop typing on {}", channel.name());
         }
     })
 }
@@ -2780,7 +2780,7 @@ async fn process_channel_message(
     }
 
     if let Err(err) = maybe_apply_runtime_config_update(ctx.as_ref()).await {
-        tracing::warn!("Failed to apply runtime config update: {err}");
+        tracing::warn!(error = ?err, "Failed to apply runtime config update");
     }
     if handle_runtime_command_if_needed(ctx.as_ref(), &msg, target_channel.as_ref()).await {
         return;
@@ -3068,7 +3068,7 @@ async fn process_channel_message(
                 );
             }
             Err(e) => {
-                tracing::warn!("Context compression failed, proceeding without: {e}");
+                tracing::warn!(error = ?e, "Context compression failed, proceeding without");
             }
             _ => {}
         }
@@ -3170,7 +3170,7 @@ async fn process_channel_message(
             {
                 Ok(id) => id,
                 Err(e) => {
-                    tracing::debug!("Failed to send draft on {}: {e}", channel.name());
+                    tracing::debug!(error = ?e, "Failed to send draft on {}", channel.name());
                     None
                 }
             }
@@ -3203,7 +3203,7 @@ async fn process_channel_message(
                                 .update_draft_progress(&reply_target, &draft_id, &visible)
                                 .await
                             {
-                                tracing::debug!("Draft progress update failed: {e}");
+                                tracing::debug!(error = ?e, "Draft progress update failed");
                             }
                         }
                         StreamDelta::Text(text) => {
@@ -3213,7 +3213,7 @@ async fn process_channel_message(
                                 .update_draft(&reply_target, &draft_id, &visible)
                                 .await
                             {
-                                tracing::debug!("Draft update failed: {e}");
+                                tracing::debug!(error = ?e, "Draft update failed");
                             }
                         }
                     }
@@ -3233,7 +3233,7 @@ async fn process_channel_message(
             .add_reaction(&msg.reply_target, &msg.id, "\u{1F440}")
             .await
     {
-        tracing::debug!("Failed to add reaction: {e}");
+        tracing::debug!(error = ?e, "Failed to add reaction");
     }
 
     // Skip typing only for Partial mode — the draft message itself provides
@@ -3501,7 +3501,7 @@ async fn process_channel_message(
                 (target_channel.as_ref(), draft_message_id.as_deref())
                 && let Err(err) = channel.cancel_draft(&msg.reply_target, draft_id).await
             {
-                tracing::debug!("Failed to cancel draft on {}: {err}", channel.name());
+                tracing::debug!(error = ?err, "Failed to cancel draft on {}", channel.name());
             }
         }
         LlmExecutionResult::Completed(Ok(Ok(response))) => {
@@ -3656,7 +3656,7 @@ async fn process_channel_message(
                     )
                     .await
                     {
-                        tracing::debug!("Memory consolidation skipped: {e}");
+                        tracing::debug!(error = ?e, "Memory consolidation skipped");
                     }
                 });
             }
@@ -3759,7 +3759,7 @@ async fn process_channel_message(
                     (target_channel.as_ref(), draft_message_id.as_deref())
                     && let Err(err) = channel.cancel_draft(&msg.reply_target, draft_id).await
                 {
-                    tracing::debug!("Failed to cancel draft on {}: {err}", channel.name());
+                    tracing::debug!(error = ?err, "Failed to cancel draft on {}", channel.name());
                 }
             } else if is_context_window_overflow_error(&e) {
                 let compacted = compact_sender_history(ctx.as_ref(), &history_key);
@@ -5069,7 +5069,7 @@ fn collect_configured_channels(
                     discord_ch = discord_ch.with_archive_memory(std::sync::Arc::new(mem));
                 }
                 Err(e) => {
-                    tracing::warn!("discord: archive enabled but failed to open discord.db: {e}");
+                    tracing::warn!(error = ?e, "discord: archive enabled but failed to open discord.db");
                 }
             }
         }
@@ -5202,7 +5202,7 @@ fn collect_configured_channels(
                 });
             }
             Err(e) => {
-                tracing::error!("Matrix channel construction failed: {e}");
+                tracing::error!(error = ?e, "Matrix channel construction failed");
             }
         }
     }
@@ -6035,7 +6035,7 @@ pub async fn start_channels(
                     Some(backend)
                 }
                 Err(e) => {
-                    tracing::warn!("Session persistence disabled: {e}");
+                    tracing::warn!(error = ?e, "Session persistence disabled");
                     None
                 }
             }
@@ -6092,7 +6092,7 @@ pub async fn start_channels(
         );
 
         if let Err(e) = model_provider.warmup().await {
-            tracing::warn!(agent = %agent_alias, "ModelProvider warmup failed (non-fatal): {e}");
+            tracing::warn!(error = ?e, agent = %agent_alias, "ModelProvider warmup failed (non-fatal)");
         }
 
         let security = Arc::new(SecurityPolicy::for_agent(&config, agent_alias)?);
@@ -6719,7 +6719,7 @@ pub async fn start_channels(
                 let closure =
                     ChatMessage::assistant("[Session interrupted — not continuing this request]");
                 if let Err(e) = store.append(&m.key, &closure) {
-                    tracing::debug!("Failed to persist orphan closure for {}: {e}", m.key);
+                    tracing::debug!(error = ?e, "Failed to persist orphan closure for {}", m.key);
                 }
                 msgs.push(closure);
                 orphans_closed += 1;

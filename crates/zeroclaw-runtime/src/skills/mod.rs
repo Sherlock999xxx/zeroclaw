@@ -635,7 +635,7 @@ fn clone_open_skills_repo(repo_dir: &Path) -> bool {
             false
         }
         Err(err) => {
-            tracing::warn!("failed to run git clone for open-skills: {err}");
+            tracing::warn!(error = ?err, "failed to run git clone for open-skills");
             false
         }
     }
@@ -661,7 +661,7 @@ fn pull_open_skills_repo(repo_dir: &Path) -> bool {
             false
         }
         Err(err) => {
-            tracing::warn!("failed to run git pull for open-skills: {err}");
+            tracing::warn!(error = ?err, "failed to run git pull for open-skills");
             false
         }
     }
@@ -1620,7 +1620,7 @@ fn pull_skills_registry(registry_dir: &Path) -> bool {
             false
         }
         Err(err) => {
-            tracing::warn!("failed to run git pull for skills registry: {err}");
+            tracing::warn!(error = ?err, "failed to run git pull for skills registry");
             false
         }
     }
@@ -1744,7 +1744,7 @@ pub fn load_plugin_skills_from_config(config: &zeroclaw_config::schema::Config) 
     ) {
         Ok(host) => host,
         Err(err) => {
-            tracing::warn!("failed to discover plugin skills: {err}");
+            tracing::warn!(error = ?err, "failed to discover plugin skills");
             return Vec::new();
         }
     };

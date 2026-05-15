@@ -466,7 +466,7 @@ pub fn all_tools_with_runtime(
                 tool_arcs.push(Arc::new(DiscordSearchTool::new(Arc::new(discord_mem))));
             }
             Err(e) => {
-                tracing::warn!("discord_search: failed to open discord.db: {e}");
+                tracing::warn!(error = ?e, "discord_search: failed to open discord.db");
             }
         }
     }
@@ -924,7 +924,7 @@ pub fn all_tools_with_runtime(
             match Microsoft365Tool::new(resolved, security.clone(), cache_dir) {
                 Ok(tool) => tool_arcs.push(Arc::new(tool)),
                 Err(e) => {
-                    tracing::error!("microsoft365: failed to initialize tool: {e}");
+                    tracing::error!(error = ?e, "microsoft365: failed to initialize tool");
                 }
             }
         } else {
@@ -951,7 +951,7 @@ pub fn all_tools_with_runtime(
                 tool_arcs.push(Arc::new(KnowledgeTool::new(Arc::new(graph))));
             }
             Err(e) => {
-                tracing::warn!("knowledge graph disabled due to init error: {e}");
+                tracing::warn!(error = ?e, "knowledge graph disabled due to init error");
             }
         }
     }
@@ -1060,7 +1060,7 @@ pub fn all_tools_with_runtime(
                     tracing::info!("Loaded {count} WASM plugin tools");
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to load WASM plugins: {e}");
+                    tracing::warn!(error = ?e, "Failed to load WASM plugins");
                 }
             }
         }

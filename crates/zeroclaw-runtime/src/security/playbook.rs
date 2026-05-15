@@ -96,11 +96,11 @@ pub fn load_playbooks(dir: &Path) -> Vec<Playbook> {
                     Ok(contents) => match serde_json::from_str::<Playbook>(&contents) {
                         Ok(pb) => playbooks.push(pb),
                         Err(e) => {
-                            tracing::warn!("Failed to parse playbook {}: {e}", path.display());
+                            tracing::warn!(error = ?e, "Failed to parse playbook {}", path.display());
                         }
                     },
                     Err(e) => {
-                        tracing::warn!("Failed to read playbook {}: {e}", path.display());
+                        tracing::warn!(error = ?e, "Failed to read playbook {}", path.display());
                     }
                 }
             }

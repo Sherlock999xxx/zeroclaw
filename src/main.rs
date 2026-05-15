@@ -1706,7 +1706,7 @@ async fn main() -> Result<()> {
                             }
                         }
                         Err(e) => {
-                            info!("   No existing gateway to shut down: {e}");
+                            info!(error = ?e, "   No existing gateway to shut down");
                         }
                     }
 

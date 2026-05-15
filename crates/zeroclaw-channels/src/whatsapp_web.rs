@@ -212,7 +212,7 @@ impl WhatsAppWebChannel {
         if config.tts.enabled {
             match super::tts::TtsManager::from_config(config) {
                 Ok(m) => self.tts_manager = Some(Arc::new(m)),
-                Err(e) => tracing::warn!("WhatsApp Web TTS disabled: {e}"),
+                Err(e) => tracing::warn!(error = ?e, "WhatsApp Web TTS disabled"),
             }
         }
         self
@@ -482,7 +482,7 @@ impl WhatsAppWebChannel {
         let audio_data = match client.download(audio as &dyn Downloadable).await {
             Ok(data) => data,
             Err(e) => {
-                tracing::warn!("WhatsApp Web: failed to download voice note: {e}");
+                tracing::warn!(error = ?e, "WhatsApp Web: failed to download voice note");
                 return None;
             }
         };
@@ -515,7 +515,7 @@ impl WhatsAppWebChannel {
                 Some(text)
             }
             Err(e) => {
-                tracing::warn!("WhatsApp Web: voice transcription failed: {e}");
+                tracing::warn!(error = ?e, "WhatsApp Web: voice transcription failed");
                 None
             }
         }
@@ -817,7 +817,7 @@ impl Channel for WhatsAppWebChannel {
                                 );
                             }
                             Err(e) => {
-                                tracing::warn!("WhatsApp Web: TTS voice reply failed: {e}");
+                                tracing::warn!(error = ?e, "WhatsApp Web: TTS voice reply failed");
                             }
                         }
                     }

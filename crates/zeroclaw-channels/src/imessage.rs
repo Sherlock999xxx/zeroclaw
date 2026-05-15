@@ -316,7 +316,7 @@ end tell"#
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("iMessage poll error: {e}");
+                    tracing::warn!(error = ?e, "iMessage poll error");
                 }
             }
         }

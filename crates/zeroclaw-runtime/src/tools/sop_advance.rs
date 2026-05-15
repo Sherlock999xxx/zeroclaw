@@ -140,12 +140,12 @@ impl Tool for SopAdvanceTool {
             if let Some(ref sr) = step_result_ok
                 && let Err(e) = audit.log_step_result(run_id, sr).await
             {
-                warn!("SOP audit log_step_result failed: {e}");
+                warn!(error = ?e, "SOP audit log_step_result failed");
             }
             if let Some(ref run) = finished_run
                 && let Err(e) = audit.log_run_complete(run).await
             {
-                warn!("SOP audit log_run_complete failed: {e}");
+                warn!(error = ?e, "SOP audit log_run_complete failed");
             }
         }
 

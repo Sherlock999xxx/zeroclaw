@@ -231,7 +231,7 @@ impl SecretStore {
                         );
                     }
                     Err(e) => {
-                        tracing::warn!("Could not take ownership of key file: {e}");
+                        tracing::warn!(error = ?e, "Could not take ownership of key file");
                     }
                     _ => {
                         tracing::debug!("Key file ownership set to current user via takeown");
@@ -251,7 +251,7 @@ impl SecretStore {
                         );
                     }
                     Err(e) => {
-                        tracing::warn!("Could not set key file permissions: {e}");
+                        tracing::warn!(error = ?e, "Could not set key file permissions");
                     }
                     _ => {
                         tracing::debug!("Key file permissions restricted via icacls");

@@ -95,7 +95,7 @@ impl Tool for SopExecuteTool {
             && let Some(ref run) = run_snapshot
             && let Err(e) = audit.log_run_start(run).await
         {
-            warn!("SOP audit log_run_start failed: {e}");
+            warn!(error = ?e, "SOP audit log_run_start failed");
         }
 
         match action {

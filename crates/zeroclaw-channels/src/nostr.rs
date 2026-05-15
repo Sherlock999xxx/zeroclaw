@@ -204,7 +204,7 @@ impl Channel for NostrChannel {
                                     ))
                                 }
                                 Err(e) => {
-                                    tracing::warn!("Failed to decrypt NIP-04 message: {e}");
+                                    tracing::warn!(error = ?e, "Failed to decrypt NIP-04 message");
                                     None
                                 }
                             }
@@ -238,7 +238,7 @@ impl Channel for NostrChannel {
                                     ))
                                 }
                                 Err(e) => {
-                                    tracing::warn!("Failed to unwrap NIP-17 gift wrap: {e}");
+                                    tracing::warn!(error = ?e, "Failed to unwrap NIP-17 gift wrap");
                                     None
                                 }
                             }

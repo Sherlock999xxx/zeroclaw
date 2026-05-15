@@ -151,7 +151,7 @@ impl Channel for MochatChannel {
                     let data: serde_json::Value = match resp.json().await {
                         Ok(d) => d,
                         Err(e) => {
-                            tracing::warn!("Mochat: failed to parse response: {e}");
+                            tracing::warn!(error = ?e, "Mochat: failed to parse response");
                             tokio::time::sleep(poll_interval).await;
                             continue;
                         }
@@ -231,10 +231,10 @@ impl Channel for MochatChannel {
                 Ok(resp) => {
                     let status = resp.status();
                     let err = resp.text().await.unwrap_or_default();
-                    tracing::warn!("Mochat: poll request failed ({status}): {err}");
+                    tracing::warn!(error = ?err, "Mochat: poll request failed ({status})");
                 }
                 Err(e) => {
-                    tracing::warn!("Mochat: poll request error: {e}");
+                    tracing::warn!(error = ?e, "Mochat: poll request error");
                 }
             }
 

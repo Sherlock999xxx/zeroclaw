@@ -244,7 +244,7 @@ async fn handle_webhook(
     let payload: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => {
-            tracing::warn!("LINE: invalid JSON payload: {e}");
+            tracing::warn!(error = ?e, "LINE: invalid JSON payload");
             return StatusCode::BAD_REQUEST;
         }
     };
@@ -301,7 +301,7 @@ async fn handle_webhook(
                 {
                     Ok(b) => b,
                     Err(e) => {
-                        tracing::warn!("LINE: audio download failed for {msg_id}: {e}");
+                        tracing::warn!(error = ?e, "LINE: audio download failed for {msg_id}");
                         continue;
                     }
                 };
@@ -312,7 +312,7 @@ async fn handle_webhook(
                         continue;
                     }
                     Err(e) => {
-                        tracing::warn!("LINE: transcription failed for {msg_id}: {e}");
+                        tracing::warn!(error = ?e, "LINE: transcription failed for {msg_id}");
                         continue;
                     }
                 };

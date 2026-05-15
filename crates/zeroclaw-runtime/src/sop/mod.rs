@@ -94,7 +94,7 @@ pub fn load_sops_from_directory(
         match load_sop(&path, default_execution_mode) {
             Ok(sop) => sops.push(sop),
             Err(e) => {
-                warn!("Failed to load SOP from {}: {e}", path.display());
+                warn!(error = ?e, "Failed to load SOP from {}", path.display());
             }
         }
     }

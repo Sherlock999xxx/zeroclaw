@@ -802,7 +802,7 @@ impl ImageGenerator {
                     return Ok(path);
                 }
                 Err(e) => {
-                    tracing::warn!("Image model_provider '{provider_name}' failed: {e}");
+                    tracing::warn!(error = ?e, "Image model_provider '{provider_name}' failed");
                 }
             }
         }

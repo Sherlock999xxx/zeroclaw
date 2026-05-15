@@ -727,7 +727,7 @@ impl TranscriptionManager {
                     transcription_providers.insert("local_whisper".to_string(), Box::new(p));
                 }
                 Err(e) => {
-                    tracing::warn!("local_whisper config invalid, provider skipped: {e}");
+                    tracing::warn!(error = ?e, "local_whisper config invalid, provider skipped");
                 }
             }
         }

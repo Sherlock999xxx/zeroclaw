@@ -375,7 +375,7 @@ where
                 }
                 Err(e) => {
                     crate::health::mark_component_error(name, e.to_string());
-                    tracing::error!("Daemon component '{name}' failed: {e}");
+                    tracing::error!(error = ?e, "Daemon component '{name}' failed");
                 }
             }
 
@@ -450,7 +450,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                     );
                     match tokio::time::timeout(Duration::from_secs(30), delivery_fut).await {
                         Ok(Err(e)) => {
-                            tracing::warn!("Deadman alert delivery failed: {e}");
+                            tracing::warn!(error = ?e, "Deadman alert delivery failed");
                         }
                         Err(_) => {
                             tracing::warn!("Deadman alert delivery timed out (30s)");
@@ -725,7 +725,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                                     "heartbeat",
                                     format!("delivery failed: {e}"),
                                 );
-                                tracing::warn!("Heartbeat delivery failed: {e}");
+                                tracing::warn!(error = ?e, "Heartbeat delivery failed");
                             }
                             Err(_) => {
                                 crate::health::mark_component_error(
@@ -755,7 +755,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                         config.heartbeat.max_run_history,
                     );
                     crate::health::mark_component_error("heartbeat", e.to_string());
-                    tracing::warn!("Heartbeat task failed: {e}");
+                    tracing::warn!(error = ?e, "Heartbeat task failed");
                 }
             }
         }

@@ -447,7 +447,7 @@ impl Channel for VoiceCallChannel {
                 resp.status().is_success() || resp.status().as_u16() == 401
             }
             Err(e) => {
-                warn!(model_provider = %self.config.model_provider, "voice call health check failed: {e}");
+                warn!(error = ?e, model_provider = %self.config.model_provider, "voice call health check failed");
                 false
             }
         }

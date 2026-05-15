@@ -746,7 +746,7 @@ mod client {
             if let Some(blob) = session_blob_from(&client)
                 && let Err(e) = session::save(state_dir, &blob)
             {
-                warn!("matrix: failed to persist session.json: {e}");
+                warn!(error = ?e, "matrix: failed to persist session.json");
             }
         }
 
@@ -1099,7 +1099,7 @@ mod client {
             Ok(Some(raw)) => match raw.deserialize() {
                 Ok(content) => Some(content),
                 Err(e) => {
-                    warn!("matrix: cannot deserialize default secret-storage key event: {e}");
+                    warn!(error = ?e, "matrix: cannot deserialize default secret-storage key event");
                     None
                 }
             },
@@ -1110,7 +1110,7 @@ mod client {
                 return;
             }
             Err(e) => {
-                warn!("matrix: failed to fetch default secret-storage key event: {e}");
+                warn!(error = ?e, "matrix: failed to fetch default secret-storage key event");
                 return;
             }
         };
@@ -1146,7 +1146,7 @@ mod client {
                 );
             }
             Err(e) => {
-                warn!("matrix: failed to fetch key event for {key_id}: {e}");
+                warn!(error = ?e, "matrix: failed to fetch key event for {key_id}");
             }
         }
     }
@@ -1289,7 +1289,7 @@ mod inbound {
                 let ctx = handler_ctx.clone();
                 async move {
                     if let Err(e) = handle_message(ctx, ev, room, raw).await {
-                        warn!("matrix: handle_message failed: {e}");
+                        warn!(error = ?e, "matrix: handle_message failed");
                     }
                 }
             },
@@ -1349,7 +1349,7 @@ mod inbound {
         let content =
             ReactionEventContent::new(Annotation::new(event_id.clone(), "❓".to_string()));
         if let Err(e) = room.send(content).await {
-            warn!("matrix: failed to react ❓ on undecryptable event {event_id}: {e}");
+            warn!(error = ?e, "matrix: failed to react ❓ on undecryptable event {event_id}");
         }
     }
 
@@ -1421,7 +1421,7 @@ mod inbound {
                         );
                     }
                 }
-                Err(e) => warn!("matrix: failed to fetch thread root {tid}: {e}"),
+                Err(e) => warn!(error = ?e, "matrix: failed to fetch thread root {tid}"),
             }
         }
 
@@ -1498,7 +1498,9 @@ mod inbound {
                         .await;
                     }
                 }
-                Err(e) => debug!("matrix: could not fetch in_reply_to parent {reply_target}: {e}"),
+                Err(e) => {
+                    debug!(error = ?e, "matrix: could not fetch in_reply_to parent {reply_target}")
+                }
             }
         }
         let attachments: Vec<MediaAttachment> = Vec::new();
@@ -1525,7 +1527,7 @@ mod inbound {
         };
 
         if let Err(e) = ctx.tx.send(msg).await {
-            error!("matrix: failed to forward inbound message: {e}");
+            error!(error = ?e, "matrix: failed to forward inbound message");
         }
         Ok(())
     }
@@ -1660,12 +1662,12 @@ mod inbound {
                             content = format!("[voice transcript]: {text}\n\n{content}");
                         }
                         Ok(_) => {}
-                        Err(e) => warn!("matrix: voice transcription failed: {e}"),
+                        Err(e) => warn!(error = ?e, "matrix: voice transcription failed"),
                     }
                 }
             }
             Ok(None) => {}
-            Err(e) => warn!("matrix: media handling failed: {e}"),
+            Err(e) => warn!(error = ?e, "matrix: media handling failed"),
         }
         content
     }
@@ -2354,7 +2356,7 @@ mod outbound {
             let content =
                 ReactionEventContent::new(Annotation::new(event_id.clone(), emoji.to_string()));
             if let Err(e) = room.send(content).await {
-                warn!("matrix: failed to send {emoji} reaction on outgoing message: {e}");
+                warn!(error = ?e, "matrix: failed to send {emoji} reaction on outgoing message");
             }
         }
     }
@@ -2829,7 +2831,7 @@ impl MatrixChannel {
                 let mut msg = SendMessage::new(paragraph, recipient);
                 msg.thread_ts = thread_anchor.as_ref().map(|e| e.to_string());
                 if let Err(e) = outbound::send(&self.outbox(client), &msg).await {
-                    tracing::warn!("matrix: multi-message paragraph send failed: {e}");
+                    tracing::warn!(error = ?e, "matrix: multi-message paragraph send failed");
                 }
                 if !delay.is_zero() {
                     tokio::time::sleep(delay).await;

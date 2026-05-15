@@ -384,10 +384,10 @@ impl Observer for OtelObserver {
 
     fn flush(&self) {
         if let Err(e) = self.tracer_provider.force_flush() {
-            tracing::warn!("OTel trace flush failed: {e}");
+            tracing::warn!(error = ?e, "OTel trace flush failed");
         }
         if let Err(e) = self.meter_provider.force_flush() {
-            tracing::warn!("OTel metric flush failed: {e}");
+            tracing::warn!(error = ?e, "OTel metric flush failed");
         }
     }
 

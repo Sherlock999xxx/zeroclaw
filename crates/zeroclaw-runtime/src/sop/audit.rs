@@ -84,7 +84,7 @@ impl SopAuditLogger {
         match self.memory.get(&key).await? {
             Some(entry) => {
                 let run: SopRun = serde_json::from_str(&entry.content).map_err(|e| {
-                    warn!("SOP audit: failed to parse run {run_id}: {e}");
+                    warn!(error = ?e, "SOP audit: failed to parse run {run_id}");
                     e
                 })?;
                 Ok(Some(run))

@@ -21,6 +21,11 @@ pub struct BrowseEntry {
     /// File size in bytes. `None` for directories.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
+    /// Set when this entry is on the runtime's protected list and the
+    /// dashboard must hide delete/rename affordances. Server-side checks
+    /// (delete/move/mkdir) reject mutations on these regardless of UI.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub protected: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +57,15 @@ pub enum BrowseError {
 /// Browse one level of `<install>/shared/<raw>`. Returns entries sorted by
 /// (kind, name) — directories first, then files, alphabetical within each.
 pub fn list_directory(config: &Config, raw: &str) -> Result<BrowseResult, BrowseError> {
-    list_under_root(&config.shared_workspace_dir(), raw)
+    let mut result = list_under_root(&config.shared_workspace_dir(), raw)?;
+    if raw.trim_matches('/').is_empty() {
+        for entry in &mut result.entries {
+            if entry.kind == "dir" && PROTECTED_SHARED_TOP_LEVEL.contains(&entry.name.as_str()) {
+                entry.protected = true;
+            }
+        }
+    }
+    Ok(result)
 }
 
 fn list_under_root(root: &std::path::Path, raw: &str) -> Result<BrowseResult, BrowseError> {
@@ -80,6 +93,7 @@ fn list_under_root(root: &std::path::Path, raw: &str) -> Result<BrowseResult, Br
                 name,
                 kind: "dir",
                 size: None,
+                protected: false,
             });
         } else if file_type.is_file() {
             let size = child.metadata().ok().map(|m| m.len());
@@ -87,6 +101,7 @@ fn list_under_root(root: &std::path::Path, raw: &str) -> Result<BrowseResult, Br
                 name,
                 kind: "file",
                 size,
+                protected: false,
             });
         }
     }
@@ -173,6 +188,12 @@ const AGENT_WORKSPACE_PROTECTED_FILES: &[&str] = &[
     "DAILY.md",
 ];
 
+/// Top-level agent-workspace directories the runtime owns. `sessions/`
+/// holds the per-agent session DB (`sessions/sessions.db`) created on first
+/// session write by `zeroclaw_infra::session_sqlite`. Deleting it wipes
+/// session history.
+const AGENT_WORKSPACE_PROTECTED_DIRS: &[&str] = &["sessions"];
+
 fn agent_root(config: &Config, agent_alias: &str) -> PathBuf {
     config.agent_workspace_dir(agent_alias)
 }
@@ -181,13 +202,57 @@ fn protected_file(rel: &str) -> bool {
     AGENT_WORKSPACE_PROTECTED_FILES.contains(&rel)
 }
 
-/// One-level listing inside the agent's workspace.
+fn protected_dir(rel: &str) -> bool {
+    AGENT_WORKSPACE_PROTECTED_DIRS.contains(&rel)
+}
+
+/// One-level listing inside the agent's workspace. Top-level entries that
+/// match the protected file/dir lists are tagged so the dashboard hides
+/// destructive affordances; server-side mutations still re-check.
 pub fn list_agent_workspace(
     config: &Config,
     agent_alias: &str,
     raw: &str,
 ) -> Result<BrowseResult, BrowseError> {
-    list_under_root(&agent_root(config, agent_alias), raw)
+    let mut result = list_under_root(&agent_root(config, agent_alias), raw)?;
+    if raw.trim_matches('/').is_empty() {
+        for entry in &mut result.entries {
+            entry.protected = match entry.kind {
+                "file" => protected_file(&entry.name),
+                "dir" => protected_dir(&entry.name),
+                _ => false,
+            };
+        }
+    }
+    Ok(result)
+}
+
+/// Create a directory under the agent's workspace. Idempotent — if the
+/// path already exists as a directory, returns Ok. Rejects path traversal
+/// and refuses to create over an existing file or to overwrite a protected
+/// top-level file path.
+pub fn make_agent_workspace_directory(
+    config: &Config,
+    agent_alias: &str,
+    raw: &str,
+) -> Result<(), BrowseError> {
+    let trimmed = raw.trim_matches('/');
+    if trimmed.is_empty() {
+        return Err(BrowseError::NotFound(raw.to_string()));
+    }
+    if protected_file(trimmed) {
+        return Err(BrowseError::ProtectedFile(trimmed.to_string()));
+    }
+    let root = agent_root(config, agent_alias);
+    let resolved: PathBuf = resolve_under(&root, raw)?;
+    if let Ok(meta) = std::fs::metadata(&resolved) {
+        if meta.is_dir() {
+            return Ok(());
+        }
+        return Err(BrowseError::NotADirectory(raw.to_string()));
+    }
+    std::fs::create_dir_all(&resolved)?;
+    Ok(())
 }
 
 /// Result of reading a file from the agent workspace.
@@ -253,6 +318,11 @@ pub fn delete_agent_workspace_path(
     if protected_file(trimmed) {
         return Err(BrowseError::ProtectedFile(trimmed.to_string()));
     }
+    if protected_dir(trimmed) {
+        return Err(BrowseError::Protected(format!(
+            "agents/{agent_alias}/workspace/{trimmed}"
+        )));
+    }
     let root = agent_root(config, agent_alias);
     let resolved: PathBuf = resolve_under(&root, raw)?;
     let metadata = match std::fs::metadata(&resolved) {
@@ -293,6 +363,16 @@ pub fn move_agent_workspace_path(
             }
             .to_string(),
         ));
+    }
+    if protected_dir(from_trimmed) || protected_dir(to_trimmed) {
+        return Err(BrowseError::Protected(format!(
+            "agents/{agent_alias}/workspace/{}",
+            if protected_dir(from_trimmed) {
+                from_trimmed
+            } else {
+                to_trimmed
+            }
+        )));
     }
     let root = agent_root(config, agent_alias);
     let src: PathBuf = resolve_under(&root, from)?;
@@ -609,5 +689,112 @@ mod tests {
         let err =
             move_agent_workspace_path(&cfg, "alpha", "notes/draft.md", "notes/sub").unwrap_err();
         assert!(matches!(err, BrowseError::NotADirectory(_)));
+    }
+
+    #[test]
+    fn list_agent_workspace_tags_protected_top_level_entries() {
+        let (dir, cfg) = workspace_fixture();
+        std::fs::create_dir_all(dir.path().join("agents/alpha/workspace/sessions")).unwrap();
+        let result = list_agent_workspace(&cfg, "alpha", "").unwrap();
+        let sessions = result
+            .entries
+            .iter()
+            .find(|e| e.name == "sessions")
+            .unwrap();
+        assert!(sessions.protected, "sessions/ must be tagged protected");
+        let identity = result
+            .entries
+            .iter()
+            .find(|e| e.name == "IDENTITY.md")
+            .unwrap();
+        assert!(identity.protected, "IDENTITY.md must be tagged protected");
+        let notes = result.entries.iter().find(|e| e.name == "notes").unwrap();
+        assert!(!notes.protected, "operator dirs must not be tagged");
+    }
+
+    #[test]
+    fn list_agent_workspace_does_not_tag_protected_names_below_root() {
+        let (dir, cfg) = workspace_fixture();
+        std::fs::create_dir_all(dir.path().join("agents/alpha/workspace/notes/sessions")).unwrap();
+        let result = list_agent_workspace(&cfg, "alpha", "notes").unwrap();
+        let sessions = result
+            .entries
+            .iter()
+            .find(|e| e.name == "sessions")
+            .unwrap();
+        assert!(
+            !sessions.protected,
+            "protection only applies at workspace root"
+        );
+    }
+
+    #[test]
+    fn delete_agent_workspace_path_refuses_protected_dir() {
+        let (dir, cfg) = workspace_fixture();
+        std::fs::create_dir_all(dir.path().join("agents/alpha/workspace/sessions")).unwrap();
+        let err = delete_agent_workspace_path(&cfg, "alpha", "sessions").unwrap_err();
+        assert!(matches!(err, BrowseError::Protected(_)));
+        assert!(dir.path().join("agents/alpha/workspace/sessions").is_dir());
+    }
+
+    #[test]
+    fn move_agent_workspace_path_refuses_protected_src_dir() {
+        let (dir, cfg) = workspace_fixture();
+        std::fs::create_dir_all(dir.path().join("agents/alpha/workspace/sessions")).unwrap();
+        let err = move_agent_workspace_path(&cfg, "alpha", "sessions", "old_sessions").unwrap_err();
+        assert!(matches!(err, BrowseError::Protected(_)));
+    }
+
+    #[test]
+    fn move_agent_workspace_path_refuses_protected_dst_dir() {
+        let (_dir, cfg) = workspace_fixture();
+        let err = move_agent_workspace_path(&cfg, "alpha", "notes", "sessions").unwrap_err();
+        assert!(matches!(err, BrowseError::Protected(_)));
+    }
+
+    #[test]
+    fn make_agent_workspace_directory_creates_nested_path() {
+        let (dir, cfg) = workspace_fixture();
+        make_agent_workspace_directory(&cfg, "alpha", "archive/2026").unwrap();
+        assert!(
+            dir.path()
+                .join("agents/alpha/workspace/archive/2026")
+                .is_dir()
+        );
+    }
+
+    #[test]
+    fn make_agent_workspace_directory_is_idempotent() {
+        let (_dir, cfg) = workspace_fixture();
+        make_agent_workspace_directory(&cfg, "alpha", "notes").unwrap();
+        make_agent_workspace_directory(&cfg, "alpha", "notes").unwrap();
+    }
+
+    #[test]
+    fn make_agent_workspace_directory_rejects_escape() {
+        let (_dir, cfg) = workspace_fixture();
+        let err = make_agent_workspace_directory(&cfg, "alpha", "../../etc").unwrap_err();
+        assert!(matches!(err, BrowseError::Escape(_)));
+    }
+
+    #[test]
+    fn make_agent_workspace_directory_refuses_over_existing_file() {
+        let (_dir, cfg) = workspace_fixture();
+        let err = make_agent_workspace_directory(&cfg, "alpha", "notes/draft.md").unwrap_err();
+        assert!(matches!(err, BrowseError::NotADirectory(_)));
+    }
+
+    #[test]
+    fn make_agent_workspace_directory_refuses_protected_file_path() {
+        let (_dir, cfg) = workspace_fixture();
+        let err = make_agent_workspace_directory(&cfg, "alpha", "IDENTITY.md").unwrap_err();
+        assert!(matches!(err, BrowseError::ProtectedFile(_)));
+    }
+
+    #[test]
+    fn make_agent_workspace_directory_refuses_empty_path() {
+        let (_dir, cfg) = workspace_fixture();
+        let err = make_agent_workspace_directory(&cfg, "alpha", "").unwrap_err();
+        assert!(matches!(err, BrowseError::NotFound(_)));
     }
 }

@@ -549,7 +549,7 @@ impl TelegramChannel {
         if config.tts.enabled {
             match super::tts::TtsManager::from_config(config) {
                 Ok(m) => self.tts_manager = Some(Arc::new(m)),
-                Err(e) => tracing::warn!("Telegram TTS disabled: {e}"),
+                Err(e) => tracing::warn!(error = ?e, "Telegram TTS disabled"),
             }
         }
         self
@@ -785,7 +785,7 @@ impl TelegramChannel {
                 tracing::warn!("Failed to register Telegram bot commands: {status} — {text}");
             }
             Err(e) => {
-                tracing::warn!("Failed to register Telegram bot commands: {e}");
+                tracing::warn!(error = ?e, "Failed to register Telegram bot commands");
             }
         }
     }
@@ -851,7 +851,7 @@ impl TelegramChannel {
                         tracing::info!("Telegram: voice reply sent ({} chars)", text.len());
                     }
                     Err(e) => {
-                        tracing::warn!("Telegram: TTS voice reply failed: {e}");
+                        tracing::warn!(error = ?e, "Telegram: TTS voice reply failed");
                     }
                 }
             });
@@ -901,7 +901,7 @@ impl TelegramChannel {
                         tracing::info!("Telegram: voice reply sent ({} chars)", text.len());
                     }
                     Err(e) => {
-                        tracing::warn!("Telegram: TTS voice reply failed: {e}");
+                        tracing::warn!(error = ?e, "Telegram: TTS voice reply failed");
                     }
                 }
             }
@@ -998,7 +998,7 @@ impl TelegramChannel {
                 Some(username)
             }
             Err(e) => {
-                tracing::warn!("Failed to fetch bot username: {e}");
+                tracing::warn!(error = ?e, "Failed to fetch bot username");
                 None
             }
         }
@@ -1415,7 +1415,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
 
         let save_dir = workspace.join("telegram_files");
         if let Err(e) = tokio::fs::create_dir_all(&save_dir).await {
-            tracing::warn!("Failed to create telegram_files directory: {e}");
+            tracing::warn!(error = ?e, "Failed to create telegram_files directory");
             return None;
         }
 
@@ -1423,7 +1423,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
         let tg_file_path = match self.get_file_path(&attachment.file_id).await {
             Ok(p) => p,
             Err(e) => {
-                tracing::warn!("Failed to get attachment file path: {e}");
+                tracing::warn!(error = ?e, "Failed to get attachment file path");
                 return None;
             }
         };
@@ -1431,7 +1431,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
         let file_data = match self.download_file(&tg_file_path).await {
             Ok(d) => d,
             Err(e) => {
-                tracing::warn!("Failed to download attachment: {e}");
+                tracing::warn!(error = ?e, "Failed to download attachment");
                 return None;
             }
         };
@@ -1448,7 +1448,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
 
         let local_path = save_dir.join(&local_filename);
         if let Err(e) = tokio::fs::write(&local_path, &file_data).await {
-            tracing::warn!("Failed to save attachment to {}: {e}", local_path.display());
+            tracing::warn!(error = ?e, "Failed to save attachment to {}", local_path.display());
             return None;
         }
 
@@ -1547,7 +1547,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
         let file_path = match self.get_file_path(&file_id).await {
             Ok(p) => p,
             Err(e) => {
-                tracing::warn!("Failed to get voice file path: {e}");
+                tracing::warn!(error = ?e, "Failed to get voice file path");
                 return None;
             }
         };
@@ -1561,7 +1561,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
         let audio_data = match self.download_file(&file_path).await {
             Ok(d) => d,
             Err(e) => {
-                tracing::warn!("Failed to download voice file: {e}");
+                tracing::warn!(error = ?e, "Failed to download voice file");
                 return None;
             }
         };
@@ -1569,7 +1569,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
         let text = match manager.transcribe(&audio_data, &file_name).await {
             Ok(t) => t,
             Err(e) => {
-                tracing::warn!("Voice transcription failed: {e}");
+                tracing::warn!(error = ?e, "Voice transcription failed");
                 return None;
             }
         };
@@ -2735,7 +2735,7 @@ impl Channel for TelegramChannel {
         let message_id_parsed = match message_id.parse::<i64>() {
             Ok(id) => id,
             Err(e) => {
-                tracing::warn!("Invalid Telegram message_id '{message_id}': {e}");
+                tracing::warn!(error = ?e, "Invalid Telegram message_id '{message_id}'");
                 return Ok(());
             }
         };
@@ -2760,7 +2760,7 @@ impl Channel for TelegramChannel {
         } else {
             let status = resp.status();
             let err = resp.text().await.unwrap_or_default();
-            tracing::debug!("Telegram editMessageText failed ({status}): {err}");
+            tracing::debug!(error = ?err, "Telegram editMessageText failed ({status})");
         }
 
         Ok(())
@@ -2788,7 +2788,7 @@ impl Channel for TelegramChannel {
         let msg_id = match message_id.parse::<i64>() {
             Ok(id) => Some(id),
             Err(e) => {
-                tracing::warn!("Invalid Telegram message_id '{message_id}': {e}");
+                tracing::warn!(error = ?e, "Invalid Telegram message_id '{message_id}'");
                 None
             }
         };
@@ -2937,7 +2937,7 @@ impl Channel for TelegramChannel {
         let message_id = match message_id.parse::<i64>() {
             Ok(id) => id,
             Err(e) => {
-                tracing::debug!("Invalid Telegram draft message_id '{message_id}': {e}");
+                tracing::debug!(error = ?e, "Invalid Telegram draft message_id '{message_id}'");
                 return Ok(());
             }
         };
@@ -3100,7 +3100,7 @@ impl Channel for TelegramChannel {
             let resp = match self.http_client().post(&url).json(&body).send().await {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::warn!("Telegram poll error: {e}");
+                    tracing::warn!(error = ?e, "Telegram poll error");
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     continue;
                 }
@@ -3109,7 +3109,7 @@ impl Channel for TelegramChannel {
             let data: serde_json::Value = match resp.json().await {
                 Ok(d) => d,
                 Err(e) => {
-                    tracing::warn!("Telegram parse error: {e}");
+                    tracing::warn!(error = ?e, "Telegram parse error");
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     continue;
                 }
@@ -3210,7 +3210,7 @@ Ensure only one `zeroclaw` process is using this bot token."
                                 .send()
                                 .await
                             {
-                                tracing::warn!("answerCallbackQuery failed: {e}");
+                                tracing::warn!(error = ?e, "answerCallbackQuery failed");
                             }
                         }
 
@@ -3269,7 +3269,7 @@ Ensure only one `zeroclaw` process is using this bot token."
         {
             Ok(Ok(resp)) => resp.status().is_success(),
             Ok(Err(e)) => {
-                tracing::debug!("Telegram health check failed: {e}");
+                tracing::debug!(error = ?e, "Telegram health check failed");
                 false
             }
             Err(_) => {

@@ -362,7 +362,7 @@ impl Channel for BlueskyChannel {
             let token = match self.get_access_jwt().await {
                 Ok(t) => t,
                 Err(e) => {
-                    tracing::warn!("Bluesky auth error: {e}");
+                    tracing::warn!(error = ?e, "Bluesky auth error");
                     continue;
                 }
             };
@@ -379,7 +379,7 @@ impl Channel for BlueskyChannel {
             {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::warn!("Bluesky poll error: {e}");
+                    tracing::warn!(error = ?e, "Bluesky poll error");
                     continue;
                 }
             };
@@ -392,7 +392,7 @@ impl Channel for BlueskyChannel {
             let listing: NotificationListResponse = match resp.json().await {
                 Ok(l) => l,
                 Err(e) => {
-                    tracing::warn!("Bluesky parse error: {e}");
+                    tracing::warn!(error = ?e, "Bluesky parse error");
                     continue;
                 }
             };
@@ -411,7 +411,7 @@ impl Channel for BlueskyChannel {
             if let Some(ref seen_at) = latest_indexed_at
                 && let Err(e) = self.update_seen(seen_at).await
             {
-                tracing::warn!("Bluesky updateSeen error: {e}");
+                tracing::warn!(error = ?e, "Bluesky updateSeen error");
             }
 
             let _ = &listing.cursor; // cursor available for pagination if needed

@@ -385,7 +385,7 @@ impl Tool for WebFetchTool {
                     // Return original standard result if Firecrawl also failed
                 }
                 Err(e) => {
-                    tracing::warn!("web_fetch: Firecrawl fallback error: {e}");
+                    tracing::warn!(error = ?e, "web_fetch: Firecrawl fallback error");
                 }
             }
         }

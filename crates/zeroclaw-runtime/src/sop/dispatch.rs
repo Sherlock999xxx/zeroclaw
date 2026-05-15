@@ -80,7 +80,7 @@ pub async fn dispatch_sop_event(
             .collect(),
         Err(e) => {
             crate::health::mark_component_error("sop_dispatch", format!("lock poisoned: {e}"));
-            warn!("SOP dispatch: engine lock poisoned during match phase: {e}");
+            warn!(error = ?e, "SOP dispatch: engine lock poisoned during match phase");
             return vec![];
         }
     };
@@ -105,7 +105,7 @@ pub async fn dispatch_sop_event(
             Ok(e) => e,
             Err(e) => {
                 crate::health::mark_component_error("sop_dispatch", format!("lock poisoned: {e}"));
-                warn!("SOP dispatch: engine lock poisoned during start phase: {e}");
+                warn!(error = ?e, "SOP dispatch: engine lock poisoned during start phase");
                 return vec![];
             }
         };
@@ -131,7 +131,7 @@ pub async fn dispatch_sop_event(
                     });
                 }
                 Err(e) => {
-                    info!("SOP dispatch: skipped '{}': {e}", sop_name);
+                    info!(error = ?e, "SOP dispatch: skipped '{}'", sop_name);
                     results.push(DispatchResult::Skipped {
                         sop_name: sop_name.clone(),
                         reason: e.to_string(),
@@ -144,7 +144,7 @@ pub async fn dispatch_sop_event(
     // Phase 3: audit (async, no lock)
     for run in &started_runs {
         if let Err(e) = audit.log_run_start(run).await {
-            warn!("SOP dispatch: audit log failed for run {}: {e}", run.run_id);
+            warn!(error = ?e, "SOP dispatch: audit log failed for run {}", run.run_id);
         }
     }
 
@@ -262,7 +262,7 @@ impl SopCronCache {
         let eng = match engine.lock() {
             Ok(e) => e,
             Err(e) => {
-                warn!("SopCronCache: engine lock poisoned: {e}");
+                warn!(error = ?e, "SopCronCache: engine lock poisoned");
                 return Self { schedules };
             }
         };

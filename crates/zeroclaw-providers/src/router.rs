@@ -339,7 +339,7 @@ impl ModelProvider for RouterModelProvider {
         for (name, model_provider) in &self.model_providers {
             tracing::info!(model_provider = name, "Warming up routed model_provider");
             if let Err(e) = model_provider.warmup().await {
-                tracing::warn!(model_provider = name, "Warmup failed (non-fatal): {e}");
+                tracing::warn!(error = ?e, model_provider = name, "Warmup failed (non-fatal)");
             }
         }
         Ok(())

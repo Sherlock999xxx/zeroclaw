@@ -676,7 +676,7 @@ impl WeChatChannel {
     /// Save account data to disk.
     fn save_account_data(&self, token: &str, account_id: &str, user_id: Option<&str>) {
         if let Err(e) = std::fs::create_dir_all(&self.state_dir) {
-            tracing::warn!("WeChat: failed to create state dir: {e}");
+            tracing::warn!(error = ?e, "WeChat: failed to create state dir");
             return;
         }
         let data = AccountData {
@@ -690,17 +690,17 @@ impl WeChatChannel {
         match serde_json::to_string_pretty(&data) {
             Ok(json) => {
                 if let Err(e) = write_private(&path, json.as_bytes()) {
-                    tracing::warn!("WeChat: failed to write account data: {e}");
+                    tracing::warn!(error = ?e, "WeChat: failed to write account data");
                 }
             }
-            Err(e) => tracing::warn!("WeChat: failed to serialize account data: {e}"),
+            Err(e) => tracing::warn!(error = ?e, "WeChat: failed to serialize account data"),
         }
     }
 
     /// Save sync cursor to disk.
     fn save_cursor(&self, cursor: &str) {
         if let Err(e) = std::fs::create_dir_all(&self.state_dir) {
-            tracing::warn!("WeChat: failed to create state dir: {e}");
+            tracing::warn!(error = ?e, "WeChat: failed to create state dir");
             return;
         }
         let data = SyncData {
@@ -710,10 +710,10 @@ impl WeChatChannel {
         match serde_json::to_string(&data) {
             Ok(json) => {
                 if let Err(e) = write_private(&path, json.as_bytes()) {
-                    tracing::warn!("WeChat: failed to write sync data: {e}");
+                    tracing::warn!(error = ?e, "WeChat: failed to write sync data");
                 }
             }
-            Err(e) => tracing::warn!("WeChat: failed to serialize sync data: {e}"),
+            Err(e) => tracing::warn!(error = ?e, "WeChat: failed to serialize sync data"),
         }
     }
 
@@ -1275,14 +1275,14 @@ impl WeChatChannel {
         let bytes = match self.download_inbound_attachment(&spec).await {
             Ok(bytes) => bytes,
             Err(err) => {
-                tracing::warn!("WeChat attachment download skipped: {err}");
+                tracing::warn!(error = ?err, "WeChat attachment download skipped");
                 return None;
             }
         };
 
         let save_dir = workspace_dir.join("wechat_files");
         if let Err(err) = tokio::fs::create_dir_all(&save_dir).await {
-            tracing::warn!("Failed to create WeChat attachment dir: {err}");
+            tracing::warn!(error = ?err, "Failed to create WeChat attachment dir");
             return None;
         }
 
@@ -1375,7 +1375,9 @@ impl WeChatChannel {
             };
             match render_login_qr(qr_payload) {
                 Ok(qr) => println!("{qr}"),
-                Err(err) => tracing::warn!("WeChat: failed to render terminal QR code: {err}"),
+                Err(err) => {
+                    tracing::warn!(error = ?err, "WeChat: failed to render terminal QR code")
+                }
             }
             if !qrcode_img_url.is_empty() {
                 println!(
@@ -1410,7 +1412,7 @@ impl WeChatChannel {
                 let resp = match poll_result {
                     Ok(Ok(r)) => r,
                     Ok(Err(e)) => {
-                        tracing::debug!("WeChat QR poll error: {e}");
+                        tracing::debug!(error = ?e, "WeChat QR poll error");
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         continue;
                     }
@@ -1423,7 +1425,7 @@ impl WeChatChannel {
                 let status: serde_json::Value = match resp.json().await {
                     Ok(v) => v,
                     Err(e) => {
-                        tracing::debug!("WeChat QR poll parse error: {e}");
+                        tracing::debug!(error = ?e, "WeChat QR poll parse error");
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         continue;
                     }
@@ -1511,7 +1513,7 @@ impl WeChatChannel {
         if let Some(ref uid) = user_id
             && let Err(e) = self.persist_allowed_identity(uid).await
         {
-            tracing::warn!("WeChat: failed to persist scanned identity {uid}: {e}");
+            tracing::warn!(error = ?e, "WeChat: failed to persist scanned identity {uid}");
         }
 
         // Persist to disk
@@ -1697,7 +1699,7 @@ impl WeChatChannel {
                         let _ = self.send_text(from_user_id, &reply, ctx.as_deref()).await;
                     }
                     Err(e) => {
-                        tracing::warn!("WeChat: pairing error: {e}");
+                        tracing::warn!(error = ?e, "WeChat: pairing error");
                     }
                 }
             }
@@ -1764,7 +1766,7 @@ impl Channel for WeChatChannel {
                 None => {
                     tracing::error!("WeChat: token lost, attempting re-login...");
                     if let Err(e) = self.ensure_logged_in().await {
-                        tracing::error!("WeChat: re-login failed: {e}");
+                        tracing::error!(error = ?e, "WeChat: re-login failed");
                         tokio::time::sleep(BACKOFF_DELAY).await;
                         continue;
                     }
@@ -1820,7 +1822,7 @@ impl Channel for WeChatChannel {
                 Ok(v) => v,
                 Err(e) => {
                     consecutive_failures += 1;
-                    tracing::warn!("WeChat getUpdates parse error: {e}");
+                    tracing::warn!(error = ?e, "WeChat getUpdates parse error");
                     if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                         consecutive_failures = 0;
                         tokio::time::sleep(BACKOFF_DELAY).await;
@@ -1849,7 +1851,7 @@ impl Channel for WeChatChannel {
                     tokio::time::sleep(SESSION_PAUSE_DURATION).await;
                     // Try to re-login
                     if let Err(e) = self.ensure_logged_in().await {
-                        tracing::error!("WeChat: re-login after session expiry failed: {e}");
+                        tracing::error!(error = ?e, "WeChat: re-login after session expiry failed");
                     }
                     consecutive_failures = 0;
                     continue;

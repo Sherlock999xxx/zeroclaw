@@ -112,7 +112,7 @@ impl TokenCache {
                 match self.refresh_token(client, &refresh_tok).await {
                     Ok(new_state) => return Ok(new_state),
                     Err(e) => {
-                        tracing::debug!("ms365: refresh token failed, re-authenticating: {e}");
+                        tracing::debug!(error = ?e, "ms365: refresh token failed, re-authenticating");
                     }
                 }
             }
@@ -322,7 +322,7 @@ impl TokenCache {
         if let Ok(json) = serde_json::to_string_pretty(state)
             && let Err(e) = std::fs::write(&self.cache_path, json)
         {
-            tracing::warn!("ms365: failed to persist token cache: {e}");
+            tracing::warn!(error = ?e, "ms365: failed to persist token cache");
         }
     }
 }

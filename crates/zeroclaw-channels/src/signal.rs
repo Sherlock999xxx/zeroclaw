@@ -395,7 +395,7 @@ impl Channel for SignalChannel {
                 let chunk = match chunk {
                     Ok(c) => c,
                     Err(e) => {
-                        tracing::debug!("Signal SSE chunk error, reconnecting: {e}");
+                        tracing::debug!(error = ?e, "Signal SSE chunk error, reconnecting");
                         break;
                     }
                 };
@@ -443,7 +443,7 @@ impl Channel for SignalChannel {
                                     }
                                 }
                                 Err(e) => {
-                                    tracing::debug!("Signal SSE parse skip: {e}");
+                                    tracing::debug!(error = ?e, "Signal SSE parse skip");
                                 }
                             }
                             current_data.clear();
@@ -477,7 +477,7 @@ impl Channel for SignalChannel {
                         }
                     }
                     Err(e) => {
-                        tracing::debug!("Signal SSE trailing parse skip: {e}");
+                        tracing::debug!(error = ?e, "Signal SSE trailing parse skip");
                     }
                 }
             }

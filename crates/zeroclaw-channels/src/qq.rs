@@ -800,7 +800,7 @@ impl QQChannel {
                     {
                         Ok(local_path) => local_path.display().to_string(),
                         Err(e) => {
-                            tracing::warn!("QQ: failed to download attachment: {e}");
+                            tracing::warn!(error = ?e, "QQ: failed to download attachment");
                             url.clone()
                         }
                     }

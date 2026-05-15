@@ -70,7 +70,7 @@ pub fn run_if_due(config: &MemoryConfig, workspace_dir: &Path) -> Result<()> {
     if config.audit_enabled
         && let Err(e) = prune_audit_entries(workspace_dir, config.audit_retention_days)
     {
-        tracing::debug!("audit pruning skipped: {e}");
+        tracing::debug!(error = ?e, "audit pruning skipped");
     }
 
     write_state(workspace_dir, &report)?;

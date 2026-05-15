@@ -227,7 +227,7 @@ impl Channel for TwitterChannel {
                     let data: serde_json::Value = match resp.json().await {
                         Ok(d) => d,
                         Err(e) => {
-                            tracing::warn!("Twitter: failed to parse mentions response: {e}");
+                            tracing::warn!(error = ?e, "Twitter: failed to parse mentions response");
                             tokio::time::sleep(poll_interval).await;
                             continue;
                         }
@@ -340,10 +340,10 @@ impl Channel for TwitterChannel {
                         continue;
                     }
                     let err = resp.text().await.unwrap_or_default();
-                    tracing::warn!("Twitter: mentions request failed ({status}): {err}");
+                    tracing::warn!(error = ?err, "Twitter: mentions request failed ({status})");
                 }
                 Err(e) => {
-                    tracing::warn!("Twitter: mentions request error: {e}");
+                    tracing::warn!(error = ?e, "Twitter: mentions request error");
                 }
             }
 
