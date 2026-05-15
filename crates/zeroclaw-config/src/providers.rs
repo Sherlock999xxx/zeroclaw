@@ -628,3 +628,197 @@ pub struct Providers {
     #[nested]
     pub transcription: TranscriptionProviders,
 }
+
+// ── Cost-rate wrappers ──────────────────────────────────────────────────────
+//
+// Same per-provider-type slot layout as the typed-provider wrappers above,
+// but the value type is the per-resource rate struct instead of the
+// per-alias provider config. Each subsection's TOML path mirrors its
+// `[providers.*]` counterpart with the trailing `<alias>` segment replaced
+// by the resource the rate prices (model id, voice id, etc.).
+//
+// DRY:
+//   - `ModelCostRatesByProvider` consumes the same `for_each_model_provider_slot!`
+//     macro as `ModelProviders`, so adding a new provider type updates
+//     both structs from a single edit.
+//   - `TtsCostRatesByProvider` and `TranscriptionCostRatesByProvider`
+//     mirror their `TtsProviders` / `TranscriptionProviders` slot lists
+//     by hand (those wrappers are themselves hand-rolled because the
+//     closed family lists were small enough to not warrant a macro).
+
+macro_rules! emit_model_cost_rates_struct {
+    ($(($field:ident, $type_str:literal, $cfg_ty:ty)),+ $(,)?) => {
+        /// `[cost.rates.providers.models.<type>.<model>]` — token-cost rates
+        /// per (provider type, model). One slot per provider type; each
+        /// slot is a `HashMap<model_id, ModelCostRates>`. The slot list
+        /// matches `ModelProviders` byte-for-byte (same source macro).
+        #[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+        #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+        #[prefix = "cost.rates.providers.models"]
+        pub struct ModelCostRatesByProvider {
+            $(
+                #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+                #[nested]
+                pub $field: HashMap<String, super::schema::ModelCostRates>,
+            )+
+        }
+
+        impl ModelCostRatesByProvider {
+            /// Lookup rates by `(provider_type, model_id)`.
+            #[must_use]
+            pub fn get(
+                &self,
+                provider_type: &str,
+                model_id: &str,
+            ) -> Option<&super::schema::ModelCostRates> {
+                match provider_type {
+                    $(
+                        $type_str => self.$field.get(model_id),
+                    )+
+                    _ => None,
+                }
+            }
+
+            /// Iterate every priced model across every slot, yielding
+            /// `(provider_type, model_id, &rates)` triples. Mirrors
+            /// `ModelProviders::iter_entries` so callers can walk both
+            /// the providers and the rate sheet with the same loop shape.
+            pub fn iter_entries(
+                &self,
+            ) -> impl Iterator<Item = (&'static str, &str, &super::schema::ModelCostRates)> {
+                let mut out: Vec<(&'static str, &str, &super::schema::ModelCostRates)> = Vec::new();
+                $(
+                    for (model_id, rates) in &self.$field {
+                        out.push(($type_str, model_id.as_str(), rates));
+                    }
+                )+
+                out.into_iter()
+            }
+
+            /// True when no slot has any priced model.
+            pub fn is_empty(&self) -> bool {
+                $(self.$field.is_empty())&&+
+            }
+        }
+    };
+}
+for_each_model_provider_slot!(emit_model_cost_rates_struct);
+
+/// Slot list for TTS providers. Single source of truth shared between
+/// the typed-provider wrapper and the cost-rates wrapper — adding a TTS
+/// family is a one-line edit here.
+#[macro_export]
+macro_rules! for_each_tts_provider_slot {
+    ($mac:ident, $rate_ty:ty) => {
+        $mac! {
+            $rate_ty,
+            (openai, "openai"),
+            (elevenlabs, "elevenlabs"),
+            (google, "google"),
+            (edge, "edge"),
+            (piper, "piper"),
+        }
+    };
+}
+
+/// Slot list for transcription providers.
+#[macro_export]
+macro_rules! for_each_transcription_provider_slot {
+    ($mac:ident, $rate_ty:ty) => {
+        $mac! {
+            $rate_ty,
+            (groq, "groq"),
+            (openai, "openai"),
+            (deepgram, "deepgram"),
+            (assemblyai, "assemblyai"),
+            (google, "google"),
+            (local_whisper, "local_whisper"),
+        }
+    };
+}
+
+/// Emit a `<Family>CostRatesByProvider` struct from a slot list. Used
+/// by both the TTS and transcription cost-rate wrappers — every field,
+/// every dispatch arm, every iter row expands from one slot list. No
+/// hand-typed `match "openai" => self.openai` tables anywhere.
+macro_rules! emit_simple_cost_rates_struct {
+    (
+        $struct_name:ident,
+        $rate_ty:ty,
+        $prefix:literal,
+        $resource_doc:literal,
+        $(($field:ident, $type_str:literal)),+ $(,)?
+    ) => {
+        #[doc = concat!("`", $prefix, ".<type>.<", $resource_doc, ">`")]
+        ///  — per-(provider type, resource) cost rates.
+        #[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+        #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+        #[prefix = $prefix]
+        pub struct $struct_name {
+            $(
+                #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+                #[nested]
+                pub $field: HashMap<String, $rate_ty>,
+            )+
+        }
+
+        impl $struct_name {
+            /// Lookup rates by `(provider_type, resource_id)`.
+            #[must_use]
+            pub fn get(&self, provider_type: &str, resource_id: &str) -> Option<&$rate_ty> {
+                match provider_type {
+                    $($type_str => self.$field.get(resource_id),)+
+                    _ => None,
+                }
+            }
+
+            /// Iterate `(provider_type, resource_id, &rates)` across every
+            /// slot.
+            pub fn iter_entries(
+                &self,
+            ) -> impl Iterator<Item = (&'static str, &str, &$rate_ty)> {
+                let mut out: Vec<(&'static str, &str, &$rate_ty)> = Vec::new();
+                $(
+                    for (resource_id, rates) in &self.$field {
+                        out.push(($type_str, resource_id.as_str(), rates));
+                    }
+                )+
+                out.into_iter()
+            }
+
+            /// True when no slot has any priced resource.
+            pub fn is_empty(&self) -> bool {
+                $(self.$field.is_empty())&&+
+            }
+        }
+    };
+}
+
+macro_rules! emit_tts_cost_rates_struct {
+    ($rate_ty:ty, $($slot:tt),+ $(,)?) => {
+        emit_simple_cost_rates_struct! {
+            TtsCostRatesByProvider,
+            $rate_ty,
+            "cost.rates.providers.tts",
+            "voice",
+            $($slot),+
+        }
+    };
+}
+for_each_tts_provider_slot!(emit_tts_cost_rates_struct, super::schema::TtsCostRates);
+
+macro_rules! emit_transcription_cost_rates_struct {
+    ($rate_ty:ty, $($slot:tt),+ $(,)?) => {
+        emit_simple_cost_rates_struct! {
+            TranscriptionCostRatesByProvider,
+            $rate_ty,
+            "cost.rates.providers.transcription",
+            "model",
+            $($slot),+
+        }
+    };
+}
+for_each_transcription_provider_slot!(
+    emit_transcription_cost_rates_struct,
+    super::schema::TranscriptionCostRates
+);

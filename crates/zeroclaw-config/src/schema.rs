@@ -4845,17 +4845,17 @@ pub struct CostRatesConfig {
 }
 
 impl CostRatesConfig {
-    /// Lookup model token rates by `(provider_type, model)`. Returns
-    /// `None` when the operator hasn't priced this pair.
+    /// Lookup model token rates by `(provider_type, model)`. Dispatch
+    /// lives on the typed wrapper — see [`crate::providers::ModelCostRatesByProvider`].
     #[must_use]
     pub fn model_rates(&self, provider_type: &str, model: &str) -> Option<&ModelCostRates> {
-        self.providers.models.get(provider_type)?.get(model)
+        self.providers.models.get(provider_type, model)
     }
 
-    /// Lookup TTS rates by `(provider_type, model)`.
+    /// Lookup TTS rates by `(provider_type, voice)`.
     #[must_use]
-    pub fn tts_rates(&self, provider_type: &str, model: &str) -> Option<&TtsCostRates> {
-        self.providers.tts.get(provider_type)?.get(model)
+    pub fn tts_rates(&self, provider_type: &str, voice: &str) -> Option<&TtsCostRates> {
+        self.providers.tts.get(provider_type, voice)
     }
 
     /// Lookup transcription rates by `(provider_type, model)`.
@@ -4865,7 +4865,7 @@ impl CostRatesConfig {
         provider_type: &str,
         model: &str,
     ) -> Option<&TranscriptionCostRates> {
-        self.providers.transcription.get(provider_type)?.get(model)
+        self.providers.transcription.get(provider_type, model)
     }
 
     /// Lookup tool per-call rate by registered name.
@@ -4877,22 +4877,27 @@ impl CostRatesConfig {
 
 /// `[cost.rates.providers.*]` — provider-shaped rate sheets. Each field
 /// here mirrors a corresponding field on `[providers.*]` with the
-/// trailing alias segment replaced by the resource the rate prices
-/// (model id, etc.).
+/// trailing alias segment replaced by the resource the rate prices.
+/// The inner typed wrappers carry the per-provider-type slot layout
+/// and own dispatch (their slot list is the single source of truth,
+/// shared with their providers counterpart via the `for_each_*_provider_slot!`
+/// macros in [`crate::providers`]).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "cost.rates.providers"]
 pub struct ProviderCostRates {
     /// `[cost.rates.providers.models.<type>.<model>]`.
     #[serde(default)]
-    pub models: std::collections::HashMap<String, std::collections::HashMap<String, ModelCostRates>>,
-    /// `[cost.rates.providers.tts.<type>.<model>]`.
+    #[nested]
+    pub models: crate::providers::ModelCostRatesByProvider,
+    /// `[cost.rates.providers.tts.<type>.<voice>]`.
     #[serde(default)]
-    pub tts: std::collections::HashMap<String, std::collections::HashMap<String, TtsCostRates>>,
+    #[nested]
+    pub tts: crate::providers::TtsCostRatesByProvider,
     /// `[cost.rates.providers.transcription.<type>.<model>]`.
     #[serde(default)]
-    pub transcription:
-        std::collections::HashMap<String, std::collections::HashMap<String, TranscriptionCostRates>>,
+    #[nested]
+    pub transcription: crate::providers::TranscriptionCostRatesByProvider,
 }
 
 /// Token-cost rates for a single chat / completion model, in USD per

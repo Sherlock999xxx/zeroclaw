@@ -62,7 +62,7 @@ pub async fn handle_command(cmd: crate::PeripheralCommands, config: &Config) -> 
                 path: path_opt,
                 baud: 115_200,
             });
-            cfg.save().await?;
+            Box::pin(cfg.save()).await?;
             println!("Added {} at {}. Restart daemon to apply.", board, path);
         }
         #[cfg(feature = "hardware")]

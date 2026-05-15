@@ -6685,18 +6685,18 @@ pub async fn start_channels(
                 // rate sheet wins on conflict — it's the forward-looking
                 // surface, the legacy per-alias `pricing` table is the
                 // fallback for installs that haven't migrated.
-                for (type_k, models) in &config.cost.rates.providers.models {
-                    let slot = by_type.entry(type_k.clone()).or_default();
-                    for (model_k, rates) in models {
-                        if let Some(input) = rates.input_per_mtok {
-                            slot.insert(format!("{model_k}.input"), input);
-                        }
-                        if let Some(output) = rates.output_per_mtok {
-                            slot.insert(format!("{model_k}.output"), output);
-                        }
-                        if let Some(cached) = rates.cached_input_per_mtok {
-                            slot.insert(format!("{model_k}.cached_input"), cached);
-                        }
+                for (provider_type, model_id, rates) in
+                    config.cost.rates.providers.models.iter_entries()
+                {
+                    let slot = by_type.entry(provider_type.to_string()).or_default();
+                    if let Some(input) = rates.input_per_mtok {
+                        slot.insert(format!("{model_id}.input"), input);
+                    }
+                    if let Some(output) = rates.output_per_mtok {
+                        slot.insert(format!("{model_id}.output"), output);
+                    }
+                    if let Some(cached) = rates.cached_input_per_mtok {
+                        slot.insert(format!("{model_id}.cached_input"), cached);
                     }
                 }
                 ChannelCostTrackingState {
