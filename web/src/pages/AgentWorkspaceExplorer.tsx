@@ -6,11 +6,14 @@ import {
   Edit2,
   FileText,
   FolderOpen,
+  FolderPlus,
+  Lock,
   RefreshCw,
   Trash2,
 } from 'lucide-react';
 import {
   ApiError,
+  createAgentWorkspaceDirectory,
   deleteAgentWorkspacePath,
   listAgentWorkspace,
   moveAgentWorkspacePath,
@@ -116,6 +119,31 @@ export default function AgentWorkspaceExplorer() {
     }
   };
 
+  const createDirectory = async () => {
+    const name = window.prompt(
+      `New folder name (under agents/${alias}/workspace/${cwd ? `${cwd}/` : ''}):`,
+      '',
+    );
+    if (!name) return;
+    const trimmed = name.trim().replace(/^\/+|\/+$/g, '');
+    if (!trimmed) return;
+    if (trimmed.includes('..')) {
+      setError("Folder name cannot contain '..'");
+      return;
+    }
+    const full = cwd ? `${cwd}/${trimmed}` : trimmed;
+    setBusy(full);
+    setError(null);
+    try {
+      await createAgentWorkspaceDirectory(alias, full);
+      setReloadTick((n) => n + 1);
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const renamePath = async (name: string) => {
     const from = cwd ? `${cwd}/${name}` : name;
     const next = window.prompt(`Rename "${name}" to:`, name);
@@ -160,14 +188,25 @@ export default function AgentWorkspaceExplorer() {
         >
           agents/{alias}/workspace/{cwd}
         </code>
-        <button
-          type="button"
-          onClick={() => setReloadTick((n) => n + 1)}
-          className="btn-icon ml-auto"
-          title="Refresh"
-        >
-          <RefreshCw className="h-4 w-4" />
-        </button>
+        <div className="ml-auto inline-flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void createDirectory()}
+            className="btn-secondary inline-flex items-center gap-1.5 text-sm px-3 py-1.5"
+            title="Create a new folder in the current directory"
+          >
+            <FolderPlus className="h-4 w-4" />
+            New folder
+          </button>
+          <button
+            type="button"
+            onClick={() => setReloadTick((n) => n + 1)}
+            className="btn-icon"
+            title="Refresh"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -269,26 +308,38 @@ export default function AgentWorkspaceExplorer() {
                           </span>
                         )}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => void renamePath(entry.name)}
-                        disabled={busy === full}
-                        title="Rename / move"
-                        className="px-2 opacity-60 hover:opacity-100 disabled:opacity-30"
-                        style={{ color: 'var(--pc-text-muted)' }}
-                      >
-                        <Edit2 className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void deletePath(entry.name, entry.kind)}
-                        disabled={busy === full}
-                        title="Delete"
-                        className="px-2 opacity-60 hover:opacity-100 disabled:opacity-30"
-                        style={{ color: 'var(--color-status-error)' }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {entry.protected ? (
+                        <span
+                          className="px-2 flex items-center"
+                          title="Protected — owned by the runtime, cannot be renamed or deleted from the dashboard"
+                          style={{ color: 'var(--pc-text-faint)' }}
+                        >
+                          <Lock className="h-3.5 w-3.5" />
+                        </span>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => void renamePath(entry.name)}
+                            disabled={busy === full}
+                            title="Rename / move"
+                            className="px-2 opacity-60 hover:opacity-100 disabled:opacity-30"
+                            style={{ color: 'var(--pc-text-muted)' }}
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void deletePath(entry.name, entry.kind)}
+                            disabled={busy === full}
+                            title="Delete"
+                            className="px-2 opacity-60 hover:opacity-100 disabled:opacity-30"
+                            style={{ color: 'var(--color-status-error)' }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </li>
                 );

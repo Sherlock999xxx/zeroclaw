@@ -832,8 +832,22 @@ pub async fn handle_api_memory_list(
         let query = params.query.as_deref().unwrap_or("");
         let since = params.since.as_deref();
         let until = params.until.as_deref();
+        // The Memory::recall trait has no category parameter — every backend
+        // (Markdown, SQLite, Qdrant, …) implements it the same way. To keep
+        // search + category composable across all of them, post-filter here
+        // on the entries `recall()` returned rather than threading category
+        // into the trait surface.
         match mem.recall(query, 50, None, since, until).await {
-            Ok(entries) => Json(serde_json::json!({"entries": entries})).into_response(),
+            Ok(entries) => {
+                let entries = match params.category.as_deref() {
+                    Some(cat) => entries
+                        .into_iter()
+                        .filter(|e| e.category.to_string() == cat)
+                        .collect(),
+                    None => entries,
+                };
+                Json(serde_json::json!({"entries": entries})).into_response()
+            }
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": format!("Memory recall failed: {e}")})),
@@ -1009,7 +1023,7 @@ pub async fn handle_api_channels(
                 "type": info.channel_type,
                 "alias": info.alias,
                 "owning_agent": info.owning_agent,
-                "enabled": true,
+                "enabled": info.enabled,
                 "status": "active",
                 "message_count": 0,
                 "last_message_at": null,

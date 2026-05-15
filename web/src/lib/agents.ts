@@ -99,7 +99,7 @@ export async function loadAgentSummaries(): Promise<AgentSummary[]> {
       };
       return {
         alias,
-        enabled: Boolean(entryValue(lookup('enabled') ?? { populated: false })),
+        enabled: entryValue(lookup('enabled') ?? { populated: false }) === 'true',
         modelProvider: stringField('model-provider'),
         channels: entryAsStringArray(lookup('channels')),
         riskProfile: stringField('risk-profile'),

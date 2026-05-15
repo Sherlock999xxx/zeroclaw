@@ -4,6 +4,7 @@ import {
   Clock,
   Globe,
   Activity,
+  ArrowUpDown,
   DollarSign,
   Radio,
   LayoutDashboard,
@@ -21,6 +22,7 @@ import {
   Cpu,
   MemoryStick,
   Brain,
+  Search,
 } from 'lucide-react';
 import type {
   StatusResponse,
@@ -565,6 +567,27 @@ function OverviewTab({
 // Sessions Tab
 // ---------------------------------------------------------------------------
 
+type SessionSort =
+  | 'activity-desc'
+  | 'activity-asc'
+  | 'created-desc'
+  | 'created-asc'
+  | 'messages-desc'
+  | 'messages-asc';
+
+const SESSION_SORT_OPTIONS: { value: SessionSort; label: string }[] = [
+  { value: 'activity-desc', label: 'Recent activity' },
+  { value: 'activity-asc', label: 'Oldest activity' },
+  { value: 'created-desc', label: 'Newest first' },
+  { value: 'created-asc', label: 'Oldest first' },
+  { value: 'messages-desc', label: 'Busiest' },
+  { value: 'messages-asc', label: 'Quietest' },
+];
+
+function isSessionSort(v: string): v is SessionSort {
+  return SESSION_SORT_OPTIONS.some((o) => o.value === v);
+}
+
 function SessionsTab() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
@@ -572,7 +595,10 @@ function SessionsTab() {
   const [searchParams, setSearchParams] = useSearchParams();
   const agentFilter = searchParams.get('agent') ?? '';
   const channelFilter = searchParams.get('channel') ?? '';
-  const setFilter = (key: 'agent' | 'channel', value: string) =>
+  const searchQuery = searchParams.get('q') ?? '';
+  const sortRaw = searchParams.get('sort') ?? '';
+  const sortBy: SessionSort = isSessionSort(sortRaw) ? sortRaw : 'activity-desc';
+  const setFilter = (key: 'agent' | 'channel' | 'q' | 'sort', value: string) =>
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
@@ -584,6 +610,9 @@ function SessionsTab() {
     );
   const setAgentFilter = (v: string) => setFilter('agent', v);
   const setChannelFilter = (v: string) => setFilter('channel', v);
+  const setSearchQuery = (v: string) => setFilter('q', v);
+  const setSortBy = (v: SessionSort) =>
+    setFilter('sort', v === 'activity-desc' ? '' : v);
   const [inspect, setInspect] = useState<{
     session: Session;
     messages: SessionMessageRow[] | null;
@@ -631,12 +660,44 @@ function SessionsTab() {
   }, [sessions]);
 
   const visible = useMemo(() => {
-    return sessions.filter((s) => {
+    const needle = searchQuery.trim().toLowerCase();
+    const filtered = sessions.filter((s) => {
       if (agentFilter && s.agent_alias !== agentFilter) return false;
       if (channelFilter && s.channel_id !== channelFilter) return false;
+      if (needle) {
+        const haystack = [
+          s.session_id,
+          s.session_key,
+          s.name ?? '',
+          s.agent_alias ?? '',
+          s.channel_id ?? '',
+        ]
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(needle)) return false;
+      }
       return true;
     });
-  }, [sessions, agentFilter, channelFilter]);
+    const sorted = [...filtered];
+    sorted.sort((a, b) => {
+      switch (sortBy) {
+        case 'activity-asc':
+          return a.last_activity.localeCompare(b.last_activity);
+        case 'created-desc':
+          return b.created_at.localeCompare(a.created_at);
+        case 'created-asc':
+          return a.created_at.localeCompare(b.created_at);
+        case 'messages-desc':
+          return b.message_count - a.message_count;
+        case 'messages-asc':
+          return a.message_count - b.message_count;
+        case 'activity-desc':
+        default:
+          return b.last_activity.localeCompare(a.last_activity);
+      }
+    });
+    return sorted;
+  }, [sessions, agentFilter, channelFilter, searchQuery, sortBy]);
 
   const openInspect = (session: Session) => {
     setInspect({ session, messages: null, error: null });
@@ -725,6 +786,42 @@ function SessionsTab() {
 
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <div className="relative">
+            <Search
+              className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5"
+              style={{ color: 'var(--pc-text-faint)' }}
+            />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search…"
+              className="input-electric pl-7 pr-2 py-1 text-xs w-40"
+              title="Substring match on id, key, name, agent, channel"
+              aria-label="Search sessions"
+            />
+          </div>
+          <div className="relative">
+            <ArrowUpDown
+              className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5"
+              style={{ color: 'var(--pc-text-faint)' }}
+            />
+            <select
+              value={sortBy}
+              onChange={(e) =>
+                setSortBy(e.target.value as SessionSort)
+              }
+              className="input-electric pl-7 pr-6 py-1 text-xs appearance-none cursor-pointer"
+              title="Sort sessions"
+              aria-label="Sort sessions"
+            >
+              {SESSION_SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="relative">
             <Bot
               className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5"
               style={{ color: 'var(--pc-text-faint)' }}
@@ -769,7 +866,7 @@ function SessionsTab() {
         <p className="text-sm py-8 text-center" style={{ color: 'var(--pc-text-faint)' }}>
           {sessions.length === 0
             ? t('dashboard.no_sessions')
-            : 'No sessions match the current filters'}
+            : 'No sessions match the current search and filters'}
         </p>
       ) : (
         <div className="space-y-2 overflow-y-auto max-h-[32rem]">
@@ -1533,6 +1630,19 @@ function CostTab({ cost }: { cost: CostSummary }) {
 // for creating new rows; this tab is the cross-agent inspection surface.
 // ---------------------------------------------------------------------------
 
+type MemorySort = 'newest' | 'oldest' | 'key-asc' | 'key-desc';
+
+const MEMORY_SORT_OPTIONS: { value: MemorySort; label: string }[] = [
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'key-asc', label: 'Key A → Z' },
+  { value: 'key-desc', label: 'Key Z → A' },
+];
+
+function isMemorySort(v: string): v is MemorySort {
+  return MEMORY_SORT_OPTIONS.some((o) => o.value === v);
+}
+
 function MemoriesTab() {
   const [entries, setEntries] = useState<MemoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1540,6 +1650,17 @@ function MemoriesTab() {
   const [searchParams, setSearchParams] = useSearchParams();
   const agentFilter = searchParams.get('agent') ?? '';
   const categoryFilter = searchParams.get('category') ?? '';
+  const searchQuery = searchParams.get('q') ?? '';
+  const sortRaw = searchParams.get('sort') ?? '';
+  const sortBy: MemorySort = isMemorySort(sortRaw) ? sortRaw : 'newest';
+  // Debounced query so each keystroke doesn't fire a recall request to the
+  // backend (which then hits the configured memory store — markdown read,
+  // sqlite scan, qdrant vector search, etc.).
+  const [debouncedQuery, setDebouncedQuery] = useState(searchQuery);
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebouncedQuery(searchQuery), 250);
+    return () => window.clearTimeout(id);
+  }, [searchQuery]);
   const [knownAgents, setKnownAgents] = useState<string[]>([]);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -1547,6 +1668,7 @@ function MemoriesTab() {
   const [formKey, setFormKey] = useState('');
   const [formContent, setFormContent] = useState('');
   const [formCategory, setFormCategory] = useState('');
+  const [formAgent, setFormAgent] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -1558,7 +1680,7 @@ function MemoriesTab() {
       return next;
     });
 
-  const setFilter = (key: 'agent' | 'category', value: string) =>
+  const setFilter = (key: 'agent' | 'category' | 'q' | 'sort', value: string) =>
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
@@ -1568,10 +1690,17 @@ function MemoriesTab() {
       },
       { replace: true },
     );
+  const setSearchQuery = (v: string) => setFilter('q', v);
+  const setSortBy = (v: MemorySort) =>
+    setFilter('sort', v === 'newest' ? '' : v);
 
   const reload = useCallback(() => {
     setLoading(true);
-    getMemory(undefined, categoryFilter || undefined, agentFilter || undefined)
+    getMemory(
+      debouncedQuery.trim() || undefined,
+      categoryFilter || undefined,
+      agentFilter || undefined,
+    )
       .then((rows) => {
         setEntries(rows);
         setLoading(false);
@@ -1580,7 +1709,7 @@ function MemoriesTab() {
         setError(err instanceof Error ? err.message : String(err));
         setLoading(false);
       });
-  }, [agentFilter, categoryFilter]);
+  }, [agentFilter, categoryFilter, debouncedQuery]);
 
   useEffect(() => {
     reload();
@@ -1600,12 +1729,34 @@ function MemoriesTab() {
     return Array.from(s).sort();
   }, [entries]);
 
+  const visibleEntries = useMemo(() => {
+    const sorted = [...entries];
+    sorted.sort((a, b) => {
+      switch (sortBy) {
+        case 'oldest':
+          return a.timestamp.localeCompare(b.timestamp);
+        case 'key-asc':
+          return a.key.localeCompare(b.key);
+        case 'key-desc':
+          return b.key.localeCompare(a.key);
+        case 'newest':
+        default:
+          return b.timestamp.localeCompare(a.timestamp);
+      }
+    });
+    return sorted;
+  }, [entries, sortBy]);
+
   const handleDelete = async (entry: MemoryEntry) => {
     if (deleting) return;
     if (!window.confirm(`Delete memory ${entry.key}? This cannot be undone.`)) return;
     setDeleting(entry.id);
     try {
-      await deleteMemory(entry.key);
+      // Per-agent rows resolve through the agent's own memory backend; the
+      // install-wide entries (agent_alias == null) hit the gateway's default
+      // handle. Without this, deleting a per-agent row from the dashboard
+      // hits the wrong backend and silently no-ops.
+      await deleteMemory(entry.key, entry.agent_alias ?? undefined);
       setEntries((prev) => prev.filter((e) => e.id !== entry.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1626,11 +1777,13 @@ function MemoriesTab() {
         formKey.trim(),
         formContent.trim(),
         formCategory.trim() || undefined,
+        formAgent.trim() || undefined,
       );
       setShowAddForm(false);
       setFormKey('');
       setFormContent('');
       setFormCategory('');
+      setFormAgent('');
       reload();
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
@@ -1684,13 +1837,20 @@ function MemoriesTab() {
           className="text-xs font-mono px-2 py-0.5 rounded-full"
           style={{ background: 'rgba(var(--pc-accent-rgb), 0.1)', color: 'var(--pc-accent)' }}
         >
-          {entries.length}
+          {visibleEntries.length}
+          {visibleEntries.length !== entries.length ? ` / ${entries.length}` : ''}
         </span>
         <button
           type="button"
           onClick={() => {
             setShowAddForm(true);
             setFormError(null);
+            // Default the modal's agent select to whichever agent the
+            // list is currently filtered to. Operators who narrowed the
+            // view to "clamps" almost always want their new row written
+            // there too; the alternative is forgetting to pick and
+            // landing on the install-wide backend.
+            setFormAgent(agentFilter);
           }}
           className="btn-electric text-xs ml-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg"
           title="Add a memory entry"
@@ -1700,6 +1860,40 @@ function MemoriesTab() {
         </button>
 
         <div className="ml-auto flex items-center gap-2 flex-wrap">
+          <div className="relative">
+            <Search
+              className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5"
+              style={{ color: 'var(--pc-text-faint)' }}
+            />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search…"
+              className="input-electric pl-7 pr-2 py-1 text-xs w-40"
+              title="Backend-side recall — searches across the configured memory store. Combined with the agent and category filters."
+              aria-label="Search memories"
+            />
+          </div>
+          <div className="relative">
+            <ArrowUpDown
+              className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5"
+              style={{ color: 'var(--pc-text-faint)' }}
+            />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as MemorySort)}
+              className="input-electric pl-7 pr-6 py-1 text-xs appearance-none cursor-pointer"
+              title="Sort memories"
+              aria-label="Sort memories"
+            >
+              {MEMORY_SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="relative">
             <Bot
               className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5"
@@ -1741,13 +1935,13 @@ function MemoriesTab() {
         </div>
       </div>
 
-      {entries.length === 0 ? (
+      {visibleEntries.length === 0 ? (
         <p className="text-sm py-8 text-center" style={{ color: 'var(--pc-text-faint)' }}>
-          No memories match the current filters
+          No memories match the current search and filters
         </p>
       ) : (
         <div className="space-y-2 overflow-y-auto max-h-[32rem]">
-          {entries.map((entry) => (
+          {visibleEntries.map((entry) => (
             <div
               key={entry.id}
               className="flex items-start justify-between gap-3 py-3 px-4 rounded-xl"
@@ -1898,6 +2092,33 @@ function MemoriesTab() {
                   placeholder="e.g. preferences, context, facts"
                   className="input-electric w-full px-3 py-2.5 text-sm"
                 />
+              </div>
+              <div>
+                <label
+                  className="block text-xs font-semibold mb-1.5 uppercase tracking-wider"
+                  style={{ color: 'var(--pc-text-secondary)' }}
+                >
+                  Agent (optional)
+                </label>
+                <select
+                  value={formAgent}
+                  onChange={(e) => setFormAgent(e.target.value)}
+                  className="input-electric w-full px-3 py-2.5 text-sm appearance-none cursor-pointer"
+                >
+                  <option value="">Install-wide (no agent attribution)</option>
+                  {knownAgents.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+                <p
+                  className="text-[11px] mt-1"
+                  style={{ color: 'var(--pc-text-faint)' }}
+                >
+                  Picks which agent's memory backend the row lands in. Leave
+                  blank to write to the gateway's default backend.
+                </p>
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">

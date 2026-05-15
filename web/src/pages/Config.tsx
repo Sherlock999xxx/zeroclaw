@@ -924,13 +924,16 @@ function agentSettingsTabs(
   );
 
   const generalKeys = new Set([
-    'model-provider',
     'risk-profile',
     'runtime-profile',
+  ]);
+  const providerKeys = new Set([
+    'model-provider',
     'tts-provider',
     'transcription-provider',
   ]);
   const inGeneral = (p: string) => generalKeys.has(leaf(p));
+  const inProviders = (p: string) => providerKeys.has(leaf(p));
   const inChannels = (p: string) => leaf(p) === 'channels';
   const inBundles = (p: string) => {
     const k = leaf(p);
@@ -941,6 +944,7 @@ function agentSettingsTabs(
   const inWorkspace = (p: string) => branch(p, 'workspace');
   const explicit = (p: string) =>
     inGeneral(p) ||
+    inProviders(p) ||
     inChannels(p) ||
     inBundles(p) ||
     inCron(p) ||
@@ -968,6 +972,7 @@ function agentSettingsTabs(
 
   return [
     { key: 'general', label: 'General', render: () => makeForm(inGeneral, 'general') },
+    { key: 'providers', label: 'Providers', render: () => makeForm(inProviders, 'providers') },
     { key: 'channels', label: 'Channels', render: () => makeForm(inChannels, 'channels') },
     { key: 'bundles', label: 'Bundles', render: () => makeForm(inBundles, 'bundles') },
     { key: 'cron', label: 'Cron', render: () => makeForm(inCron, 'cron') },

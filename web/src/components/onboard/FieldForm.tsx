@@ -629,6 +629,22 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(function FieldForm
     );
   }
 
+  // When the parent's `includePath` predicate excludes every entry and the
+  // user hasn't typed a filter, the section truly has nothing to configure
+  // (e.g. `[tunnel]` with `tunnel_provider = "none"` has only the
+  // discriminator field, which the parent excludes). Collapse the whole
+  // form in that case so the operator doesn't see an empty "Foo settings"
+  // header above a useless "No fields match." line.
+  const trulyEmpty =
+    !loading
+    && entries.length > 0
+    && visibleEntries.length === 0
+    && filter.trim().length === 0;
+
+  if (trulyEmpty && !enabledEntry) {
+    return null;
+  }
+
   return (
     <div className="flex flex-col gap-4 pb-20 flex-1 min-h-full">
       {/* flex-1 + min-h-full stretches the form to fill the scroll area so
@@ -648,7 +664,7 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(function FieldForm
           {enabledEntry && (
             <EntityEnabledToggle
               prefix={prefix}
-              enabled={Boolean(entryValue(enabledEntry))}
+              enabled={entryValue(enabledEntry) === 'true'}
               onChange={(next) => {
                 setEntries((prev) =>
                   prev.map((e) =>
@@ -695,7 +711,15 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(function FieldForm
               className="px-4 py-6 text-sm text-center"
               style={{ color: 'var(--pc-text-muted)' }}
             >
-              No fields match <code style={{ color: 'var(--pc-text-faint)' }}>{filter}</code>.
+              {filter.trim().length === 0 ? (
+                <>No configurable settings for this selection.</>
+              ) : (
+                <>
+                  No fields match{' '}
+                  <code style={{ color: 'var(--pc-text-faint)' }}>{filter}</code>
+                  .
+                </>
+              )}
             </div>
           ) : null}
           {visibleEntries.map((f) => (

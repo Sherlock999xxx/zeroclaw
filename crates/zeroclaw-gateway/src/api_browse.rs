@@ -14,7 +14,8 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use zeroclaw_runtime::browse::{
     BrowseEntry, BrowseError, delete_agent_workspace_path, list_agent_workspace, list_directory,
-    make_directory, move_agent_workspace_path, read_agent_workspace_file, remove_directory,
+    make_agent_workspace_directory, make_directory, move_agent_workspace_path,
+    read_agent_workspace_file, remove_directory,
 };
 
 use super::AppState;
@@ -218,6 +219,23 @@ pub async fn handle_agent_workspace_move(
     let config = state.config.read().clone();
     match move_agent_workspace_path(&config, &alias, &body.from, &body.to) {
         Ok(()) => Json(serde_json::json!({ "from": body.from, "to": body.to })).into_response(),
+        Err(err) => browse_error_response(err),
+    }
+}
+
+/// `POST /api/agents/{alias}/workspace/mkdir` body `{ path: "<rel>" }`.
+pub async fn handle_agent_workspace_mkdir(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(alias): AxumPath<String>,
+    Json(body): Json<BrowsePathBody>,
+) -> Response {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+    let config = state.config.read().clone();
+    match make_agent_workspace_directory(&config, &alias, &body.path) {
+        Ok(()) => Json(serde_json::json!({ "created": body.path })).into_response(),
         Err(err) => browse_error_response(err),
     }
 }

@@ -3,7 +3,6 @@ import { basePath } from '../../lib/basePath';
 import {
   Activity,
   Clock,
-  DollarSign,
   LayoutDashboard,
   MessageSquare,
   Monitor,
@@ -29,7 +28,6 @@ const navItems: NavItem[] = [
   { to: '/cron', icon: Clock, labelKey: 'nav.cron' },
   { to: '/integrations', icon: Puzzle, labelKey: 'nav.integrations' },
   { to: '/config', icon: Settings, labelKey: 'nav.config' },
-  { to: '/cost', icon: DollarSign, labelKey: 'nav.cost' },
   { to: '/logs', icon: Activity, labelKey: 'nav.logs' },
   { to: '/doctor', icon: Stethoscope, labelKey: 'nav.doctor' },
   { to: '/canvas', icon: Monitor, labelKey: 'nav.canvas' },
