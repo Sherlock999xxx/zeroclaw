@@ -281,14 +281,14 @@ impl RpiSystemContext {
         };
         let devices_dir = home.join(".zeroclaw").join("hardware").join("devices");
         if let Err(e) = fs::create_dir_all(&devices_dir) {
-            tracing::warn!("Failed to create hardware devices dir: {e}");
+            tracing::warn!(error = ?e, "Failed to create hardware devices dir");
             return;
         }
 
         let path = devices_dir.join("rpi0.md");
         let content = self.device_profile_markdown();
         if let Err(e) = fs::write(&path, &content) {
-            tracing::warn!("Failed to write rpi0.md: {e}");
+            tracing::warn!(error = ?e, "Failed to write rpi0.md");
         } else {
             tracing::debug!(path = %path.display(), "Wrote rpi0.md hardware context file");
         }

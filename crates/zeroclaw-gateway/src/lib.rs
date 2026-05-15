@@ -11,6 +11,7 @@ pub mod acp;
 pub mod api;
 pub mod api_browse;
 pub mod api_config;
+pub mod api_logs;
 pub mod api_onboard;
 pub mod api_pairing;
 pub mod api_personality;
@@ -1226,6 +1227,7 @@ pub async fn run_gateway(
         .route("/hooks/claude-code", post(api::handle_claude_code_hook))
         // ── Web Dashboard API routes ──
         .route("/api/status", get(api::handle_api_status))
+        .route("/api/logs", get(api_logs::handle_api_logs))
         .route(
             "/api/config",
             patch(api_config::handle_patch).options(api_config::handle_options_config),

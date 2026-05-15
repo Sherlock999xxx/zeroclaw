@@ -114,7 +114,7 @@ pub async fn run(target_version: Option<&str>) -> Result<()> {
     info!("Phase 5/6: Swapping binary...");
     if let Err(e) = swap_binary(&download_path, &current_exe).await {
         // Rollback
-        warn!("Swap failed, rolling back: {e}");
+        warn!(error = ?e, "Swap failed, rolling back");
         if let Err(rollback_err) = rollback_binary(&backup_path, &current_exe).await {
             eprintln!("CRITICAL: Rollback also failed: {rollback_err}");
             eprintln!(
@@ -136,7 +136,7 @@ pub async fn run(target_version: Option<&str>) -> Result<()> {
             Ok(())
         }
         Err(e) => {
-            warn!("Smoke test failed, rolling back: {e}");
+            warn!(error = ?e, "Smoke test failed, rolling back");
             rollback_binary(&backup_path, &current_exe)
                 .await
                 .context("rollback after smoke test failure")?;

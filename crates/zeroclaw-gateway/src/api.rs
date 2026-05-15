@@ -198,6 +198,7 @@ pub async fn handle_api_status(
         "model": model,
         "temperature": temperature,
         "uptime_seconds": health.uptime_seconds,
+        "daemon_started_at": zeroclaw_runtime::health::daemon_started_at(),
         "gateway_port": config.gateway.port,
         "locale": locale,
         "memory_backend": memory_backend,

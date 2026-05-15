@@ -89,7 +89,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         break;
                     }
                 }
-                Err(e) => warn!("ACP WebSocket received non-UTF-8 binary frame: {e}"),
+                Err(e) => warn!(error = ?e, "ACP WebSocket received non-UTF-8 binary frame"),
             },
             Ok(Message::Close(_)) => break,
             Ok(Message::Ping(_) | Message::Pong(_)) => {}
@@ -100,7 +100,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 {
                     debug!("ACP WebSocket closed without handshake");
                 } else {
-                    warn!("ACP WebSocket receive error: {e}");
+                    warn!(error = ?e, "ACP WebSocket receive error");
                 }
                 break;
             }
@@ -110,7 +110,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     drop(input_tx);
 
     if let Err(e) = server_task.await {
-        warn!("ACP WebSocket server task panicked: {e}");
+        warn!(error = ?e, "ACP WebSocket server task panicked");
     }
     output_task.abort();
     debug!("ACP WebSocket disconnected");

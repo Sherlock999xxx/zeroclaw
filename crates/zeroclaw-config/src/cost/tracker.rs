@@ -260,7 +260,7 @@ impl CostTracker {
                 match Self::new(config, workspace_dir) {
                     Ok(ct) => Some(Arc::new(ct)),
                     Err(e) => {
-                        tracing::warn!("Failed to initialize global cost tracker: {e}");
+                        tracing::warn!(error = ?e, "Failed to initialize global cost tracker");
                         None
                     }
                 }
