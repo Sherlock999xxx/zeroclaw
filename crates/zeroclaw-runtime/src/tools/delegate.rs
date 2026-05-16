@@ -3131,9 +3131,7 @@ mod tests {
         // Compact mode: should NOT inline <instructions>, should mention on-demand loading.
         let compact_tool = DelegateTool::new(HashMap::new(), None, test_security())
             .with_workspace_dir(workspace.clone())
-            .with_skills_prompt_mode(
-                zeroclaw_config::schema::SkillsPromptInjectionMode::Compact,
-            );
+            .with_skills_prompt_mode(zeroclaw_config::schema::SkillsPromptInjectionMode::Compact);
 
         let compact_prompt = compact_tool
             .build_enriched_system_prompt(&config, &tools, &workspace)
@@ -3155,9 +3153,7 @@ mod tests {
         // Full mode: should inline <instructions>.
         let full_tool = DelegateTool::new(HashMap::new(), None, test_security())
             .with_workspace_dir(workspace.clone())
-            .with_skills_prompt_mode(
-                zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
-            );
+            .with_skills_prompt_mode(zeroclaw_config::schema::SkillsPromptInjectionMode::Full);
 
         let full_prompt = full_tool
             .build_enriched_system_prompt(&config, &tools, &workspace)
