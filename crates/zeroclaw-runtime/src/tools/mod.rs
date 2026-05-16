@@ -1098,7 +1098,7 @@ pub fn all_tools_with_runtime(
         .with_runtime_profiles(root_config.runtime_profiles.clone())
         .with_skill_bundles(root_config.skill_bundles.clone())
         .with_root_config(config.clone())
-        .with_skills_prompt_mode(root_config.skills.prompt_injection_mode.clone());
+        .with_skills_prompt_mode(root_config.skills.prompt_injection_mode);
         tool_arcs.push(Arc::new(delegate_tool));
         Some(parent_tools)
     };

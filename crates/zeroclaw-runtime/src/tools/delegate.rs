@@ -1503,7 +1503,7 @@ impl DelegateTool {
             model_name,
             tools: prompt_tools,
             skills: &skills,
-            skills_prompt_mode: self.skills_prompt_mode.clone(),
+            skills_prompt_mode: self.skills_prompt_mode,
             identity_config: None,
             dispatcher_instructions: "",
             sends_native_tool_specs: sends_native_tool_specs && !prompt_tools.is_empty(),
@@ -3110,20 +3110,9 @@ mod tests {
         )
         .unwrap();
 
-        let config = DelegateAgentConfig {
-            provider: "openrouter".to_string(),
-            model: "test-model".to_string(),
-            system_prompt: None,
-            api_key: None,
-            temperature: None,
-            max_depth: 3,
-            agentic: true,
-            allowed_tools: vec!["echo_tool".to_string()],
-            max_iterations: 10,
-            timeout_secs: None,
-            agentic_timeout_secs: None,
-            skills_directory: None,
-            memory_namespace: None,
+        let config = AliasedAgentConfig {
+            model_provider: "openrouter.test".into(),
+            ..Default::default()
         };
 
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
@@ -3134,7 +3123,7 @@ mod tests {
             .with_skills_prompt_mode(zeroclaw_config::schema::SkillsPromptInjectionMode::Compact);
 
         let compact_prompt = compact_tool
-            .build_enriched_system_prompt(&config, &tools, &workspace)
+            .build_enriched_system_prompt("alpha", &config, "test-model", &tools, &workspace, false)
             .unwrap();
 
         assert!(
@@ -3156,7 +3145,7 @@ mod tests {
             .with_skills_prompt_mode(zeroclaw_config::schema::SkillsPromptInjectionMode::Full);
 
         let full_prompt = full_tool
-            .build_enriched_system_prompt(&config, &tools, &workspace)
+            .build_enriched_system_prompt("alpha", &config, "test-model", &tools, &workspace, false)
             .unwrap();
 
         assert!(
