@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tokio::task_local;
+use tokio_util::sync::CancellationToken;
 use zeroclaw_api::tool::Tool;
 use zeroclaw_config::schema::{MultimodalConfig, PacingConfig, SkillImprovementConfig};
 use zeroclaw_providers::{ChatMessage, Provider};
@@ -53,6 +54,7 @@ pub async fn maybe_run_skill_review(
     pacing: &PacingConfig,
     max_tool_result_chars: usize,
     max_context_tokens: usize,
+    cancellation_token: Option<&CancellationToken>,
 ) {
     if !config.enabled {
         return;
@@ -70,7 +72,7 @@ pub async fn maybe_run_skill_review(
         return;
     }
 
-    let tools: Vec<Box<dyn Tool>> = build_review_tools(workspace_dir.clone());
+    let tools: Vec<Box<dyn Tool>> = build_review_tools(workspace_dir.clone(), config.clone());
     let review_input = build_review_input(&failed_slugs);
 
     let mut review_history = history;
@@ -87,20 +89,20 @@ pub async fn maybe_run_skill_review(
                 observer,
                 provider_name,
                 model_name,
-                0.3, // temperature — low so the fork doesn't ramble
-                true, // silent
-                None, // approval: no human in the loop here
+                0.3,            // temperature — low so the fork doesn't ramble
+                true,           // silent
+                None,           // approval: no human in the loop here
                 "skill_review", // channel_name
-                None, // channel_reply_target
+                None,           // channel_reply_target
                 multimodal,
                 config.max_review_iterations as usize,
-                None, // cancellation_token
-                None, // on_delta
-                None, // hooks
-                &[],  // excluded_tools
-                &[],  // dedup_exempt_tools
-                None, // activated_tools
-                None, // model_switch_callback
+                cancellation_token.cloned(), // cancellation_token
+                None,                        // on_delta
+                None,                        // hooks
+                &[],                         // excluded_tools
+                &[],                         // dedup_exempt_tools
+                None,                        // activated_tools
+                None,                        // model_switch_callback
                 pacing,
                 max_tool_result_chars,
                 max_context_tokens,
@@ -117,7 +119,13 @@ pub async fn maybe_run_skill_review(
         Ok(final_text) => {
             let summary = summarize_actions(&receipts, &final_text);
             if !summary.is_empty() {
-                println!("  💾 Skill review: {summary}");
+                println!(
+                    "{}",
+                    crate::i18n::get_required_cli_string_with_args(
+                        "cli-skills-review-summary",
+                        &[("summary", &summary)],
+                    )
+                );
             }
         }
         Err(e) => {
@@ -126,12 +134,15 @@ pub async fn maybe_run_skill_review(
     }
 }
 
-fn build_review_tools(workspace_dir: PathBuf) -> Vec<Box<dyn Tool>> {
+fn build_review_tools(
+    workspace_dir: PathBuf,
+    config: SkillImprovementConfig,
+) -> Vec<Box<dyn Tool>> {
     let wd = Arc::new(workspace_dir);
     vec![
         Box::new(SkillsListTool::new((*wd).clone())),
         Box::new(SkillViewTool::new((*wd).clone())),
-        Box::new(SkillManageTool::new((*wd).clone())),
+        Box::new(SkillManageTool::new((*wd).clone(), config)),
     ]
 }
 
@@ -167,11 +178,7 @@ fn summarize_actions(receipts: &Mutex<Vec<String>>, final_text: &str) -> String 
     let receipts = receipts.lock().ok();
     let actions: Vec<String> = receipts
         .as_ref()
-        .map(|v| {
-            v.iter()
-                .filter_map(|r| extract_action_summary(r))
-                .collect()
-        })
+        .map(|v| v.iter().filter_map(|r| extract_action_summary(r)).collect())
         .unwrap_or_default();
 
     if !actions.is_empty() {
@@ -186,8 +193,10 @@ fn summarize_actions(receipts: &Mutex<Vec<String>>, final_text: &str) -> String 
     if first_line.is_empty() {
         String::new()
     } else {
-        let max = first_line.len().min(80);
-        first_line[..max].to_string()
+        // Use floor_char_boundary to avoid panicking on multi-byte chars.
+        let max = 80.min(first_line.len());
+        let end = first_line.floor_char_boundary(max);
+        first_line[..end].to_string()
     }
 }
 
@@ -309,6 +318,17 @@ mod tests {
             "Noted that deploy needs DEPLOY_TOKEN.\nMore details below.",
         );
         assert!(summary.starts_with("Noted that deploy"));
+    }
+
+    #[test]
+    fn summarize_actions_handles_non_ascii_without_panic() {
+        let receipts = Mutex::new(Vec::new());
+        // 80+ chars of multi-byte content — must not panic on slicing.
+        let text = "あ".repeat(50);
+        let summary = summarize_actions(&receipts, &text);
+        assert!(!summary.is_empty());
+        // Verify it's valid UTF-8 (would have panicked if not).
+        let _ = summary.chars().count();
     }
 
     #[test]

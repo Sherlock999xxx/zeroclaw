@@ -107,6 +107,7 @@ cli-skills-bundle-exclude = exclude: {$values}
 cli-skills-bundle-show-no-skills = (no skills installed)
 cli-skills-bundle-show-skills-header = skills ({$count}):
 cli-skills-bundle-show-skill = {$name}: {$description}
+cli-skills-review-summary = { "  " }💾 Skill review: {$summary}
 
 cli-cron-list-about = List all scheduled tasks
 cli-cron-add-about = Add a new recurring scheduled task
