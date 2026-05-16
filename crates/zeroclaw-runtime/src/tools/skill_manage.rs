@@ -215,7 +215,12 @@ impl Tool for SkillViewTool {
         let mut output = format!("# Skill '{slug}'\n\n## Front-matter\n\n```yaml\n{front}\n```\n");
         if !body.trim().is_empty() {
             let truncated = if body.len() > BODY_PREVIEW_CHARS {
-                format!("{}…\n[truncated; full body is {} bytes]", &body[..BODY_PREVIEW_CHARS], body.len())
+                let end = body.floor_char_boundary(BODY_PREVIEW_CHARS);
+                format!(
+                    "{}…\n[truncated; full body is {} bytes]",
+                    &body[..end],
+                    body.len()
+                )
             } else {
                 body
             };
@@ -256,11 +261,18 @@ async fn collect_support_files(skill_dir: &Path) -> Vec<String> {
 /// Mutating: patch a SKILL.md, write a support file, or archive a skill.
 pub struct SkillManageTool {
     workspace_dir: PathBuf,
+    config: zeroclaw_config::schema::SkillImprovementConfig,
 }
 
 impl SkillManageTool {
-    pub fn new(workspace_dir: PathBuf) -> Self {
-        Self { workspace_dir }
+    pub fn new(
+        workspace_dir: PathBuf,
+        config: zeroclaw_config::schema::SkillImprovementConfig,
+    ) -> Self {
+        Self {
+            workspace_dir,
+            config,
+        }
     }
 }
 
@@ -347,17 +359,38 @@ impl SkillManageTool {
                 });
             }
         };
-        if !skill_dir.join("SKILL.md").exists() {
+        let md_path = skill_dir.join("SKILL.md");
+        if !md_path.exists() {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(format!("Skill '{slug}' not found (no SKILL.md)")),
             });
         }
+        // Reject symlinks — the patch target must be a regular file.
+        if md_path.symlink_metadata().is_ok_and(|m| m.is_symlink()) {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!(
+                    "SKILL.md for '{slug}' is a symlink — refusing patch"
+                )),
+            });
+        }
         let content = args
             .get("content")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("`patch` requires `content`"))?;
+        if content.len() > MAX_FILE_BYTES {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!(
+                    "patch content exceeds {MAX_FILE_BYTES} bytes ({} given)",
+                    content.len()
+                )),
+            });
+        }
         let reason = args
             .get("reason")
             .and_then(|v| v.as_str())
@@ -365,18 +398,36 @@ impl SkillManageTool {
 
         let mut improver = crate::skills::improver::SkillImprover::new(
             self.workspace_dir.clone(),
-            zeroclaw_config::schema::SkillImprovementConfig {
-                enabled: true,
-                cooldown_secs: 0,
-                ..Default::default()
-            },
+            self.config.clone(),
         );
+        if !improver.should_improve_skill(slug) {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Skill '{slug}' is on cooldown — try again later")),
+            });
+        }
         match improver.improve_skill(slug, content, reason).await {
-            Ok(_) => Ok(ToolResult {
-                success: true,
-                output: format!("Patched skill '{slug}'."),
-                error: None,
-            }),
+            Ok(_) => {
+                // Post-mutation audit: re-validate the on-disk content to catch
+                // any corruption introduced by the atomic write pipeline.
+                let written = tokio::fs::read_to_string(&md_path).await;
+                if let Ok(ref s) = written
+                    && let Err(e) = crate::skills::improver::validate_skill_content(s)
+                {
+                    tracing::warn!("Post-patch validation failed for '{slug}': {e}");
+                    return Ok(ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(format!("Patch wrote but post-mutation audit failed: {e}")),
+                    });
+                }
+                Ok(ToolResult {
+                    success: true,
+                    output: format!("Patched skill '{slug}'."),
+                    error: None,
+                })
+            }
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -463,6 +514,16 @@ impl SkillManageTool {
             });
         }
 
+        // Reject symlinks — writes must land on a regular file, not follow a
+        // symlink to an arbitrary location.
+        if target.symlink_metadata().is_ok_and(|m| m.is_symlink()) {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("target path is a symlink — refusing write".to_string()),
+            });
+        }
+
         tokio::fs::write(&target, content.as_bytes()).await?;
         Ok(ToolResult {
             success: true,
@@ -501,10 +562,7 @@ impl SkillManageTool {
         tokio::fs::rename(&skill_dir, &final_target).await?;
         Ok(ToolResult {
             success: true,
-            output: format!(
-                "Archived skill '{slug}' to {}",
-                final_target.display()
-            ),
+            output: format!("Archived skill '{slug}' to {}", final_target.display()),
             error: None,
         })
     }
@@ -546,6 +604,14 @@ mod tests {
 
     fn tempdir() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
+    }
+
+    fn cfg_no_cooldown() -> zeroclaw_config::schema::SkillImprovementConfig {
+        zeroclaw_config::schema::SkillImprovementConfig {
+            enabled: true,
+            cooldown_secs: 0,
+            ..Default::default()
+        }
     }
 
     async fn write_skill(workspace: &Path, slug: &str, md: &str) {
@@ -636,11 +702,21 @@ mod tests {
     async fn skill_view_lists_support_files() {
         let dir = tempdir();
         let skill_dir = dir.path().join("skills").join("deploy");
-        tokio::fs::create_dir_all(skill_dir.join("references")).await.unwrap();
-        tokio::fs::create_dir_all(skill_dir.join("scripts")).await.unwrap();
-        tokio::fs::write(skill_dir.join("SKILL.md"), VALID_SKILL).await.unwrap();
-        tokio::fs::write(skill_dir.join("references").join("api.md"), "...").await.unwrap();
-        tokio::fs::write(skill_dir.join("scripts").join("verify.sh"), "...").await.unwrap();
+        tokio::fs::create_dir_all(skill_dir.join("references"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(skill_dir.join("scripts"))
+            .await
+            .unwrap();
+        tokio::fs::write(skill_dir.join("SKILL.md"), VALID_SKILL)
+            .await
+            .unwrap();
+        tokio::fs::write(skill_dir.join("references").join("api.md"), "...")
+            .await
+            .unwrap();
+        tokio::fs::write(skill_dir.join("scripts").join("verify.sh"), "...")
+            .await
+            .unwrap();
 
         let tool = SkillViewTool::new(dir.path().to_path_buf());
         let result = tool.execute(json!({ "slug": "deploy" })).await.unwrap();
@@ -657,7 +733,7 @@ mod tests {
     async fn skill_manage_patch_atomically_updates_md() {
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
 
         let result = tool
             .execute(json!({
@@ -670,11 +746,10 @@ mod tests {
             .unwrap();
         assert!(result.success, "patch failed: {:?}", result.error);
 
-        let on_disk = tokio::fs::read_to_string(
-            dir.path().join("skills").join("deploy").join("SKILL.md"),
-        )
-        .await
-        .unwrap();
+        let on_disk =
+            tokio::fs::read_to_string(dir.path().join("skills").join("deploy").join("SKILL.md"))
+                .await
+                .unwrap();
         assert!(on_disk.contains("pre-flight check"));
         assert!(on_disk.contains("0.1.1"));
         assert!(on_disk.contains("updated_at:"));
@@ -694,7 +769,7 @@ mod tests {
     async fn skill_manage_patch_rejects_invalid_content() {
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
 
         // No front-matter → validation rejects.
         let result = tool
@@ -707,18 +782,17 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.success);
-        let on_disk = tokio::fs::read_to_string(
-            dir.path().join("skills").join("deploy").join("SKILL.md"),
-        )
-        .await
-        .unwrap();
+        let on_disk =
+            tokio::fs::read_to_string(dir.path().join("skills").join("deploy").join("SKILL.md"))
+                .await
+                .unwrap();
         assert_eq!(on_disk, VALID_SKILL);
     }
 
     #[tokio::test]
     async fn skill_manage_patch_rejects_missing_skill() {
         let dir = tempdir();
-        let tool = SkillManageTool::new(dir.path().to_path_buf());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
         let result = tool
             .execute(json!({
                 "action": "patch",
@@ -737,7 +811,7 @@ mod tests {
     async fn skill_manage_write_file_creates_references_md() {
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
 
         let result = tool
             .execute(json!({
@@ -766,7 +840,7 @@ mod tests {
     async fn skill_manage_write_file_rejects_bad_prefix() {
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
 
         for bad in [
             "SKILL.md",
@@ -786,11 +860,10 @@ mod tests {
                 .unwrap();
             assert!(!result.success, "expected rejection for {bad:?}");
         }
-        let md = tokio::fs::read_to_string(
-            dir.path().join("skills").join("deploy").join("SKILL.md"),
-        )
-        .await
-        .unwrap();
+        let md =
+            tokio::fs::read_to_string(dir.path().join("skills").join("deploy").join("SKILL.md"))
+                .await
+                .unwrap();
         assert_eq!(md, VALID_SKILL);
     }
 
@@ -798,7 +871,7 @@ mod tests {
     async fn skill_manage_write_file_enforces_size_cap() {
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
 
         let oversized = "x".repeat(MAX_FILE_BYTES + 1);
         let result = tool
@@ -819,7 +892,7 @@ mod tests {
     async fn skill_manage_archive_moves_skill() {
         let dir = tempdir();
         write_skill(dir.path(), "obsolete", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
 
         let result = tool
             .execute(json!({ "action": "archive", "slug": "obsolete" }))
@@ -844,9 +917,11 @@ mod tests {
         write_skill(dir.path(), "obsolete", VALID_SKILL).await;
         let archive_dir = dir.path().join("skills").join(".archive").join("obsolete");
         tokio::fs::create_dir_all(&archive_dir).await.unwrap();
-        tokio::fs::write(archive_dir.join("SKILL.md"), VALID_SKILL).await.unwrap();
+        tokio::fs::write(archive_dir.join("SKILL.md"), VALID_SKILL)
+            .await
+            .unwrap();
 
-        let tool = SkillManageTool::new(dir.path().to_path_buf());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
         let result = tool
             .execute(json!({ "action": "archive", "slug": "obsolete" }))
             .await
@@ -866,7 +941,7 @@ mod tests {
     async fn skill_manage_rejects_unknown_action() {
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
         let result = tool
             .execute(json!({ "action": "nuke", "slug": "deploy" }))
             .await

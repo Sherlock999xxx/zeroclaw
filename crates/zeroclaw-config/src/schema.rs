@@ -1879,8 +1879,10 @@ impl Default for SkillCreationConfig {
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "skills.skill-improvement"]
 pub struct SkillImprovementConfig {
-    /// Enable the background skill-review fork. Default: `true`.
-    #[serde(default = "default_true")]
+    /// Enable the background skill-review fork. Default: `false`.
+    /// Opt-in: users must explicitly enable this to allow post-turn skill
+    /// mutations.
+    #[serde(default)]
     pub enabled: bool,
     /// Minimum interval (in seconds) between reviews for the same skill.
     /// Acts as a durable rate limit on patches to any one skill. Default: `3600`.
@@ -1912,7 +1914,7 @@ fn default_max_review_iterations() -> u32 {
 impl Default for SkillImprovementConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             cooldown_secs: 3600,
             nudge_interval_iterations: 10,
             max_review_iterations: 8,
