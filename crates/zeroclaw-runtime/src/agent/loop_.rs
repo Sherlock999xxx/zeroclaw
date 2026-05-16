@@ -2763,10 +2763,16 @@ pub async fn run(
             }
         }
 
-        // Background skill review fork — spawned post-turn when configured.
-        // Runs a forked agent with restricted toolset (skills_list, skill_view,
-        // skill_manage) over a snapshot of the conversation. The fork decides
-        // whether to patch SKILL.md, add a support file, or do nothing.
+        // Emit the user-visible response before any background work.
+        final_output = response.clone();
+        println!("{response}");
+        observer.record_event(&ObserverEvent::TurnComplete);
+
+        // Background skill review fork — spawned post-turn so it does NOT block
+        // the user-visible response. The fork runs with a restricted toolset
+        // (skills_list, skill_view, skill_manage) over a snapshot of the
+        // conversation and decides whether to patch SKILL.md, add a support
+        // file, or do nothing.
         // See `crate::skills::review::maybe_run_skill_review`.
         if config.skills.skill_improvement.enabled {
             let workspace_dir = config.workspace_dir.clone();
@@ -2790,12 +2796,10 @@ pub async fn run(
                 &config.pacing,
                 config.agent.max_tool_result_chars,
                 config.agent.max_context_tokens,
+                None, // cancellation_token — no parent token in single-shot run
             )
             .await;
         }
-        final_output = response.clone();
-        println!("{response}");
-        observer.record_event(&ObserverEvent::TurnComplete);
     } else {
         println!("🦀 ZeroClaw Interactive Mode");
         println!("Type /help for commands.\n");
