@@ -774,8 +774,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
 /// Dream mode worker — runs periodic memory consolidation cycles.
 ///
 /// Parses the cron schedule from `dream_mode.schedule`, sleeps until the next
-/// trigger time, and runs a dream cycle. Falls back to the idle timeout if the
-/// cron expression is invalid.
+/// trigger time, and runs a dream cycle.
 async fn run_dream_worker(config: Config) -> Result<()> {
     use crate::dream::engine::DreamEngine;
     use anyhow::Context;
@@ -788,13 +787,12 @@ async fn run_dream_worker(config: Config) -> Result<()> {
 
     let engine = DreamEngine::new(config.dream_mode.clone(), config.workspace_dir.clone());
 
-    // Resolve the provider and model for LLM reflection calls.
+    // Resolve the provider and model through the standard provider stack.
     let fallback = config
         .providers
         .fallback_provider()
         .context("dream worker: no fallback provider configured")?;
     let provider_name = config.providers.fallback.as_deref().unwrap_or("anthropic");
-    let provider = zeroclaw_providers::create_provider(provider_name, fallback.api_key.as_deref())?;
     let model = config
         .dream_mode
         .model
@@ -802,38 +800,42 @@ async fn run_dream_worker(config: Config) -> Result<()> {
         .or(fallback.model.as_deref())
         .unwrap_or("claude-haiku-4-5-20251001");
 
+    let provider_runtime_options =
+        zeroclaw_providers::provider_runtime_options_from_config(&config);
+    let provider = zeroclaw_providers::create_routed_provider_with_options(
+        provider_name,
+        fallback.api_key.as_deref(),
+        fallback.base_url.as_deref(),
+        &config.reliability,
+        &config.providers.model_routes,
+        model,
+        &provider_runtime_options,
+    )?;
+
     // Parse the cron schedule for cycle timing.
-    let schedule = cron::Schedule::from_str(&config.dream_mode.schedule).ok();
-    if schedule.is_none() {
-        tracing::warn!(
-            "Dream mode: invalid cron expression '{}', using idle timeout only",
+    let schedule = cron::Schedule::from_str(&config.dream_mode.schedule)
+        .context(format!(
+            "dream worker: invalid cron expression '{}'",
             config.dream_mode.schedule
-        );
-    }
+        ))?;
 
     crate::health::mark_component_ok("dream");
     tracing::info!(
-        "Dream mode started: schedule='{}', idle_timeout={}min",
+        "Dream mode started: schedule='{}'",
         config.dream_mode.schedule,
-        config.dream_mode.idle_timeout_minutes
     );
 
     loop {
         // Compute next wake time from cron schedule.
-        let sleep_duration = if let Some(ref sched) = schedule {
-            sched
-                .upcoming(chrono::Utc)
-                .next()
-                .map(|t| {
-                    (t - chrono::Utc::now())
-                        .to_std()
-                        .unwrap_or(Duration::from_secs(60))
-                })
-                .unwrap_or(Duration::from_secs(3600))
-        } else {
-            // Fallback: use idle timeout as the cycle interval.
-            Duration::from_secs(u64::from(config.dream_mode.idle_timeout_minutes.max(1)) * 60)
-        };
+        let sleep_duration = schedule
+            .upcoming(chrono::Utc)
+            .next()
+            .map(|t| {
+                (t - chrono::Utc::now())
+                    .to_std()
+                    .unwrap_or(Duration::from_secs(60))
+            })
+            .unwrap_or(Duration::from_secs(3600));
 
         tracing::debug!(
             "Dream mode: sleeping for {}s until next cycle",

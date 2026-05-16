@@ -6461,11 +6461,6 @@ pub struct DreamModeConfig {
     /// Cron expression for scheduled dream cycles. Default: `"0 3 * * *"` (daily at 03:00 UTC).
     #[serde(default = "default_dream_schedule")]
     pub schedule: String,
-    /// Idle timeout in minutes before triggering a dream cycle.
-    /// The engine triggers a cycle when no user interaction has occurred for this long.
-    /// `0` disables idle-triggered dreams (only cron schedule fires). Default: `30`.
-    #[serde(default = "default_dream_idle_timeout")]
-    pub idle_timeout_minutes: u32,
     /// Model override for dream LLM calls. Uses a lightweight/cheap model to
     /// minimize token cost. Falls back to `providers.fallback` model if unset.
     #[serde(default)]
@@ -6498,10 +6493,6 @@ fn default_dream_schedule() -> String {
     "0 3 * * *".into()
 }
 
-fn default_dream_idle_timeout() -> u32 {
-    30
-}
-
 fn default_dream_temperature() -> f64 {
     0.2
 }
@@ -6523,7 +6514,6 @@ impl Default for DreamModeConfig {
         Self {
             enabled: false,
             schedule: default_dream_schedule(),
-            idle_timeout_minutes: default_dream_idle_timeout(),
             model: None,
             temperature: default_dream_temperature(),
             gather_limit: default_dream_gather_limit(),

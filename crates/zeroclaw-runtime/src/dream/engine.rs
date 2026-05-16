@@ -118,6 +118,19 @@ impl DreamEngine {
             reflect_result.stale_keys.len()
         );
 
+        // In audit mode, skip mutation phases and return report-only results.
+        if self.config.audit_mode {
+            info!("Dream cycle complete (audit/dry-run): report-only, no mutations");
+            return Ok(DreamCycleResult {
+                gathered_count,
+                insights: reflect_result.insights,
+                pruned_count: 0,
+                consolidated_count: 0,
+                report_summary: reflect_result.summary,
+                timestamp: Utc::now(),
+            });
+        }
+
         // Phase 3: Consolidate insights into Core memories
         let consolidated_count = self.consolidate(memory, &reflect_result.insights).await?;
         info!(
@@ -247,13 +260,6 @@ impl DreamEngine {
                 debug!("dream consolidate: conflict check skipped: {e}");
             }
 
-            if self.config.audit_mode {
-                // In audit mode, don't persist — just count. The caller
-                // should serialize the DreamCycleResult for review.
-                stored += 1;
-                continue;
-            }
-
             match memory
                 .store_with_metadata(
                     &key,
@@ -277,12 +283,8 @@ impl DreamEngine {
 
     // ── Phase 4: Prune ─────────────────────────────────────────
 
-    /// Remove stale daily memories and LLM-identified outdated entries.
+    /// Remove stale daily memories, low-importance entries, and LLM-identified outdated entries.
     async fn prune(&self, memory: &dyn Memory, stale_keys: &[String]) -> Result<usize> {
-        if self.config.audit_mode {
-            return Ok(stale_keys.len());
-        }
-
         let mut pruned = 0;
 
         // Remove LLM-identified stale entries.
@@ -306,7 +308,13 @@ impl DreamEngine {
         match memory.list(Some(&MemoryCategory::Daily), None).await {
             Ok(entries) => {
                 for entry in entries {
-                    if entry.timestamp.as_str() < cutoff.as_str()
+                    let expired = entry.timestamp.as_str() < cutoff.as_str();
+                    let below_threshold = entry
+                        .importance
+                        .map(|s| s < self.config.prune_threshold)
+                        .unwrap_or(false);
+
+                    if (expired || below_threshold)
                         && let Ok(true) = memory.forget(&entry.key).await
                     {
                         pruned += 1;

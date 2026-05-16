@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use zeroclaw_config::schema::Config;
 use zeroclaw_runtime::dream::report::DreamReport;
+use zeroclaw_runtime::i18n::{get_cli_string_with_args, get_required_cli_string};
 
 /// Run a manual dream cycle from the CLI.
 pub async fn run_dream(config: &Config, dry_run: bool, verbose: bool) -> Result<()> {
@@ -16,19 +17,30 @@ pub async fn run_dream(config: &Config, dry_run: bool, verbose: bool) -> Result<
 
     let engine = DreamEngine::new(dream_config, config.workspace_dir.clone());
 
-    // Resolve provider.
+    // Resolve provider through the standard provider/runtime resolution stack.
     let fallback = config
         .providers
         .fallback_provider()
         .context("dream: no fallback provider configured")?;
     let provider_name = config.providers.fallback.as_deref().unwrap_or("anthropic");
-    let provider = zeroclaw_providers::create_provider(provider_name, fallback.api_key.as_deref())?;
     let model = config
         .dream_mode
         .model
         .as_deref()
         .or(fallback.model.as_deref())
         .unwrap_or("claude-haiku-4-5-20251001");
+
+    let provider_runtime_options =
+        zeroclaw_providers::provider_runtime_options_from_config(config);
+    let provider = zeroclaw_providers::create_routed_provider_with_options(
+        provider_name,
+        fallback.api_key.as_deref(),
+        fallback.base_url.as_deref(),
+        &config.reliability,
+        &config.providers.model_routes,
+        model,
+        &provider_runtime_options,
+    )?;
 
     // Create memory backend.
     let memory = zeroclaw_memory::create_memory(
@@ -42,12 +54,26 @@ pub async fn run_dream(config: &Config, dry_run: bool, verbose: bool) -> Result<
     .context("dream: failed to create memory backend")?;
 
     if verbose {
-        println!("Dream cycle starting...");
-        println!("  Provider: {provider_name}");
-        println!("  Model: {model}");
-        println!("  Memory backend: {}", memory.name());
+        println!(
+            "{}",
+            get_cli_string_with_args(
+                "cli-dream-starting",
+                &[
+                    ("provider", provider_name),
+                    ("model", model),
+                    ("backend", memory.name()),
+                ],
+            )
+            .unwrap_or_else(|| format!(
+                "Dream cycle starting...\n  Provider: {provider_name}\n  Model: {model}\n  Memory backend: {}",
+                memory.name()
+            ))
+        );
         if dry_run {
-            println!("  Mode: dry-run (no changes will be persisted)");
+            println!(
+                "{}",
+                get_required_cli_string("cli-dream-dry-run-mode")
+            );
         }
     }
 
@@ -56,23 +82,44 @@ pub async fn run_dream(config: &Config, dry_run: bool, verbose: bool) -> Result<
         .await?;
 
     println!(
-        "Dream cycle complete: {} memories gathered, {} insights consolidated, {} pruned",
-        result.gathered_count, result.consolidated_count, result.pruned_count
+        "{}",
+        get_cli_string_with_args(
+            "cli-dream-complete",
+            &[
+                ("gathered", &result.gathered_count.to_string()),
+                ("consolidated", &result.consolidated_count.to_string()),
+                ("pruned", &result.pruned_count.to_string()),
+            ],
+        )
+        .unwrap_or_else(|| format!(
+            "Dream cycle complete: {} memories gathered, {} insights consolidated, {} pruned",
+            result.gathered_count, result.consolidated_count, result.pruned_count
+        ))
     );
 
     if !result.insights.is_empty() {
-        println!("\nInsights:");
+        println!(
+            "\n{}",
+            get_required_cli_string("cli-dream-insights-header")
+        );
         for (i, insight) in result.insights.iter().enumerate() {
             println!("  {}. {insight}", i + 1);
         }
     }
 
     if let Some(ref summary) = result.report_summary {
-        println!("\nSummary: {summary}");
+        println!(
+            "\n{}",
+            get_cli_string_with_args("cli-dream-summary", &[("summary", summary.as_str())])
+                .unwrap_or_else(|| format!("Summary: {summary}"))
+        );
     }
 
     if dry_run {
-        println!("\n[dry-run] No changes were persisted to memory.");
+        println!(
+            "\n{}",
+            get_required_cli_string("cli-dream-dry-run-notice")
+        );
     }
 
     Ok(())
@@ -86,7 +133,7 @@ pub fn show_report(config: &Config) -> Result<()> {
             DreamReport::mark_delivered(&config.workspace_dir)?;
         }
         None => {
-            println!("No pending dream report.");
+            println!("{}", get_required_cli_string("cli-dream-no-report"));
         }
     }
     Ok(())
