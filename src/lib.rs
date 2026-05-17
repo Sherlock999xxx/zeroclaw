@@ -429,8 +429,8 @@ Examples:
     Add {
         /// Cron expression
         expression: String,
-        /// Configured agent alias the cron job runs as. Required — V3
-        /// has no default agent.
+        /// Configured agent alias the cron job runs as. Required —
+        /// there is no default agent.
         #[arg(short = 'a', long = "agent")]
         agent_alias: String,
         /// Optional IANA timezone (e.g. America/Los_Angeles)

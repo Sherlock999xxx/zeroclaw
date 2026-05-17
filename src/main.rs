@@ -321,13 +321,13 @@ Launches an interactive chat session with the configured AI model_provider. \
 Use --message for single-shot queries without entering interactive mode.
 
 Examples:
-  zeroclaw agent                              # interactive session
-  zeroclaw agent -m \"Summarize today's logs\"  # single message
-  zeroclaw agent -p anthropic --model claude-sonnet-4-20250514
-  zeroclaw agent --peripheral nucleo-f401re:/dev/ttyACM0")]
+  zeroclaw agent -a assistant                                          # interactive session
+  zeroclaw agent -a assistant -m \"Summarize today's logs\"              # single message
+  zeroclaw agent -a assistant -p anthropic --model claude-sonnet-4-20250514
+  zeroclaw agent -a assistant --peripheral nucleo-f401re:/dev/ttyACM0")]
     Agent {
         /// Configured agent alias to run as (must match `[agents.<alias>]`).
-        /// Required: V3 has no default agent.
+        /// Required — there is no default agent.
         #[arg(short = 'a', long)]
         agent: String,
 
@@ -347,7 +347,7 @@ Examples:
         #[arg(long)]
         model: Option<String>,
 
-        /// Temperature (0.0 - 2.0, defaults to config default_temperature)
+        /// Temperature (0.0 - 2.0, defaults to providers.models.<type>.<alias>.temperature)
         #[arg(short, long, value_parser = parse_temperature)]
         temperature: Option<f64>,
 

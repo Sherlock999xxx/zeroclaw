@@ -11,15 +11,15 @@ A walkthrough of the common patterns for using multiple model providers: per-age
 
 Multi-model configuration is useful for:
 
-- **Cost tiering**: Cheap model handles high-volume channels; reasoning model handles complex requests
-- **Capability routing**: Vision-capable model for image-bearing channels, reasoning model for research workflows
-- **Local-first development**: Local Ollama for development; hosted endpoint for production
-- **Per-team isolation**: Different teams use different agents with different model_providers and credentials
-- **Rate-limit handling**: Rotate through API keys on `429` (rate limit) responses
+1. **Cost tiering**: cheap model handles high-volume channels; reasoning model handles complex requests
+2. **Capability routing**: vision-capable model for image-bearing channels, reasoning model for research workflows
+3. **Local-first development**: local Ollama for development, hosted endpoint for production
+4. **Per-team isolation**: different teams use different agents with different model_providers and credentials
+5. **Rate-limit handling**: rotate through API keys on `429` (rate limit) responses
 
 ## Core idea — per-agent dispatch
 
-In V3 there is no in-process model fallback chain. Each `[agents.<alias>]` entry points at exactly one `[providers.models.<type>.<alias>]`. If the model goes down, the agent goes down — the operator picks how the channels above respond (typically by routing to a different agent). This is intentional: see [Fallback & routing](../providers/fallback-and-routing.md) for the rationale.
+There is no in-process model fallback chain. Each `[agents.<alias>]` entry points at exactly one `[providers.models.<type>.<alias>]`. If the model goes down, the agent goes down — the operator picks how the channels above respond (typically by routing to a different agent). See [Fallback & routing](../providers/fallback-and-routing.md) for the rationale.
 
 To run multiple models, run multiple agents:
 
@@ -36,26 +36,50 @@ api_key = "sk-ant-..."
 model   = "deepseek-reasoner"
 api_key = "sk-..."
 
+[channels.telegram.home]
+bot_token = "..."
+
+[channels.slack.engineering]
+bot_token = "..."
+
+[channels.slack.research]
+bot_token = "..."
+
 [agents.fast]
-enabled        = true
-model_provider = "anthropic.haiku"
-risk_profile   = "default"
-runtime_profile = "default"
-channels        = ["telegram.default"]
+model_provider  = "anthropic.haiku"
+risk_profile    = "hardened"
+runtime_profile = "tight"            # fewer iterations for snappy public replies
+channels        = ["telegram.home"]
 
 [agents.deep]
-enabled        = true
-model_provider = "anthropic.sonnet"
-risk_profile   = "default"
-runtime_profile = "default"
+model_provider  = "anthropic.sonnet"
+risk_profile    = "hardened"
+runtime_profile = "deep"             # higher iteration cap for engineering tasks
 channels        = ["slack.engineering"]
 
 [agents.reasoner]
-enabled        = true
-model_provider = "deepseek.reasoner"
-risk_profile   = "default"
-runtime_profile = "default"
+model_provider  = "deepseek.reasoner"
+risk_profile    = "hardened"
+runtime_profile = "deep"             # extended chains for research-style prompts
 channels        = ["slack.research"]
+
+# Shared `hardened` posture across the three public-facing agents,
+# distinct `tight` / `deep` runtime profiles per per-agent throughput
+# intent. `risk_profile` and `runtime_profile` are independent maps.
+
+[risk_profiles.hardened]
+level                            = "supervised"
+workspace_only                   = true
+require_approval_for_medium_risk = true
+block_high_risk_commands         = true
+
+[runtime_profiles.tight]
+max_tool_iterations  = 5
+max_actions_per_hour = 30
+
+[runtime_profiles.deep]
+max_tool_iterations  = 50
+max_actions_per_hour = 200
 ```
 
 Each channel binds to one agent at a time. To move a channel to a different agent, edit the `channels = [...]` list on the agent that should pick it up — `Config::validate()` makes sure references resolve at startup.
@@ -65,15 +89,17 @@ Each channel binds to one agent at a time. To move a channel to a different agen
 OpenRouter is treated as a single first-class provider. It handles vendor fan-out, fallback, and uptime behind one endpoint:
 
 ```toml
-[providers.models.openrouter.default]
+[providers.models.openrouter.home]
 model   = "anthropic/claude-sonnet-4-20250514"
 api_key = "sk-or-..."
 
-[agents.default]
-enabled        = true
-model_provider = "openrouter.default"
-risk_profile   = "default"
-runtime_profile = "default"
+[agents.assistant]
+model_provider = "openrouter.home"
+risk_profile   = "hardened"
+# runtime_profile omitted — uses runtime defaults
+
+[risk_profiles.hardened]
+level = "supervised"
 ```
 
 If your goal is "one provider goes down, automatically use another", that's OpenRouter's job — not ZeroClaw's. The runtime sees one provider; OpenRouter does the cross-vendor work upstream.
@@ -84,8 +110,8 @@ For transient errors (network blip, 503, timeout) against the *same* provider, Z
 
 ```toml
 [reliability]
-provider_retries     = 2          # retries per provider attempt before bailing
-provider_backoff_ms  = 500        # initial backoff; doubles per retry
+provider_retries    = 2          # retries per provider attempt before bailing
+provider_backoff_ms = 500        # initial backoff; doubles per retry
 ```
 
 Defaults are 2 retries, 500 ms initial backoff. These are inside-one-provider retries — there is no in-process cross-provider fallback.
@@ -101,91 +127,131 @@ api_keys = ["sk-key-2", "sk-key-3", "sk-key-4"]
 
 The primary `api_key` (configured on the provider entry) is always tried first; these extras are rotated on rate-limit errors. All keys must belong to the same provider account class — this is rate-limit smoothing, not multi-tenant key juggling.
 
-## Local development with hosted backup
+## Local development with hosted alternative
 
-Use a local Ollama instance for an agent that handles your dev/test channel; bind a separate agent to a hosted provider for production channels.
+Run a local-Ollama agent and a hosted-provider agent side by side; route each channel to whichever you want it to use.
 
 ```toml
-[providers.models.ollama.default]
+[providers.models.ollama.local]
 uri   = "http://localhost:11434"
 model = "qwen3.6:35b-a3b"
 
-[providers.models.openrouter.default]
+[providers.models.openrouter.home]
 model   = "anthropic/claude-haiku-4-5-20251001"
 api_key = "sk-or-..."
 
+[channels.telegram.production]
+bot_token = "..."
+
+[channels.slack.production]
+bot_token = "..."
+
 [agents.dev]
-enabled        = true
-model_provider = "ollama.default"
-risk_profile   = "default"
-runtime_profile = "default"
-channels        = ["cli.default"]
+model_provider  = "ollama.local"
+risk_profile    = "permissive"      # local dev box — looser gates
+runtime_profile = "deep"            # plenty of iterations during iteration
 
 [agents.prod]
-enabled        = true
-model_provider = "openrouter.default"
-risk_profile   = "default"
-runtime_profile = "default"
+model_provider  = "openrouter.home"
+risk_profile    = "hardened"        # public channels — strict gates
+runtime_profile = "tight"           # production discipline — short loops, low spend
 channels        = ["telegram.production", "slack.production"]
+
+[risk_profiles.permissive]
+level          = "full"
+workspace_only = false
+
+[risk_profiles.hardened]
+level                            = "supervised"
+workspace_only                   = true
+require_approval_for_medium_risk = true
+block_high_risk_commands         = true
+
+[runtime_profiles.deep]
+max_tool_iterations  = 50
+max_actions_per_hour = 200
+
+[runtime_profiles.tight]
+max_tool_iterations  = 5
+max_actions_per_hour = 30
 ```
 
-When Ollama is down, the dev channel fails fast and surfaces the error. The prod channels are unaffected.
+The `dev` agent runs from the CLI (no channel binding required — `zeroclaw agent -a dev` is enough). When Ollama is down, the dev agent fails fast and surfaces the error. The prod channels are unaffected.
 
 ## Cost tiering — heavy model when needed, fast model otherwise
 
-Run two agents and route channels to the appropriate tier. The `delegate` tool lets one agent hand off to another mid-conversation:
+Run two agents and route channels to the appropriate tier. The `delegate` tool lets one agent hand off to another mid-conversation. Each agent picks the risk profile that matches its trust surface: `frontline` faces public traffic, so it gets a stricter `hardened` profile; `heavy` is reached only via `delegate` from inside the trusted agent loop, so it can run on a looser `permissive` profile.
 
 ```toml
 [providers.models.anthropic.opus]
 model   = "claude-opus-4-7"
 api_key = "sk-ant-..."
+# (no temperature — claude-opus-4-7 rejects any temperature setting)
 
 [providers.models.anthropic.haiku]
 model   = "claude-haiku-4-5-20251001"
 api_key = "sk-ant-..."
 
+[channels.telegram.home]
+bot_token = "..."
+
 [agents.frontline]
-enabled        = true
-model_provider = "anthropic.haiku"
-risk_profile   = "default"
-runtime_profile = "default"
-channels        = ["telegram.default"]
+model_provider  = "anthropic.haiku"
+risk_profile    = "hardened"     # public-facing strictness
+runtime_profile = "tight"        # low iteration cap, fast turn-around
+channels        = ["telegram.home"]
 
 [agents.heavy]
-enabled        = true
-model_provider = "anthropic.opus"
-risk_profile   = "default"
-runtime_profile = "default"
+model_provider  = "anthropic.opus"
+risk_profile    = "permissive"   # internal-delegate trust
+runtime_profile = "deep"         # high iteration cap for chain-of-thought work
 # No channels — invoked via the delegate tool from frontline
+
+# risk_profile and runtime_profile reference independent alias maps —
+# the names above intentionally differ between the two profile kinds
+# to make that clear.
+
+[risk_profiles.hardened]
+level                            = "supervised"
+workspace_only                   = true
+require_approval_for_medium_risk = true
+block_high_risk_commands         = true
+
+[risk_profiles.permissive]
+level          = "full"
+workspace_only = false
+
+[runtime_profiles.tight]
+max_tool_iterations  = 5
+max_actions_per_hour = 30
+
+[runtime_profiles.deep]
+max_tool_iterations  = 50
+max_actions_per_hour = 200
 ```
 
 The frontline agent handles every inbound message on Haiku. When it needs deeper reasoning, it calls the `delegate` tool with `agent = "heavy"` and the heavier agent picks up the sub-task.
-
-## Hot reload
-
-The `[reliability]` section is hot-reloadable — updates to `config.toml` take effect on the next inbound message without a restart. Per-agent `model_provider` references are also hot-reloadable in the same way.
 
 ## Error handling
 
 Inside-one-provider retries trigger on:
 
-- **Timeout**: provider did not respond within the configured timeout
-- **Connection error**: network or DNS failure
-- **Rate limit (429)**: triggers API key rotation first; if all keys exhausted, fails up to the channel
-- **Service unavailable (503)**: temporary service issue
+1. **Timeout**: provider did not respond within the configured timeout
+2. **Connection error**: network or DNS failure
+3. **Rate limit (429)**: triggers API key rotation first; if all keys exhausted, fails up to the channel
+4. **Service unavailable (503)**: temporary service issue
 
 Retries are NOT triggered by:
 
-- **Invalid request (400)**: malformed input; retrying won't help
-- **Permanent auth failure**: invalid API key format
-- **Model output errors**: the model responded but returned an error payload
+1. **Invalid request (400)**: malformed input; retrying won't help
+2. **Permanent auth failure**: invalid API key format
+3. **Model output errors**: the model responded but returned an error payload
 
 When all retries are exhausted on a single provider, the failure surfaces to the calling channel. There is no automatic cross-provider retry — that's the point of using OpenRouter or splitting traffic across multiple agents.
 
 ## Debugging
 
-Persisted logs (`"rolling"` is the default) capture retry and
-key-rotation behaviour:
+Persisted logs (`"rolling"` is the default) capture retry and key-rotation behaviour:
 
 ```toml
 [observability]
@@ -204,32 +270,26 @@ zeroclaw doctor traces --contains "model_provider"
 ## Best practices
 
 1. **One agent per routing intent.** If two channels need different model behavior, name two agents.
-2. **Use OpenRouter for cross-vendor reliability.** Don't try to encode "if Claude fails, try OpenAI" in your config — it doesn't exist anymore. OpenRouter does this better than any in-process fallback could.
+2. **Use OpenRouter for cross-vendor reliability.** Don't try to encode "if Claude fails, try OpenAI" in your config — that knob does not exist. OpenRouter does this better than any in-process fallback could.
 3. **Keep API key rotation pools homogeneous.** All keys in `[reliability] api_keys` should be from the same provider account — this is rate-limit smoothing, not multi-tenancy.
-4. **Test each agent in isolation.** `zeroclaw chat --agent <alias>` smoke-tests an agent without channel plumbing in the way.
+4. **Smoke-test each agent in isolation.** `zeroclaw agent -a <alias>` runs an agent without channel plumbing in the way.
 5. **Document agent intent.** Add `# comment` lines explaining which channels each agent serves and why.
-6. **Use environment variables for secrets.** Store API keys in env or the secrets store, not inline in config.
-7. **Separate dev and prod agents.** Don't share a `default` agent between local dev and production channels — bind them explicitly.
+6. **Inject secrets via env, not inline.** `ZEROCLAW_providers__models__<type>__<alias>__api_key=...` sets `api_key` at startup; see [Environment variables](../reference/env-vars.md).
+7. **Separate dev and prod agents.** Each environment gets its own `[agents.<alias>]` entry bound to its own channels.
 
 ## Credential resolution
 
-Each provider entry resolves credentials independently using the standard order:
+Each provider entry resolves credentials in this order:
 
-1. **Inline `api_key`** on the provider entry
-2. **Secrets store** at `~/.zeroclaw/secrets`
-3. **Provider-specific env var** — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, etc.
-4. **Generic fallback** — `ZEROCLAW_API_KEY`, `API_KEY`
+1. **Inline `api_key`** on the provider entry.
+2. **Secrets store** at `~/.zeroclaw/secrets`.
+3. **Generic env override** — `ZEROCLAW_providers__models__<type>__<alias>__api_key=...` at startup. See [Environment variables](../reference/env-vars.md) for the full grammar.
+4. **Per-vendor env var** when the family supports it (e.g. `ANTHROPIC_API_KEY` / `ANTHROPIC_OAUTH_TOKEN` for Anthropic; `OPENROUTER_API_KEY` for OpenRouter).
 
-Credentials are not shared between providers. Set them per provider:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-export OPENAI_API_KEY="sk-..."
-export GROQ_API_KEY="gsk-..."
-```
+Credentials are not shared between providers — set them per provider entry.
 
 ## Related Documentation
 
 - [Model Providers → Overview](../providers/overview.md)
 - [Model Providers → Fallback & routing](../providers/fallback-and-routing.md)
-- [Config reference](../reference/config.md) — generated config field index
+- [Environment variables](../reference/env-vars.md)

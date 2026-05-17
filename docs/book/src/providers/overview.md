@@ -17,15 +17,15 @@ Providers are typed by family. Every entry lives at:
 `<alias>` is your operator-assigned instance name. Use it to distinguish multiple instances of the same provider — for example, `[providers.models.openai.work]` and `[providers.models.openai.personal]` use different keys against the same vendor.
 
 ```toml
-[providers.models.anthropic.default]
+[providers.models.anthropic.home]
 model = "claude-haiku-4-5-20251001"
 api_key = "sk-ant-..."
 
-[providers.models.ollama.default]
+[providers.models.ollama.local]
 uri = "http://localhost:11434"
 model = "qwen3.6:35b-a3b"
 
-[providers.models.groq.default]
+[providers.models.groq.fast]
 model = "llama-3.3-70b-versatile"
 api_key = "gsk_..."
 ```
@@ -37,25 +37,22 @@ See [Configuration](./configuration.md) for the full schema and [Catalog](./cata
 A provider entry on its own does nothing. To use it, name it from an agent:
 
 ```toml
-[agents.default]
-enabled       = true
-model_provider = "anthropic.default"   # references [providers.models.anthropic.default]
-risk_profile   = "default"
-runtime_profile = "default"
+[agents.assistant]
+model_provider  = "anthropic.home"   # references [providers.models.anthropic.home]
+risk_profile    = "hardened"         # references [risk_profiles.hardened]
+runtime_profile = "deep"             # references [runtime_profiles.deep]; independent of risk_profile
 ```
 
-The string is a dotted `<type>.<alias>` reference. `Config::validate()` fails loud at startup if the reference doesn't resolve. There is no `default_provider`, `default_model`, or fallback-provider configuration anywhere — every callsite picks a configured alias or opts out.
+`risk_profile` and `runtime_profile` reference independent alias maps, so their names need not match (`runtime_profile` is also optional). `Config::validate()` fails loud at startup if any reference doesn't resolve. Every callsite picks a configured alias or opts out — there is no global "default provider" or "default model" knob.
 
 For multi-agent deployments, give each agent its own `model_provider`:
 
 ```toml
 [agents.researcher]
-enabled       = true
-model_provider = "anthropic.default"
+model_provider = "anthropic.home"
 
 [agents.summariser]
-enabled       = true
-model_provider = "groq.default"
+model_provider = "groq.fast"
 ```
 
 Channels that ingest messages bind to one agent at a time via the agent's `channels = [...]` list — see [Channels](../channels/) for the full picture.
@@ -65,21 +62,20 @@ Channels that ingest messages bind to one agent at a time via the agent's `chann
 Voice synthesis and speech-to-text follow the same pattern: typed-family entry, then a per-agent reference.
 
 ```toml
-[providers.tts.openai.default]
+[providers.tts.openai.alloy]
 api_key = "sk-..."
 voice   = "alloy"
 
-[providers.transcription.groq.default]
+[providers.transcription.groq.fast]
 api_key = "gsk_..."
 
-[agents.default]
-enabled               = true
-model_provider        = "anthropic.default"
-tts_provider          = "openai.default"        # empty string = no TTS for this agent
-transcription_provider = "groq.default"         # empty string = agent has no STT preference
+[agents.assistant]
+model_provider         = "anthropic.home"
+tts_provider           = "openai.alloy"        # empty string = no TTS for this agent
+transcription_provider = "groq.fast"           # empty string = agent has no STT preference
 ```
 
-There are no global `default_tts_provider`, `default_transcription_provider`, or `default_voice` fields. Each agent that wants voice sets its own routing.
+There are no global TTS or transcription selector fields. Each agent that wants voice sets its own routing.
 
 ## Where to next
 

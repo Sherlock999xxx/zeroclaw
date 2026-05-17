@@ -1,8 +1,18 @@
 # Provider Configuration
 
-Every model provider lives at `[providers.models.<type>.<alias>]` in `~/.zeroclaw/config.toml`. `<type>` is the canonical family slot (`anthropic`, `openai`, `azure`, `gemini`, `groq`, `moonshot`, ...). `<alias>` is your operator-assigned instance name (`default`, `work`, `cn`, ...).
+Every model provider lives at `[providers.models.<type>.<alias>]` in `~/.zeroclaw/config.toml`. `<type>` is the canonical family slot (`anthropic`, `openai`, `azure`, `gemini`, `groq`, `moonshot`, ...). `<alias>` is your operator-assigned instance name — pick any descriptive name (`home`, `work`, `cn`, `gpt5`, ...).
 
-## Minimum shape
+## Minimal working example
+
+The smallest config that loads clean has four section headers — a provider entry, an agent that references it, and a risk profile the agent gates against:
+
+```toml
+{{#include ../_snippets/minimal-config.toml}}
+```
+
+The aliases (`home`, `assistant`) above are example names — substitute whatever suits your install.
+
+## Field reference — provider entry
 
 ```toml
 [providers.models.<type>.<alias>]
@@ -31,8 +41,8 @@ Run `cargo doc --open -p zeroclaw-config` (or read [`crates/zeroclaw-config/src/
 | Slot | Notes |
 |---|---|
 | `anthropic` | API key or OAuth (`sk-ant-oat-*`) |
-| `openai` | GPT, o-series; OpenAI Codex variants live on `openai_codex` |
-| `azure` | Typed: `resource`, `deployment`, `api_version`. Env-var read path is gone — values must live in config |
+| `openai` | GPT, o-series; the OpenAI Codex subscription variant is `providers.models.openai.<alias>` with `wire_api = "responses"` and `requires_openai_auth = true` |
+| `azure` | Typed: `resource`, `deployment`, `api_version` — all set on the alias entry |
 | `gemini` | Google's API; `gemini_cli` is the CLI-shells-out variant |
 | `bedrock` | AWS-credentials chain, region template |
 | `ollama` | Local inference; `uri` defaults to `http://localhost:11434` |
@@ -42,51 +52,51 @@ Run `cargo doc --open -p zeroclaw-config` (or read [`crates/zeroclaw-config/src/
 | `lmstudio`, `llamacpp`, `sglang`, `vllm`, `osaurus`, `litellm` | Local-server defaults (`http://localhost:<port>/v1`) |
 | `custom` | Catch-all for OpenAI-compatible endpoints not covered above; `uri` is required |
 
-Synonyms are gone — there is one canonical key per vendor. The migration auto-renames `azure_openai`/`azure-openai` -> `azure`, `claude` -> `anthropic`, `google`/`google-gemini` -> `gemini`, etc.
+There is one canonical key per vendor — no synonyms.
 
 ## Credentials
 
-Four ways to supply credentials, in resolution order:
+Three ways to supply credentials, in resolution order:
 
 1. **Inline `api_key = "..."`** in the alias entry (fine for dev, risky for checked-in configs).
 2. **Config-level secrets store** — encrypted at `~/.zeroclaw/secrets` via a local key file.
-3. **Provider-specific env var** — `ANTHROPIC_API_KEY`, `ANTHROPIC_OAUTH_TOKEN`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, etc.
-4. **Generic fallback** — `ZEROCLAW_API_KEY`, `API_KEY`.
+3. **Generic env override** — `ZEROCLAW_providers__models__<type>__<alias>__api_key=...` sets `providers.models.<type>.<alias>.api_key` at startup. See [Environment variables](../reference/env-vars.md) for the full grammar.
 
-The onboarding wizard writes credentials to the secrets store by default. Configs you commit should use neither inline keys nor `env_passthrough` entries that leak user keys.
+`zeroclaw onboard` writes credentials to the secrets store by default. Configs you commit should not contain inline keys. For ecosystem-default names you already export in your shell (`$ANTHROPIC_API_KEY`, `$OPENROUTER_API_KEY`, …), the [env-vars reference](../reference/env-vars.md#bridging-ecosystem-default-env-vars) shows the one-line bash expansions that point a schema-mirror name at the existing value.
 
 ## OAuth and subscription auth
 
-Several providers support OAuth or subscription-style tokens instead of raw API keys:
+Several providers accept OAuth or subscription-style tokens instead of raw API keys. Get the token from the vendor's own dashboard or CLI flow, then drop it into the alias entry the same way you would an API key:
 
-- **Anthropic** — `sk-ant-oat-*` OAuth tokens work anywhere an API key does. No cost if you're on a Pro/Team plan.
-- **GitHub Copilot** — authenticate via the onboarding wizard (`zeroclaw onboard`) which handles the OAuth flow. The token is stored in the secrets backend.
-- **Gemini CLI** — uses the `gemini` CLI's existing auth.
-- **Claude Code** — uses your Claude Code login.
-- **Qwen / MiniMax / Kimi-Code** — set `auth_mode = "oauth"` on the alias entry to switch from API key to OAuth.
+- **Anthropic** — `sk-ant-oat-*` OAuth tokens (from Claude Pro/Team) go in `api_key` on `[providers.models.anthropic.<alias>]`.
+- **OpenAI Codex subscription** — set `requires_openai_auth = true` and leave `api_key` unset on `[providers.models.openai.<alias>]`; the runtime reads the stored Codex login.
+- **Gemini CLI** — `[providers.models.gemini_cli.<alias>]` shells out to the `gemini` CLI; use the CLI's own auth flow.
+- **Qwen / MiniMax** — set `auth_mode = "oauth"` on the alias entry plus the relevant `oauth_*` fields (see [env-vars → OAuth and CLI-path fields](../reference/env-vars.md#oauth-and-cli-path-fields)).
 
 ## Container-friendly overrides
 
-The onboarding wizard detects Docker / Podman / Kubernetes and rewrites `localhost` to container-appropriate hostnames:
+When ZeroClaw runs inside a container and a provider is on the host (e.g. Ollama), set `uri` to a host-reachable address:
 
 ```toml
-[providers.models.ollama.default]
-uri   = "http://host.docker.internal:11434"   # was "http://localhost:11434" on host
+[providers.models.ollama.local]
+uri   = "http://host.docker.internal:11434"
 model = "qwen3.6:35b-a3b"
 ```
 
-You can also force this manually at runtime:
+The generic env-override mechanism (`ZEROCLAW_<dotted_path_with_double_underscores>=<value>`) can set the same field at runtime without editing `config.toml`:
 
 ```bash
-ZEROCLAW_OLLAMA_URI=http://ollama:11434 zeroclaw agent --agent default
+ZEROCLAW_providers__models__ollama__home__uri=http://ollama:11434 zeroclaw agent -a assistant
 ```
+
+The `__` is the path separator; the example above sets `providers.models.ollama.home.uri`. See [Environment variables](../reference/env-vars.md) for the full grammar.
 
 ## Per-family knobs — worked examples
 
 ### Ollama
 
 ```toml
-[providers.models.ollama.default]
+[providers.models.ollama.local]
 uri              = "http://localhost:11434"
 model            = "qwen3.6:35b-a3b"
 think            = false                    # disable reasoning mode for faster output
@@ -97,14 +107,14 @@ options          = { temperature = 0, num_ctx = 32768 }
 ### Azure OpenAI
 
 ```toml
-[providers.models.azure.default]
+[providers.models.azure.work]
 resource    = "my-resource"                 # template var: https://{resource}.openai.azure.com/...
 deployment  = "gpt-4o"
 api_version = "2024-10-01-preview"
 api_key     = "..."
 ```
 
-The `AZURE_OPENAI_RESOURCE` / `_DEPLOYMENT` / `_API_VERSION` environment variables are no longer read at runtime — values must live in this typed config. Migration auto-renames the legacy `azure_openai_*` field names to the unprefixed forms.
+The `resource`, `deployment`, and `api_version` values live in this typed config — they are not read from environment variables.
 
 ### Multi-region (Moonshot / Qwen / GLM / MiniMax / ...)
 
@@ -120,7 +130,7 @@ api_key  = "..."
 endpoint = "intl"                           # MoonshotEndpoint::Intl -> https://api.moonshot.ai/v1
 ```
 
-The previous `moonshot-cn` / `moonshot-intl` outer keys are gone — one type per family, region in the alias entry.
+One type per family; region picks via the `endpoint` field on the alias entry.
 
 ### Custom OpenAI-compatible endpoint
 
@@ -138,14 +148,13 @@ The `custom` slot requires `uri`. See [Custom providers](./custom.md).
 Agents reference a provider by dotted alias. Provider entries on their own do nothing.
 
 ```toml
-[agents.default]
-enabled        = true
-model_provider = "anthropic.default"
-risk_profile   = "default"
-runtime_profile = "default"
+[agents.assistant]
+model_provider  = "anthropic.home"   # `<type>.<alias>` into providers.models
+risk_profile    = "hardened"         # alias into risk_profiles.<alias>
+runtime_profile = "deep"             # alias into runtime_profiles.<alias>; independent of risk_profile
 ```
 
-`Config::validate()` fails loud at startup if `model_provider` doesn't resolve to a configured `[providers.models.<type>.<alias>]` entry. There is no `default_provider` / `default_model` / `fallback_providers` concept.
+`risk_profile` and `runtime_profile` reference independent alias maps, so their names need not match (`runtime_profile` is also optional). `Config::validate()` fails loud at startup if `model_provider` doesn't resolve to a configured `[providers.models.<type>.<alias>]` entry, or if `risk_profile` doesn't resolve to a configured `[risk_profiles.<alias>]` entry.
 
 For multiple agents pointing at different providers, see [Fallback & routing](./fallback-and-routing.md).
 

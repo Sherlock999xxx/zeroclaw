@@ -4,7 +4,7 @@ Every model-provider family ZeroClaw ships with. For each: config shape, notes o
 
 See [Configuration](./configuration.md) for universal fields (`api_key`, `uri`, `model`, ...) and resolution order.
 
-> Examples below use `default` as the alias. Pick whatever name makes sense (`work`, `personal`, `cn`, `prod`, ...). Reference it from an agent via `model_provider = "<type>.<alias>"`.
+> Examples below use `home` as the alias to underline that the alias half is operator-chosen — pick whatever name fits (`work`, `personal`, `cn`, `prod`, ...). Reference it from an agent via `model_provider = "<type>.<alias>"`.
 
 ---
 
@@ -13,7 +13,7 @@ See [Configuration](./configuration.md) for universal fields (`api_key`, `uri`, 
 ### Anthropic — slot `anthropic`
 
 ```toml
-[providers.models.anthropic.default]
+[providers.models.anthropic.home]
 model   = "claude-haiku-4-5-20251001"        # or claude-sonnet-4-6, claude-opus-4-7
 api_key = "sk-ant-..."                       # or "sk-ant-oat-..." for OAuth
 ```
@@ -23,27 +23,28 @@ Supports OAuth tokens (`sk-ant-oat*`) from Claude Pro/Team subscriptions — no 
 ### OpenAI — slot `openai`
 
 ```toml
-[providers.models.openai.default]
+[providers.models.openai.home]
 model   = "gpt-4o-mini"
 api_key = "sk-..."
 ```
 
 GPT-4o, GPT-5, o-series reasoning models. Reasoning tokens surfaced as `ReasoningDelta` events; see [Streaming](./streaming.md).
 
-### OpenAI Codex — slot `openai_codex`
+### OpenAI Codex — `openai` slot with `requires_openai_auth = true`
 
 ```toml
-[providers.models.openai_codex.default]
-model   = "gpt-5-codex"
-api_key = "sk-..."
+[providers.models.openai.coding]
+model                  = "gpt-5-codex"
+wire_api               = "responses"
+requires_openai_auth   = true
 ```
 
-OpenAI Codex variants. Dispatches via `requires_openai_auth = true` on the typed alias.
+OpenAI Codex subscription auth lives on the `openai` slot. Set `wire_api = "responses"` to route through `POST /v1/responses` and `requires_openai_auth = true` to pull credentials from `OPENAI_API_KEY` / `~/.codex/auth.json` instead of an `api_key` field on the entry.
 
 ### Ollama — slot `ollama`
 
 ```toml
-[providers.models.ollama.default]
+[providers.models.ollama.local]
 uri              = "http://localhost:11434"
 model            = "qwen3.6:35b-a3b"
 think            = false                     # disable chain-of-thought on reasoning models
@@ -55,7 +56,7 @@ Local inference via Ollama's native `/api/chat`. Schema-based structured output 
 ### Bedrock — slot `bedrock`
 
 ```toml
-[providers.models.bedrock.default]
+[providers.models.bedrock.home]
 region = "us-east-1"                         # AWS region template variable
 model  = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 # Auth via the standard AWS credentials chain (env, IAM role, ~/.aws/credentials).
@@ -64,7 +65,7 @@ model  = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 ### Gemini — slot `gemini`
 
 ```toml
-[providers.models.gemini.default]
+[providers.models.gemini.home]
 model   = "gemini-2.5-pro"
 api_key = "..."
 ```
@@ -74,7 +75,7 @@ Google's Gemini API. Supports vision and pre-executed grounded search (see [Stre
 ### Gemini CLI — slot `gemini_cli`
 
 ```toml
-[providers.models.gemini_cli.default]
+[providers.models.gemini_cli.home]
 model = "gemini-2.5-pro"
 ```
 
@@ -83,29 +84,28 @@ Shells out to the `gemini` CLI; uses the CLI's existing auth.
 ### Azure OpenAI — slot `azure`
 
 ```toml
-[providers.models.azure.default]
+[providers.models.azure.home]
 resource    = "my-resource"                  # https://{resource}.openai.azure.com/...
 deployment  = "gpt-4o"
 api_version = "2024-10-01-preview"
 api_key     = "..."
 ```
 
-The `AZURE_OPENAI_RESOURCE` / `_DEPLOYMENT` / `_API_VERSION` environment variables are no longer wired through — values must live in this typed config.
+`resource`, `deployment`, and `api_version` live in this typed config — they are not read from environment variables.
 
 ### Copilot — slot `copilot`
 
 ```toml
-[providers.models.copilot.default]
+[providers.models.copilot.home]
 model = "gpt-4o"
-# Authenticate via `zeroclaw onboard`; the wizard handles OAuth.
 ```
 
-Uses a GitHub Copilot subscription for agent inference.
+Uses a GitHub Copilot subscription for agent inference. Authentication uses a Copilot OAuth token obtained from GitHub.
 
 ### Telnyx — slot `telnyx`
 
 ```toml
-[providers.models.telnyx.default]
+[providers.models.telnyx.home]
 model   = "..."
 api_key = "..."
 ```
@@ -115,7 +115,7 @@ Voice-oriented AI endpoint. Pair with the `clawdtalk` channel for real-time SIP 
 ### KiloCLI — slot `kilocli`
 
 ```toml
-[providers.models.kilocli.default]
+[providers.models.kilocli.local]
 model = "..."
 ```
 
@@ -131,7 +131,7 @@ Every OpenAI-compatible vendor has its own canonical slot. There is no generic `
 |---|---|---|
 | `groq` | `https://api.groq.com/openai` | Native tool streaming hints supported |
 | `mistral` | `https://api.mistral.ai` | |
-| `xai` | `https://api.x.ai` | (Was: `xai` / `grok` synonyms; canonicalised on `xai`) |
+| `xai` | `https://api.x.ai` | |
 | `deepseek` | `https://api.deepseek.com` | DeepSeek V3 / R1 |
 | `cohere`, `perplexity`, `cerebras`, `sambanova`, `hyperbolic` | per vendor | Standard OpenAI shape |
 | `deepinfra`, `huggingface`, `together`, `fireworks` | per vendor | |
@@ -145,7 +145,7 @@ Every OpenAI-compatible vendor has its own canonical slot. There is no generic `
 Worked example (Groq):
 
 ```toml
-[providers.models.groq.default]
+[providers.models.groq.fast]
 model   = "llama-3.3-70b-versatile"
 api_key = "gsk_..."
 # `uri` is omitted — the family's typed endpoint enum supplies the URL.
@@ -178,33 +178,31 @@ api_key  = "..."
 endpoint = "intl"                            # https://api.moonshot.ai/v1
 ```
 
-Variants: `cn`, `intl`, `code`. Synonyms `kimi`, `kimi-cn`, `kimi-intl`, etc. are gone — they all canonicalise on `moonshot`.
+Variants: `cn`, `intl`, `code`.
 
 ### Qwen / DashScope — slot `qwen`
 
 ```toml
-[providers.models.qwen.default]
+[providers.models.qwen.intl]
 api_key   = "..."
 endpoint  = "intl"                           # variants: cn, intl
 auth_mode = "oauth"                          # optional; for OAuth-backed Qwen accounts
 ```
 
-Synonyms `dashscope`, `bailian`, `aliyun`, `qwen-cn`, `qwen-intl` are collapsed onto `qwen`. OAuth variants (formerly `qwen_oauth`) live under the same slot with `auth_mode = "oauth"`.
+OAuth-backed Qwen accounts use the same slot with `auth_mode = "oauth"`.
 
 ### GLM — slot `glm`
 
 ```toml
-[providers.models.glm.default]
+[providers.models.glm.home]
 api_key  = "..."
 endpoint = "default"
 ```
 
-Synonyms `zhipu`, `bigmodel`, `glm-cn`, `glm-intl` are collapsed onto `glm`.
-
 ### MiniMax — slot `minimax`
 
 ```toml
-[providers.models.minimax.default]
+[providers.models.minimax.intl]
 api_key  = "..."
 endpoint = "intl"                            # variants: cn, intl
 ```
@@ -212,7 +210,7 @@ endpoint = "intl"                            # variants: cn, intl
 ### Z.AI — slot `zai`
 
 ```toml
-[providers.models.zai.default]
+[providers.models.zai.home]
 api_key  = "..."
 endpoint = "global"
 ```
@@ -222,33 +220,31 @@ For Z.AI's Anthropic-compatible API, use `[providers.models.anthropic.zai]` with
 ### Doubao / Volcengine — slot `doubao`
 
 ```toml
-[providers.models.doubao.default]
+[providers.models.doubao.home]
 api_key  = "..."
 endpoint = "default"
 ```
 
-Synonyms `volcengine`, `ark`, `doubao-cn`, `doubao-intl` are collapsed onto `doubao`.
-
 ### Other Chinese-region slots
 
-- `yi` (was `01ai`, `lingyiwanwu`)
-- `hunyuan` (was `tencent`)
-- `qianfan` (was `baidu`)
+- `yi`
+- `hunyuan`
+- `qianfan`
 - `baichuan`
 
 ---
 
 ## Routing layers
 
-OpenRouter is treated as a single first-class provider, not a meta-router. Your runtime sees one endpoint; OpenRouter handles vendor fan-out behind that endpoint.
+OpenRouter is treated as a single first-class provider, not a meta-router. The runtime sees one endpoint; OpenRouter handles vendor fan-out behind that endpoint.
 
 ```toml
-[providers.models.openrouter.default]
+[providers.models.openrouter.home]
 model   = "anthropic/claude-sonnet-4-20250514"
 api_key = "sk-or-..."
 ```
 
-There is no `reliable` (fallback chain) or `router` (task-hint) family in V3 — those V2 meta-providers were removed. For per-task routing, run multiple agents and let channels pick which agent handles which traffic. See [Fallback & routing](./fallback-and-routing.md).
+There is no `reliable` (fallback chain) or `router` (task-hint) meta-family. For per-task routing, run multiple agents and let channels pick which agent handles which traffic — see [Routing](./fallback-and-routing.md). For a narrower in-config hint mechanism, use `[[model_routes]]`.
 
 ---
 

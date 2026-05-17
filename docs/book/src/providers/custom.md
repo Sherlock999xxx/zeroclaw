@@ -20,9 +20,9 @@ api_key = "..."                          # omit if the endpoint needs no auth
 The `custom` slot requires `uri` (the family's endpoint enum has no default). Reference it from an agent:
 
 ```toml
-[agents.default]
-enabled        = true
+[agents.assistant]
 model_provider = "custom.gateway"
+risk_profile   = "hardened"
 ```
 
 This is the same `OpenAiCompatibleModelProvider` runtime impl used by `groq`, `mistral`, `xai`, and every other vendor with its own canonical slot in the [catalog](./catalog.md). The difference is which family slot you use — `custom` is the catch-all for endpoints not represented by a vendor slot.
@@ -38,8 +38,8 @@ llama-server -hf ggml-org/gpt-oss-20b-GGUF --jinja -c 133000 --host 127.0.0.1 --
 ```
 
 ```toml
-[providers.models.llamacpp.default]
-uri   = "http://127.0.0.1:8033/v1"       # omit to use default http://localhost:8080/v1
+[providers.models.llamacpp.local]
+uri   = "http://127.0.0.1:8033/v1"       # omit to use the family default http://localhost:8080/v1
 model = "ggml-org/gpt-oss-20b-GGUF"
 # api_key only required if llama-server was started with --api-key
 ```
@@ -73,8 +73,8 @@ python -m sglang.launch_server --model meta-llama/Llama-3.1-8B-Instruct --port 3
 ```
 
 ```toml
-[providers.models.sglang.default]
-uri   = "http://localhost:30000/v1"      # default
+[providers.models.sglang.local]
+uri   = "http://localhost:30000/v1"      # family default
 model = "meta-llama/Llama-3.1-8B-Instruct"
 ```
 
@@ -85,8 +85,8 @@ vllm serve meta-llama/Llama-3.1-8B-Instruct
 ```
 
 ```toml
-[providers.models.vllm.default]
-uri   = "http://localhost:8000/v1"       # default
+[providers.models.vllm.local]
+uri   = "http://localhost:8000/v1"       # family default
 model = "meta-llama/Llama-3.1-8B-Instruct"
 ```
 
@@ -99,9 +99,9 @@ Slots `lmstudio`, `osaurus`, `litellm` follow the same pattern — see the [cata
 Regardless of approach:
 
 ```bash
-zeroclaw config validate                        # confirms every agent's model_provider resolves
+zeroclaw config list                          # loads config; any validation failures print to stderr
 zeroclaw models refresh --provider <type>.<alias>   # list models the endpoint advertises
-zeroclaw chat -a default -m "hello"             # smoke-test against the agent named `default`
+zeroclaw agent -a <alias> -m "hello"          # smoke-test against the agent at `[agents.<alias>]`
 ```
 
 ## Implementing a new `ModelProvider` trait

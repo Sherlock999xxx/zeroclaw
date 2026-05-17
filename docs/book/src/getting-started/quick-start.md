@@ -34,7 +34,7 @@ cargo install --locked --path . # inside a clone
 zeroclaw onboard
 ```
 
-The wizard asks ~9 questions. Minimum inputs:
+`zeroclaw onboard` walks through configured sections (model providers, risk profiles, channels, agents, …) and prompts for each. Minimum inputs:
 
 1. An **LLM provider** (Anthropic, OpenAI, Ollama, OpenRouter, etc.) and its API key or endpoint
 2. At least **one channel** — the default `cli` channel works; add Discord, Telegram, Slack, etc. if you want to chat from those platforms
@@ -44,10 +44,10 @@ Everything else has safe defaults. Total time: ~2 minutes.
 ## Talk to it
 
 ```bash
-zeroclaw agent
+zeroclaw agent -a <alias>
 ```
 
-This drops you into an interactive session using the `cli` channel. Type, get replies. Pass `-m "one-shot message"` for a single non-interactive turn.
+`<alias>` matches your `[agents.<alias>]` config entry — required, no default. This drops you into an interactive session using the `cli` channel. Pass `-m "one-shot message"` for a single non-interactive turn.
 
 For always-on deployment, register the service:
 
@@ -58,12 +58,12 @@ zeroclaw service start
 
 Then use a chat platform channel to reach the agent from Discord, Telegram, or wherever you configured.
 
-## If the wizard's questions annoy you
+## If onboarding's questions annoy you
 
-Run with defaults and skip channel setup:
+Run non-interactively with `--quick`:
 
 ```bash
-zeroclaw onboard --quick --provider ollama --model qwen3.6:35b-a3b
+zeroclaw onboard --quick --model-provider ollama --model qwen3.6:35b-a3b
 ```
 
 Or go all the way and use [YOLO mode](./yolo.md) — one config preset that disables approvals and safety gates. For dev boxes and home labs only.

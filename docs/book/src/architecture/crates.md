@@ -6,14 +6,14 @@ The workspace is split into layers. Edge crates talk to the outside world; core 
 
 ### `zeroclaw-runtime`
 
-The agent loop, security-policy enforcement, SOP engine, cron scheduler, onboarding wizard, and TUI. Depends on every other core and edge crate.
+The agent loop, security-policy enforcement, SOP engine, cron scheduler, onboarding sections, and TUI. Depends on every other core and edge crate.
 
 Notable submodules:
 
 - `agent/` — the main request/response loop, streaming, tool-call orchestration
 - `security/` — policy types, sandbox detection, OTP, emergency stop
 - `sop/` — Standard Operating Procedure engine (see [SOP → Overview](../sop/index.md))
-- `onboard/` — the first-run wizard (`wizard.rs`)
+- `onboard/` — the interactive onboarding sections (`mod.rs`, plus per-shape UIs under `ui/`)
 - `memory/` — wraps `zeroclaw-memory` with runtime-level caching and consolidation schedules
 - `service/` — systemd / launchctl / Windows Service integration
 

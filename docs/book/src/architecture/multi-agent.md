@@ -1,12 +1,12 @@
-# Multi-agent runtime (v0.8.0)
+# Multi-agent runtime
 
-This page documents the architecture and operator-facing surface of the multi-agent runtime that landed in v0.8.0 (#6272). The doc is intentionally short — for the schema-level field reference, see [Config](../reference/config.md); for live setup steps, see [Multi-agent setup](../contributing/multi-agent-setup.md).
+This page documents the architecture and operator-facing surface of the multi-agent runtime. The doc is intentionally short — for the schema-level field reference, see [Config](../reference/config.md); for live setup steps, see [Multi-agent setup](../contributing/multi-agent-setup.md).
 
 ## Vocabulary
 
 - **Install dir** — the directory holding everything ZeroClaw owns on a host. Typically `~/.zeroclaw/`. Equivalent to the dir containing `config.toml`.
-- **Agent** — a configured `[agents.<alias>]` block: a join table of references (risk_profile, model_provider, channels), a per-agent workspace dir, and a per-agent memory backend selection. Each agent picks one memory backend at creation; the choice is immutable in v0.8.0.
-- **Aliased workspace** — `<install>/agents/<alias>/workspace/`. One per agent. Holds the agent's identity files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `BOOTSTRAP.md`, `MEMORY.md`) and any operator data the agent owns. Replaces the v0.7.x single `<install>/workspace/`.
+- **Agent** — a configured `[agents.<alias>]` block: a join table of references (`risk_profile`, `model_provider`, `channels`), a per-agent workspace dir, and a per-agent memory backend selection. Each agent picks one memory backend at creation; that choice is immutable for the agent's lifetime.
+- **Aliased workspace** — `<install>/agents/<alias>/workspace/`. One per agent. Holds the agent's identity files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `BOOTSTRAP.md`, `MEMORY.md`) and any operator data the agent owns.
 - **SubAgent** — a runtime-spawned ephemeral sub-agent that inherits its parent's identity, security policy, and memory allowlist. Two spawn sites: the cron `JobType::Agent` dispatch and the agent-loop `spawn_subagent` tool. SubAgents cannot escalate beyond the parent's permissions.
 - **Peer group** — a `[peer_groups.<name>]` block declaring an opt-in cross-agent communication set on a single channel. Mutual membership: agents A and B are peers only when both appear in the same group's `agents` list.
 
@@ -34,37 +34,25 @@ Each agent has its own `Arc<dyn Memory>` instance. The factory (`zeroclaw_memory
 - **Qdrant**: shared collection, payload-keyed. The `agent_id` payload field is the per-agent attribution; `recall_for_agents` over-fetches and post-filters by payload.
 - **None**: no-op stub. The wrapper still exists so the runtime path is uniform.
 
-Cross-backend cross-agent memory is **out of scope for v0.8.0**. The schema validator at config load rejects `read_memory_from` entries that point at a sibling on a different backend; deferred to v0.8.1 alongside agent-rename and backend-switching.
-
-## v0.7.x → v0.8.0 upgrade
-
-On first boot of v0.8.0 against a v0.7.x install:
-
-1. **Filesystem migration** (`migrate_legacy_workspace_to_default_agent`): `<install>/workspace/` is moved into `<install>/agents/default/workspace/`. A timestamped backup at `<install>/backup-<ts>/legacy-workspace/` is written first (copy-not-rename, so a partial failure doesn't orphan the legacy data).
-2. **V3 schema migration** (`schema/v2.rs`): synthesizes an `agents.default` config block when one doesn't exist; `default_temperature`, `default_model`, etc. fold into the new shape.
-3. **DB migration** (`migrate_v0_8_0_multi_agent` on each backend): adds the `agents` table, inserts the `default` row with a fresh UUID, ALTERs `memories` to add `agent_id` (nullable, indexed), and backfills existing rows to the default agent's UUID.
-
-Every step is idempotent: a re-run on an already-migrated install is a no-op. Roll-back from a partially-applied upgrade: stop the daemon, restore from the backup dir, downgrade the binary.
+Cross-backend cross-agent memory is not supported: the schema validator at config load rejects `read_memory_from` entries that point at a sibling on a different backend.
 
 ## Logging
 
-Tracing-subscriber uses a custom event formatter that prefixes every log line with the active agent's alias (e.g. `[default] starting agent loop`). Lines emitted outside any agent-loop scope (boot, V3 migration, filesystem migration, scheduler poll) get a `[system]` prefix. `grep '\[<alias>\]' zeroclaw.log` isolates one agent's activity in a multi-agent install.
+Tracing-subscriber uses a custom event formatter that prefixes every log line with the active agent's alias (e.g. `[primary] starting agent loop`). Lines emitted outside any agent-loop scope (boot, filesystem operations, scheduler poll) get a `[system]` prefix. `grep '\[<alias>\]' zeroclaw.log` isolates one agent's activity in a multi-agent install.
 
 The agent-loop entry binds `agent_alias` as a tracing-span field; SubAgent spawn sites bind `parent_alias` so their nested spans carry attribution to the merged log stream. The structured sinks (otel, dora, prometheus) emit `agent_alias` as a label without further per-agent code paths.
 
 ## CLI
 
-- `zeroclaw agent ...` (singular) — runs an agent.
+- `zeroclaw agent -a <alias>` — runs the configured agent at `[agents.<alias>]`.
 
 Agents are added by editing `[agents.<alias>]` blocks in `config.toml`. The runtime creates the per-agent workspace dir under `<install>/agents/<alias>/workspace/` and seeds bootstrap identity files on first agent-loop entry. See the [setup walkthrough](../contributing/multi-agent-setup.md) for full operator guidance.
 
-## Out of scope for v0.8.0
+## Not supported today
 
-Tracked separately for v0.8.1:
-
-- Cross-backend cross-agent memory access (e.g. SQLite agent reading a Postgres agent's rows).
-- Agent rename. The `agents.id` UUID indirection is the rename-ready foundation.
-- Pre-delete archive and restore.
-- Per-agent secret namespacing. The single workspace-wide `SecretStore` stays unchanged.
-- Lucid wire-format extensions for cross-agent scoping.
-- A dedicated `zeroclaw agents` management CLI for creating/deleting/listing agents (plus the active-session refusal it would gate on).
+1. Cross-backend cross-agent memory access (e.g. SQLite agent reading a Postgres agent's rows).
+2. Agent rename (the `agents.id` UUID indirection is the rename-ready foundation, but no CLI/UI surface exists).
+3. Pre-delete archive and restore.
+4. Per-agent secret namespacing — there is a single workspace-wide `SecretStore`.
+5. Lucid wire-format extensions for cross-agent scoping.
+6. A dedicated `zeroclaw agents` management CLI for creating/deleting/listing agents.
