@@ -57,6 +57,9 @@ credentials.json
 # Claude Code agent worktrees (temporary isolated workspaces)
 .claude/worktrees/
 
+# Claude Code scheduled-task lock (machine-local runtime state)
+.claude/scheduled_tasks.lock
+
 # Claude Code skill session state (review handoffs, changelog drafts, review bodies)
 tmp/
 
