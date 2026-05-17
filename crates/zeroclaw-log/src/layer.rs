@@ -69,10 +69,7 @@ where
             let mut v = AttributionSpanCollector::default();
             attrs.record(&mut v);
             let mut attribution = ZeroclawAttribution::default();
-            let default_category = v
-                .default_category
-                .as_deref()
-                .and_then(EventCategory::parse);
+            let default_category = v.default_category.as_deref().and_then(EventCategory::parse);
             v.apply_into(&mut attribution);
             let mut exts = span.extensions_mut();
             exts.insert(attribution);
@@ -404,11 +401,7 @@ impl AttributionSpanCollector {
             return;
         };
 
-        if let Some(prefix) = self
-            .composite_prefix
-            .as_deref()
-            .filter(|s| !s.is_empty())
-        {
+        if let Some(prefix) = self.composite_prefix.as_deref().filter(|s| !s.is_empty()) {
             // Composite role: build `<type>.<alias>` if we have type;
             // otherwise just the alias as the bare composite value.
             let ty = self.role_type.as_deref().unwrap_or("");
@@ -417,11 +410,7 @@ impl AttributionSpanCollector {
             } else {
                 attr.set_composite(prefix, alias);
             }
-        } else if let Some(field) = self
-            .attribution_field
-            .as_deref()
-            .filter(|s| !s.is_empty())
-        {
+        } else if let Some(field) = self.attribution_field.as_deref().filter(|s| !s.is_empty()) {
             attr.set(field, alias);
         }
 
@@ -476,7 +465,13 @@ struct ScopeSpanCollector {
 }
 
 impl ScopeSpanCollector {
-    fn install<'a>(self, span: tracing_subscriber::registry::SpanRef<'a, impl Subscriber + for<'lookup> LookupSpan<'lookup>>) {
+    fn install<'a>(
+        self,
+        span: tracing_subscriber::registry::SpanRef<
+            'a,
+            impl Subscriber + for<'lookup> LookupSpan<'lookup>,
+        >,
+    ) {
         if !self.attribution.fields.is_empty() || self.attribution.duration_ms.is_some() {
             let mut exts = span.extensions_mut();
             if let Some(existing) = exts.get_mut::<ZeroclawAttribution>() {
@@ -622,7 +617,11 @@ mod e2e_tests {
         {
             use zeroclaw_log::Instrument;
             async {
-                zeroclaw_log::record!(INFO, Event::new(module_path!(), Action::Note).with_outcome(EventOutcome::Success), "attribution-span e2e test");
+                zeroclaw_log::record!(
+                    INFO,
+                    Event::new(module_path!(), Action::Note).with_outcome(EventOutcome::Success),
+                    "attribution-span e2e test"
+                );
             }
             .instrument(zeroclaw_log::attribution_span!(&thing))
             .await;

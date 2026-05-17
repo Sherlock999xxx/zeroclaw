@@ -170,7 +170,13 @@ async fn persist_line_paired_identity(state: &LineState, user_id: &str) -> anyho
     use zeroclaw_config::providers::ChannelRef;
 
     let Some(config) = &state.persist else {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"user_id": user_id})), "paired userId not persisted (no persistence handle wired)");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"user_id": user_id})),
+            "paired userId not persisted (no persistence handle wired)"
+        );
         return Ok(());
     };
     let normalized = user_id.trim().to_string();
@@ -236,7 +242,12 @@ async fn handle_webhook(
     };
 
     if !sig_valid {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "rejected request with invalid signature");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "rejected request with invalid signature"
+        );
         return StatusCode::UNAUTHORIZED;
     }
 
@@ -244,7 +255,13 @@ async fn handle_webhook(
     let payload: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "invalid JSON payload");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "invalid JSON payload"
+            );
             return StatusCode::BAD_REQUEST;
         }
     };
@@ -288,7 +305,11 @@ async fn handle_webhook(
             }
             "audio" => {
                 let Some(ref manager) = state.transcription_manager else {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "audio message ignored (transcription not configured)");
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        "audio message ignored (transcription not configured)"
+                    );
                     continue;
                 };
                 let audio = match download_audio_content(
@@ -301,18 +322,48 @@ async fn handle_webhook(
                 {
                     Ok(b) => b,
                     Err(e) => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string(), "msg_id": msg_id})), "audio download failed for");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(
+                                ::serde_json::json!({"error": e.to_string(), "msg_id": msg_id})
+                            ),
+                            "audio download failed for"
+                        );
                         continue;
                     }
                 };
                 let transcript = match manager.transcribe(&audio, "audio.m4a").await {
                     Ok(t) if !t.trim().is_empty() => t,
                     Ok(_) => {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"msg_id": msg_id})), "empty transcript for");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"msg_id": msg_id})),
+                            "empty transcript for"
+                        );
                         continue;
                     }
                     Err(e) => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string(), "msg_id": msg_id})), "transcription failed for");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(
+                                ::serde_json::json!({"error": e.to_string(), "msg_id": msg_id})
+                            ),
+                            "transcription failed for"
+                        );
                         continue;
                     }
                 };
@@ -342,7 +393,17 @@ async fn handle_webhook(
                 LineGroupPolicy::Mention => {
                     let mention_span = LineChannel::find_bot_mention(msg_obj, &state.bot_user_id);
                     if mention_span.is_none() {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("skipping group message without bot mention (userId: {})", state.bot_user_id));
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            ),
+                            &format!(
+                                "skipping group message without bot mention (userId: {})",
+                                state.bot_user_id
+                            )
+                        );
                         continue;
                     }
                 }
@@ -355,7 +416,16 @@ async fn handle_webhook(
                 LineDmPolicy::Open => {}
                 LineDmPolicy::Allowlist => {
                     if !is_line_user_allowed(&*state, user_id) {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"user_id": user_id})), "ignoring DM from unauthorized user: . Add to the channel peer group or use dm_policy = pairing.");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"user_id": user_id})),
+                            "ignoring DM from unauthorized user: . Add to the channel peer group or use dm_policy = pairing."
+                        );
                         continue;
                     }
                 }
@@ -371,11 +441,30 @@ async fn handle_webhook(
                                         {
                                             ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"user_id": user_id, "e": e.to_string()})), "paired userId= but persist failed");
                                         } else {
-                                            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"user_id": user_id})), "paired userId=");
+                                            ::zeroclaw_log::record!(
+                                                INFO,
+                                                ::zeroclaw_log::Event::new(
+                                                    module_path!(),
+                                                    ::zeroclaw_log::Action::Note
+                                                )
+                                                .with_attrs(
+                                                    ::serde_json::json!({"user_id": user_id})
+                                                ),
+                                                "paired userId="
+                                            );
                                         }
                                     }
                                     Ok(None) => {
-                                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"user_id": user_id})), "invalid bind code from userId=");
+                                        ::zeroclaw_log::record!(
+                                            WARN,
+                                            ::zeroclaw_log::Event::new(
+                                                module_path!(),
+                                                ::zeroclaw_log::Action::Note
+                                            )
+                                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                            .with_attrs(::serde_json::json!({"user_id": user_id})),
+                                            "invalid bind code from userId="
+                                        );
                                     }
                                     Err(wait_ms) => {
                                         ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"user_id": user_id, "wait_ms": wait_ms})), "bind rate-limited for userId=, retry after ms");
@@ -444,7 +533,12 @@ async fn handle_webhook(
         };
 
         if state.tx.send(channel_msg).await.is_err() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "receiver dropped, shutting down webhook server");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "receiver dropped, shutting down webhook server"
+            );
             return StatusCode::SERVICE_UNAVAILABLE;
         }
     }
@@ -581,7 +675,13 @@ impl LineChannel {
                 self.transcription_manager = Some(Arc::new(m));
             }
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"e": e.to_string()})), "transcription manager init failed, audio transcription disabled");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"e": e.to_string()})),
+                    "transcription manager init failed, audio transcription disabled"
+                );
             }
         }
         self
@@ -857,7 +957,13 @@ impl Channel for LineChannel {
             match self.send_reply(&token, &message.content).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"e": e.to_string()})), "Reply API failed (token may be expired), falling back to Push");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"e": e.to_string()})),
+                        "Reply API failed (token may be expired), falling back to Push"
+                    );
                 }
             }
         }
@@ -873,10 +979,24 @@ impl Channel for LineChannel {
     /// via `message.mention.mentionees`.
     async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
         let bot_info = self.fetch_bot_info().await?;
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("connected as '{}' (userId: {})", bot_info.display_name, bot_info.user_id));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "connected as '{}' (userId: {})",
+                bot_info.display_name, bot_info.user_id
+            )
+        );
 
         let addr = std::net::SocketAddr::from(([0, 0, 0, 0], self.webhook_port));
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("webhook server listening on http://0.0.0.0:{}/line/webhook", self.webhook_port));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "webhook server listening on http://0.0.0.0:{}/line/webhook",
+                self.webhook_port
+            )
+        );
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         self.listen_with_listener(listener, bot_info.user_id, tx)

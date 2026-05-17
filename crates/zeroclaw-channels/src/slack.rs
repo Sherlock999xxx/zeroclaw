@@ -293,7 +293,13 @@ impl SlackChannel {
                 self.transcription = Some(config);
             }
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"e": e.to_string()})), "transcription manager init failed, voice transcription disabled");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"e": e.to_string()})),
+                    "transcription manager init failed, voice transcription disabled"
+                );
             }
         }
         self
@@ -335,7 +341,12 @@ impl SlackChannel {
                 .get("error")
                 .and_then(|e| e.as_str())
                 .unwrap_or("unknown");
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": err.to_string()})), "chat.delete failed");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"error": err.to_string()})),
+                "chat.delete failed"
+            );
         }
 
         Ok(())
@@ -748,7 +759,15 @@ impl SlackChannel {
         {
             Ok(response) => response,
             Err(err) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string(), "user_id": user_id})), "users.info request failed for");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(
+                            ::serde_json::json!({"error": err.to_string(), "user_id": user_id})
+                        ),
+                    "users.info request failed for"
+                );
                 return None;
             }
         };
@@ -771,7 +790,15 @@ impl SlackChannel {
                 .get("error")
                 .and_then(|e| e.as_str())
                 .unwrap_or("unknown");
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string(), "user_id": user_id})), "users.info returned error for");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(
+                        ::serde_json::json!({"error": err.to_string(), "user_id": user_id})
+                    ),
+                "users.info returned error for"
+            );
             return None;
         }
 
@@ -1051,7 +1078,15 @@ impl SlackChannel {
         {
             Ok(response) => response,
             Err(err) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Slack permalink resolver: conversations.history request failed for channel={} ts={}: {}", channel_id, message_ts, err));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "Slack permalink resolver: conversations.history request failed for channel={} ts={}: {}",
+                        channel_id, message_ts, err
+                    )
+                );
                 return SlackPermalinkLookup::NotFound;
             }
         };
@@ -1063,7 +1098,15 @@ impl SlackChannel {
             .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
         if !status.is_success() {
             let sanitized = zeroclaw_providers::sanitize_api_error(&body);
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Slack permalink resolver: conversations.history failed for channel={} ts={} ({}): {}", channel_id, message_ts, status, sanitized));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "Slack permalink resolver: conversations.history failed for channel={} ts={} ({}): {}",
+                    channel_id, message_ts, status, sanitized
+                )
+            );
             return SlackPermalinkLookup::NotFound;
         }
 
@@ -1221,7 +1264,16 @@ impl SlackChannel {
         };
 
         if files.len() > SLACK_ATTACHMENT_MAX_FILES_PER_MESSAGE {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("message has {} files; processing first {} only", files.len(), SLACK_ATTACHMENT_MAX_FILES_PER_MESSAGE));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "message has {} files; processing first {} only",
+                    files.len(),
+                    SLACK_ATTACHMENT_MAX_FILES_PER_MESSAGE
+                )
+            );
         }
 
         let limited_files = files
@@ -1314,7 +1366,15 @@ impl SlackChannel {
         {
             Ok(response) => response,
             Err(err) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string(), "file_id": file_id})), "files.info request failed for");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(
+                            ::serde_json::json!({"error": err.to_string(), "file_id": file_id})
+                        ),
+                    "files.info request failed for"
+                );
                 return None;
             }
         };
@@ -1336,7 +1396,15 @@ impl SlackChannel {
                 .get("error")
                 .and_then(|value| value.as_str())
                 .unwrap_or("unknown");
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string(), "file_id": file_id})), "files.info returned error for");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(
+                        ::serde_json::json!({"error": err.to_string(), "file_id": file_id})
+                    ),
+                "files.info returned error for"
+            );
             return None;
         }
 
@@ -1462,16 +1530,37 @@ impl SlackChannel {
         let redacted = Self::redact_slack_url(&parsed);
 
         if parsed.scheme() != "https" {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("file URL rejected due to non-HTTPS scheme for {}: {}", redacted, parsed.scheme()));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "file URL rejected due to non-HTTPS scheme for {}: {}",
+                    redacted,
+                    parsed.scheme()
+                )
+            );
             return None;
         }
 
         let Some(host) = parsed.host_str() else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"redacted": redacted})), "file URL rejected due to missing host");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"redacted": redacted})),
+                "file URL rejected due to missing host"
+            );
             return None;
         };
         if !Self::is_allowed_slack_media_hostname(host) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"redacted": redacted})), "file URL rejected due to non-Slack host");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"redacted": redacted})),
+                "file URL rejected due to non-Slack host"
+            );
             return None;
         }
 
@@ -1484,21 +1573,53 @@ impl SlackChannel {
         let target = match base.join(location) {
             Ok(url) => url,
             Err(err) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("file redirect URL parse failed for base {} and location {}: {}", redacted_base, redacted_location, err));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "file redirect URL parse failed for base {} and location {}: {}",
+                        redacted_base, redacted_location, err
+                    )
+                );
                 return None;
             }
         };
         let redacted_target = Self::redact_slack_url(&target);
         if target.scheme() != "https" {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("file redirect rejected due to non-HTTPS scheme for {}", redacted_target));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "file redirect rejected due to non-HTTPS scheme for {}",
+                    redacted_target
+                )
+            );
             return None;
         }
         let Some(host) = target.host_str() else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("file redirect rejected due to missing host for {}", redacted_target));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "file redirect rejected due to missing host for {}",
+                    redacted_target
+                )
+            );
             return None;
         };
         if !Self::is_allowed_slack_media_hostname(host) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("file redirect rejected due to non-Slack host for {}", redacted_target));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "file redirect rejected due to non-Slack host for {}",
+                    redacted_target
+                )
+            );
             return None;
         }
         Some(target)
@@ -1524,7 +1645,12 @@ impl SlackChannel {
         let client = match self.slack_media_http_client_no_redirect() {
             Ok(client) => client,
             Err(err) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("file fetch failed for {}: {}", redacted_parsed, err));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!("file fetch failed for {}: {}", redacted_parsed, err)
+                );
                 return None;
             }
         };
@@ -1539,7 +1665,12 @@ impl SlackChannel {
             let response = match req.send().await {
                 Ok(response) => response,
                 Err(err) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("file fetch failed for {}: {}", redacted_current, err));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!("file fetch failed for {}: {}", redacted_current, err)
+                    );
                     return None;
                 }
             };
@@ -1549,7 +1680,15 @@ impl SlackChannel {
             }
 
             if redirect_hop == SLACK_MEDIA_REDIRECT_MAX_HOPS {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("file redirect limit exceeded for {} after {} hops", redacted_current, SLACK_MEDIA_REDIRECT_MAX_HOPS));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "file redirect limit exceeded for {} after {} hops",
+                        redacted_current, SLACK_MEDIA_REDIRECT_MAX_HOPS
+                    )
+                );
                 return Some(response);
             }
 
@@ -1557,7 +1696,15 @@ impl SlackChannel {
                 return Some(response);
             };
             let Ok(location) = location.to_str() else {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("file redirect location header is not valid UTF-8 for {}", redacted_current));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "file redirect location header is not valid UTF-8 for {}",
+                        redacted_current
+                    )
+                );
                 return Some(response);
             };
             let Some(next_url) = Self::resolve_https_redirect_target(&current_url, location) else {
@@ -1573,7 +1720,15 @@ impl SlackChannel {
         let file_name = Self::slack_file_name(file);
         let image_urls = Self::slack_image_candidate_urls(file);
         if image_urls.is_empty() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("file attachment is image-like but has no downloadable URL: {}", file_name));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "file attachment is image-like but has no downloadable URL: {}",
+                    file_name
+                )
+            );
             return None;
         }
 
@@ -1583,7 +1738,13 @@ impl SlackChannel {
             }
         }
 
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"file_name": file_name})), "image attachment download failed for");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"file_name": file_name})),
+            "image attachment download failed for"
+        );
         None
     }
 
@@ -1602,7 +1763,15 @@ impl SlackChannel {
                 .await
                 .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
             let sanitized = zeroclaw_providers::sanitize_api_error(&body);
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image fetch failed for {} ({status}): {sanitized}", redacted_url));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "image fetch failed for {} ({status}): {sanitized}",
+                    redacted_url
+                )
+            );
             return None;
         }
 
@@ -1614,7 +1783,15 @@ impl SlackChannel {
         if let Some(content_length) = resp.content_length() {
             let content_length = usize::try_from(content_length).unwrap_or(usize::MAX);
             if content_length > SLACK_ATTACHMENT_IMAGE_MAX_BYTES {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image fetch skipped for {}: content-length {} exceeds {} bytes", redacted_url, content_length, SLACK_ATTACHMENT_IMAGE_MAX_BYTES));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "image fetch skipped for {}: content-length {} exceeds {} bytes",
+                        redacted_url, content_length, SLACK_ATTACHMENT_IMAGE_MAX_BYTES
+                    )
+                );
                 return None;
             }
         }
@@ -1622,27 +1799,58 @@ impl SlackChannel {
         let bytes = match resp.bytes().await {
             Ok(bytes) => bytes,
             Err(err) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string()})), &format!("image body read failed for {}", redacted_url));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": err.to_string()})),
+                    &format!("image body read failed for {}", redacted_url)
+                );
                 return None;
             }
         };
         if bytes.is_empty() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image body is empty for {}", redacted_url));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!("image body is empty for {}", redacted_url)
+            );
             return None;
         }
         if bytes.len() > SLACK_ATTACHMENT_IMAGE_MAX_BYTES {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image body too large for {}: {} bytes exceeds {} bytes", redacted_url, bytes.len(), SLACK_ATTACHMENT_IMAGE_MAX_BYTES));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "image body too large for {}: {} bytes exceeds {} bytes",
+                    redacted_url,
+                    bytes.len(),
+                    SLACK_ATTACHMENT_IMAGE_MAX_BYTES
+                )
+            );
             return None;
         }
 
         let Some(mime) =
             Self::detect_image_mime(content_type.as_deref(), file, bytes.as_ref(), url)
         else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image MIME detection failed for {}", redacted_url));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!("image MIME detection failed for {}", redacted_url)
+            );
             return None;
         };
         if !Self::is_supported_image_mime(&mime) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image MIME not supported for {}: {mime}", redacted_url));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!("image MIME not supported for {}: {mime}", redacted_url)
+            );
             return None;
         }
 
@@ -1655,7 +1863,17 @@ impl SlackChannel {
         }
 
         if bytes.len() > SLACK_ATTACHMENT_IMAGE_INLINE_FALLBACK_MAX_BYTES {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image inline fallback skipped for {}: {} bytes exceeds {} bytes", redacted_url, bytes.len(), SLACK_ATTACHMENT_IMAGE_INLINE_FALLBACK_MAX_BYTES));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "image inline fallback skipped for {}: {} bytes exceeds {} bytes",
+                    redacted_url,
+                    bytes.len(),
+                    SLACK_ATTACHMENT_IMAGE_INLINE_FALLBACK_MAX_BYTES
+                )
+            );
             return None;
         }
 
@@ -1678,20 +1896,44 @@ impl SlackChannel {
             .and_then(Self::normalized_content_type)
             .filter(|mime| mime.starts_with("image/"))
         {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image MIME mismatch for {}: HTTP header claims {}, but bytes do not match a supported image signature", redacted_source, header_mime));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "image MIME mismatch for {}: HTTP header claims {}, but bytes do not match a supported image signature",
+                    redacted_source, header_mime
+                )
+            );
         }
 
         if let Some(file_mime) =
             Self::slack_file_mime(file).filter(|mime| mime.starts_with("image/"))
         {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image MIME mismatch for {}: file metadata claims {}, but bytes do not match a supported image signature", redacted_source, file_mime));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "image MIME mismatch for {}: file metadata claims {}, but bytes do not match a supported image signature",
+                    redacted_source, file_mime
+                )
+            );
         }
 
         if let Some(ext) = Self::file_extension(source_url)
             .or_else(|| Self::file_extension(&Self::slack_file_name(file)))
             && let Some(mime) = Self::mime_from_extension(&ext)
         {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image MIME mismatch for {}: filename extension implies {}, but bytes do not match a supported image signature", redacted_source, mime));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "image MIME mismatch for {}: filename extension implies {}, but bytes do not match a supported image signature",
+                    redacted_source, mime
+                )
+            );
         }
 
         None
@@ -1773,13 +2015,29 @@ impl SlackChannel {
         {
             Ok(path) => path,
             Err(err) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image attachment path resolution failed for {}: {err}", file_name));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "image attachment path resolution failed for {}: {err}",
+                        file_name
+                    )
+                );
                 return None;
             }
         };
 
         let Some(parent_dir) = output_path.parent() else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image attachment write failed for {}: missing parent directory", output_path.display()));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "image attachment write failed for {}: missing parent directory",
+                    output_path.display()
+                )
+            );
             return None;
         };
 
@@ -1801,18 +2059,42 @@ impl SlackChannel {
         {
             Ok(file) => file,
             Err(err) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image attachment temp open failed for {}: {err}", temp_path.display()));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "image attachment temp open failed for {}: {err}",
+                        temp_path.display()
+                    )
+                );
                 return None;
             }
         };
 
         if let Err(err) = temp_file.write_all(bytes).await {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image attachment temp write failed for {}: {err}", temp_path.display()));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "image attachment temp write failed for {}: {err}",
+                    temp_path.display()
+                )
+            );
             let _ = tokio::fs::remove_file(&temp_path).await;
             return None;
         }
         if let Err(err) = temp_file.sync_all().await {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image attachment temp sync failed for {}: {err}", temp_path.display()));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "image attachment temp sync failed for {}: {err}",
+                    temp_path.display()
+                )
+            );
             let _ = tokio::fs::remove_file(&temp_path).await;
             return None;
         }
@@ -1823,7 +2105,15 @@ impl SlackChannel {
         // outside the workspace.
         match tokio::fs::symlink_metadata(&output_path).await {
             Ok(meta) if meta.file_type().is_symlink() => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image attachment refused: output path is a symlink: {}", output_path.display()));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "image attachment refused: output path is a symlink: {}",
+                        output_path.display()
+                    )
+                );
                 let _ = tokio::fs::remove_file(&temp_path).await;
                 return None;
             }
@@ -1831,7 +2121,15 @@ impl SlackChannel {
         }
 
         if let Err(err) = tokio::fs::rename(&temp_path, &output_path).await {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("image attachment finalize failed for {}: {err}", output_path.display()));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "image attachment finalize failed for {}: {err}",
+                    output_path.display()
+                )
+            );
             let _ = tokio::fs::remove_file(&temp_path).await;
             return None;
         }
@@ -2115,14 +2413,25 @@ impl SlackChannel {
         let resp = self.fetch_slack_private_file(url).await?;
         let status = resp.status();
         if !status.is_success() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("voice file download failed for {} ({status})", redacted_url));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!("voice file download failed for {} ({status})", redacted_url)
+            );
             return None;
         }
 
         let audio_data = match resp.bytes().await {
             Ok(bytes) => bytes.to_vec(),
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), &format!("voice file read failed for {}", redacted_url));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    &format!("voice file read failed for {}", redacted_url)
+                );
                 return None;
             }
         };
@@ -2145,15 +2454,33 @@ impl SlackChannel {
             Ok(text) => {
                 let trimmed = text.trim();
                 if trimmed.is_empty() {
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "voice transcription returned empty text, skipping");
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        "voice transcription returned empty text, skipping"
+                    );
                     None
                 } else {
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("transcribed voice file {} ({} chars)", file_name, trimmed.len()));
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        &format!(
+                            "transcribed voice file {} ({} chars)",
+                            file_name,
+                            trimmed.len()
+                        )
+                    );
                     Some(format!("[Voice] {trimmed}"))
                 }
             }
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), &format!("voice transcription failed for {}", file_name));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    &format!("voice transcription failed for {}", file_name)
+                );
                 Some(Self::format_attachment_summary(file))
             }
         }
@@ -2171,14 +2498,30 @@ impl SlackChannel {
                 .await
                 .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
             let sanitized = zeroclaw_providers::sanitize_api_error(&body);
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("snippet fetch failed for {} ({status}): {sanitized}", redacted_url));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "snippet fetch failed for {} ({status}): {sanitized}",
+                    redacted_url
+                )
+            );
             return None;
         }
 
         if let Some(content_length) = resp.content_length() {
             let content_length = usize::try_from(content_length).unwrap_or(usize::MAX);
             if content_length > SLACK_ATTACHMENT_TEXT_DOWNLOAD_MAX_BYTES {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("snippet download skipped for {}: content-length {} exceeds {} bytes", redacted_url, content_length, SLACK_ATTACHMENT_TEXT_DOWNLOAD_MAX_BYTES));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "snippet download skipped for {}: content-length {} exceeds {} bytes",
+                        redacted_url, content_length, SLACK_ATTACHMENT_TEXT_DOWNLOAD_MAX_BYTES
+                    )
+                );
                 return None;
             }
         }
@@ -2186,7 +2529,13 @@ impl SlackChannel {
         let bytes = match resp.bytes().await {
             Ok(bytes) => bytes,
             Err(err) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string()})), &format!("snippet body read failed for {}", redacted_url));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": err.to_string()})),
+                    &format!("snippet body read failed for {}", redacted_url)
+                );
                 return None;
             }
         };
@@ -2194,11 +2543,26 @@ impl SlackChannel {
             return None;
         }
         if bytes.len() > SLACK_ATTACHMENT_TEXT_DOWNLOAD_MAX_BYTES {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("snippet body too large for {}: {} bytes exceeds {} bytes", redacted_url, bytes.len(), SLACK_ATTACHMENT_TEXT_DOWNLOAD_MAX_BYTES));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "snippet body too large for {}: {} bytes exceeds {} bytes",
+                    redacted_url,
+                    bytes.len(),
+                    SLACK_ATTACHMENT_TEXT_DOWNLOAD_MAX_BYTES
+                )
+            );
             return None;
         }
         if bytes.contains(&0) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("snippet body appears binary for {}", redacted_url));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!("snippet body appears binary for {}", redacted_url)
+            );
             return None;
         }
 
@@ -2431,7 +2795,12 @@ impl SlackChannel {
             .unwrap_or_default();
 
         if channel_id.is_empty() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "block_actions: missing channel ID in interactive payload");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "block_actions: missing channel ID in interactive payload"
+            );
             return None;
         }
 
@@ -2519,7 +2888,16 @@ impl SlackChannel {
                 }
                 Err(e) => {
                     let wait = Self::compute_socket_mode_retry_delay(open_url_attempt);
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Socket Mode: failed to open websocket URL: {e}; retrying in {:.3}s (attempt #{})", wait.as_secs_f64(), open_url_attempt.saturating_add(1)));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!(
+                            "Socket Mode: failed to open websocket URL: {e}; retrying in {:.3}s (attempt #{})",
+                            wait.as_secs_f64(),
+                            open_url_attempt.saturating_add(1)
+                        )
+                    );
                     open_url_attempt = open_url_attempt.saturating_add(1);
                     tokio::time::sleep(wait).await;
                     continue;
@@ -2539,13 +2917,26 @@ impl SlackChannel {
                 }
                 Err(e) => {
                     let wait = Self::compute_socket_mode_retry_delay(socket_reconnect_attempt);
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Socket Mode: websocket connect failed: {e}; retrying in {:.3}s (attempt #{})", wait.as_secs_f64(), socket_reconnect_attempt.saturating_add(1)));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!(
+                            "Socket Mode: websocket connect failed: {e}; retrying in {:.3}s (attempt #{})",
+                            wait.as_secs_f64(),
+                            socket_reconnect_attempt.saturating_add(1)
+                        )
+                    );
                     socket_reconnect_attempt = socket_reconnect_attempt.saturating_add(1);
                     tokio::time::sleep(wait).await;
                     continue;
                 }
             };
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Socket Mode: websocket connected");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "Socket Mode: websocket connected"
+            );
 
             let (mut write, mut read) = ws_stream.split();
 
@@ -2554,18 +2945,44 @@ impl SlackChannel {
                     Ok(WsMessage::Text(text)) => text,
                     Ok(WsMessage::Ping(payload)) => {
                         if let Err(e) = write.send(WsMessage::Pong(payload)).await {
-                            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Socket Mode: pong send failed");
+                            ::zeroclaw_log::record!(
+                                WARN,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                                "Socket Mode: pong send failed"
+                            );
                             break;
                         }
                         continue;
                     }
                     Ok(WsMessage::Close(_)) => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Socket Mode: websocket closed by server");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            "Socket Mode: websocket closed by server"
+                        );
                         break;
                     }
                     Ok(_) => continue,
                     Err(e) => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Socket Mode: websocket read failed");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "Socket Mode: websocket read failed"
+                        );
                         break;
                     }
                 };
@@ -2573,7 +2990,16 @@ impl SlackChannel {
                 let envelope: serde_json::Value = match serde_json::from_str(text.as_ref()) {
                     Ok(value) => value,
                     Err(e) => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Socket Mode: invalid JSON payload");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "Socket Mode: invalid JSON payload"
+                        );
                         continue;
                     }
                 };
@@ -2581,7 +3007,16 @@ impl SlackChannel {
                 if let Some(envelope_id) = envelope.get("envelope_id").and_then(|v| v.as_str()) {
                     let ack = serde_json::json!({ "envelope_id": envelope_id });
                     if let Err(e) = write.send(WsMessage::Text(ack.to_string().into())).await {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Socket Mode: ack send failed");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "Socket Mode: ack send failed"
+                        );
                         break;
                     }
                 }
@@ -2591,7 +3026,12 @@ impl SlackChannel {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
                 if envelope_type == "disconnect" {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Socket Mode: received disconnect event");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        "Socket Mode: received disconnect event"
+                    );
                     break;
                 }
 
@@ -2738,7 +3178,13 @@ impl SlackChannel {
                     continue;
                 }
                 if !self.is_user_allowed(user) {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"user": user})), "ignoring message from unauthorized user");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"user": user})),
+                        "ignoring message from unauthorized user"
+                    );
                     continue;
                 }
 
@@ -2815,7 +3261,16 @@ impl SlackChannel {
             }
 
             let wait = Self::compute_socket_mode_retry_delay(socket_reconnect_attempt);
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Socket Mode: reconnecting in {:.3}s (attempt #{})...", wait.as_secs_f64(), socket_reconnect_attempt.saturating_add(1)));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "Socket Mode: reconnecting in {:.3}s (attempt #{})...",
+                    wait.as_secs_f64(),
+                    socket_reconnect_attempt.saturating_add(1)
+                )
+            );
             socket_reconnect_attempt = socket_reconnect_attempt.saturating_add(1);
             tokio::time::sleep(wait).await;
         }
@@ -2954,7 +3409,17 @@ impl SlackChannel {
 
             if is_ratelimited_http || is_ratelimited_payload {
                 if attempt >= SLACK_HISTORY_MAX_RETRIES {
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure), &format!("Slack rate limit retries exhausted for conversations.history on channel {}. Total wait: {}s across {} attempts. Proceeding without channel history.", channel_id, total_wait.as_secs(), SLACK_HISTORY_MAX_RETRIES));
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure),
+                        &format!(
+                            "Slack rate limit retries exhausted for conversations.history on channel {}. Total wait: {}s across {} attempts. Proceeding without channel history.",
+                            channel_id,
+                            total_wait.as_secs(),
+                            SLACK_HISTORY_MAX_RETRIES
+                        )
+                    );
                     return None;
                 }
 
@@ -2964,14 +3429,34 @@ impl SlackChannel {
                 let wait = Self::compute_retry_delay(retry_after_secs, attempt, jitter_ms);
                 total_wait += wait;
                 let next_retry_at = Self::next_retry_timestamp(wait);
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Slack conversations.history rate limited for channel {}. Retry-After: {}s. Attempt {}/{}. Next retry at {}.", channel_id, retry_after_secs, attempt + 1, SLACK_HISTORY_MAX_RETRIES, next_retry_at));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "Slack conversations.history rate limited for channel {}. Retry-After: {}s. Attempt {}/{}. Next retry at {}.",
+                        channel_id,
+                        retry_after_secs,
+                        attempt + 1,
+                        SLACK_HISTORY_MAX_RETRIES,
+                        next_retry_at
+                    )
+                );
                 tokio::time::sleep(wait).await;
                 continue;
             }
 
             if !status.is_success() {
                 let sanitized = zeroclaw_providers::sanitize_api_error(&body);
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("history request failed for channel {} ({}): {}", channel_id, status, sanitized));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "history request failed for channel {} ({}): {}",
+                        channel_id, status, sanitized
+                    )
+                );
                 return None;
             }
 
@@ -3036,7 +3521,18 @@ impl SlackChannel {
 
             if is_ratelimited_http || is_ratelimited_payload {
                 if attempt >= SLACK_HISTORY_MAX_RETRIES {
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure), &format!("Slack rate limit retries exhausted for conversations.replies on thread {} in channel {}. Total wait: {}s across {} attempts.", thread_ts, channel_id, total_wait.as_secs(), SLACK_HISTORY_MAX_RETRIES));
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure),
+                        &format!(
+                            "Slack rate limit retries exhausted for conversations.replies on thread {} in channel {}. Total wait: {}s across {} attempts.",
+                            thread_ts,
+                            channel_id,
+                            total_wait.as_secs(),
+                            SLACK_HISTORY_MAX_RETRIES
+                        )
+                    );
                     return None;
                 }
 
@@ -3046,14 +3542,35 @@ impl SlackChannel {
                 let wait = Self::compute_retry_delay(retry_after_secs, attempt, jitter_ms);
                 total_wait += wait;
                 let next_retry_at = Self::next_retry_timestamp(wait);
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Slack conversations.replies rate limited for thread {} in channel {}. Retry-After: {}s. Attempt {}/{}. Next retry at {}.", thread_ts, channel_id, retry_after_secs, attempt + 1, SLACK_HISTORY_MAX_RETRIES, next_retry_at));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "Slack conversations.replies rate limited for thread {} in channel {}. Retry-After: {}s. Attempt {}/{}. Next retry at {}.",
+                        thread_ts,
+                        channel_id,
+                        retry_after_secs,
+                        attempt + 1,
+                        SLACK_HISTORY_MAX_RETRIES,
+                        next_retry_at
+                    )
+                );
                 tokio::time::sleep(wait).await;
                 continue;
             }
 
             if !status.is_success() {
                 let sanitized = zeroclaw_providers::sanitize_api_error(&body);
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Slack conversations.replies failed for thread {} in channel {} ({}): {}", thread_ts, channel_id, status, sanitized));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "Slack conversations.replies failed for thread {} in channel {} ({}): {}",
+                        thread_ts, channel_id, status, sanitized
+                    )
+                );
                 return None;
             }
 
@@ -3062,7 +3579,15 @@ impl SlackChannel {
                     .get("error")
                     .and_then(|e| e.as_str())
                     .unwrap_or("unknown");
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Slack conversations.replies error for thread {} in channel {}: {}", thread_ts, channel_id, err));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "Slack conversations.replies error for thread {} in channel {}: {}",
+                        thread_ts, channel_id, err
+                    )
+                );
                 return None;
             }
 
@@ -3404,11 +3929,24 @@ impl Channel for SlackChannel {
                             .get("error")
                             .and_then(|e| e.as_str())
                             .unwrap_or("unknown");
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": err.to_string()})), "chat.update (draft) failed");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"error": err.to_string()})),
+                            "chat.update (draft) failed"
+                        );
                     }
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "chat.update (draft) HTTP error");
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "chat.update (draft) HTTP error"
+                    );
                 }
             }
         });
@@ -3502,7 +4040,12 @@ impl Channel for SlackChannel {
             .get("error")
             .and_then(|e| e.as_str())
             .unwrap_or("unknown");
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": err.to_string()})), "chat.update (finalize) failed; falling back to delete+send");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"error": err.to_string()})),
+            "chat.update (finalize) failed; falling back to delete+send"
+        );
 
         let _ = self.delete_message(recipient, &real_ts).await;
         let msg = SendMessage::new(text, recipient).in_thread(draft_thread_ts);
@@ -3621,7 +4164,11 @@ impl Channel for SlackChannel {
         let bot_user_id = self.get_bot_user_id().await.unwrap_or_default();
         let scoped_channels = self.scoped_channel_ids();
         if self.configured_app_token().is_some() {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "channel listening in Socket Mode");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "channel listening in Socket Mode"
+            );
             return self
                 .listen_socket_mode(tx, &bot_user_id, scoped_channels)
                 .await;
@@ -3634,9 +4181,21 @@ impl Channel for SlackChannel {
         let mut active_threads: HashMap<String, (String, String, Instant)> = HashMap::new();
 
         if let Some(ref channel_ids) = scoped_channels {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("channel listening on {} configured channel(s): {}", channel_ids.len(), channel_ids.join(", ")));
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!(
+                    "channel listening on {} configured channel(s): {}",
+                    channel_ids.len(),
+                    channel_ids.join(", ")
+                )
+            );
         } else {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Slack channel_id/channel_ids not set (or wildcard only); listening across all accessible channels.");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "Slack channel_id/channel_ids not set (or wildcard only); listening across all accessible channels."
+            );
         }
 
         loop {
@@ -3651,12 +4210,31 @@ impl Channel for SlackChannel {
                     match self.list_accessible_channels().await {
                         Ok(channels) => {
                             if channels != discovered_channels {
-                                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Slack auto-discovery refreshed: listening on {} channel(s).", channels.len()));
+                                ::zeroclaw_log::record!(
+                                    INFO,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    ),
+                                    &format!(
+                                        "Slack auto-discovery refreshed: listening on {} channel(s).",
+                                        channels.len()
+                                    )
+                                );
                             }
                             discovered_channels = channels;
                         }
                         Err(e) => {
-                            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "channel discovery failed");
+                            ::zeroclaw_log::record!(
+                                WARN,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                                "channel discovery failed"
+                            );
                         }
                     }
                     last_discovery = Instant::now();
@@ -3666,7 +4244,11 @@ impl Channel for SlackChannel {
             };
 
             if target_channels.is_empty() {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "no accessible channels discovered yet");
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "no accessible channels discovered yet"
+                );
                 continue;
             }
 
@@ -3676,7 +4258,14 @@ impl Channel for SlackChannel {
                 let cursor_ts =
                     Self::ensure_poll_cursor(&mut last_ts_by_channel, &channel_id, &bootstrap_ts);
                 if !had_cursor {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("initialized cursor for channel {} at {} to prevent historical replay", channel_id, cursor_ts));
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        &format!(
+                            "initialized cursor for channel {} at {} to prevent historical replay",
+                            channel_id, cursor_ts
+                        )
+                    );
                 }
                 let params = vec![
                     ("channel", channel_id.clone()),
@@ -3723,7 +4312,16 @@ impl Channel for SlackChannel {
 
                         // Sender validation
                         if !self.is_user_allowed(user) {
-                            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"user": user})), "ignoring message from unauthorized user");
+                            ::zeroclaw_log::record!(
+                                WARN,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                .with_attrs(::serde_json::json!({"user": user})),
+                                "ignoring message from unauthorized user"
+                            );
                             continue;
                         }
 
@@ -3935,7 +4533,14 @@ impl Channel for SlackChannel {
             .await
             && !resp.status().is_success()
         {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("assistant.threads.setStatus returned {}; ignoring", resp.status()));
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!(
+                    "assistant.threads.setStatus returned {}; ignoring",
+                    resp.status()
+                )
+            );
         }
 
         Ok(())

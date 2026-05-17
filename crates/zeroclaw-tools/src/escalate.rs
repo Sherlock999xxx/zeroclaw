@@ -77,7 +77,16 @@ impl EscalateToHumanTool {
                     if let Some(ch) = channels.get(name) {
                         Some((name.clone(), Arc::clone(ch)))
                     } else {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"name": name})), "escalate_to_human: alert channel '' not found in channel map");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"name": name})),
+                            "escalate_to_human: alert channel '' not found in channel map"
+                        );
                         None
                     }
                 })
@@ -86,7 +95,13 @@ impl EscalateToHumanTool {
         for (name, ch) in targets {
             let msg = SendMessage::new(text, "");
             if let Err(e) = ch.send(&msg).await {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string(), "name": name})), "escalate_to_human: alert to channel '' failed");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string(), "name": name})),
+                    "escalate_to_human: alert to channel '' failed"
+                );
             }
         }
     }

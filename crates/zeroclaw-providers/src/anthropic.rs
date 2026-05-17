@@ -200,11 +200,7 @@ impl AnthropicModelProvider {
         Self::with_base_url(alias, credential, None)
     }
 
-    pub fn with_base_url(
-        alias: &str,
-        credential: Option<&str>,
-        base_url: Option<&str>,
-    ) -> Self {
+    pub fn with_base_url(alias: &str, credential: Option<&str>, base_url: Option<&str>) -> Self {
         let base_url = base_url
             .map(|u| u.trim_end_matches('/'))
             .unwrap_or(BASE_URL)
@@ -777,13 +773,26 @@ impl AnthropicModelProvider {
                         output_tokens = Some(v);
                     }
                     if stop_reason == "max_tokens" {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"output_tokens": observed_output})), "response truncated: hit max_tokens limit. Increase provider_max_tokens in config.");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"output_tokens": observed_output})),
+                            "response truncated: hit max_tokens limit. Increase provider_max_tokens in config."
+                        );
                     } else {
                         ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"stop_reason": stop_reason, "output_tokens": observed_output})), "stream: message_delta");
                     }
                 }
                 "message_stop" => {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "stream: message_stop");
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        "stream: message_stop"
+                    );
                     if input_tokens.is_some() || output_tokens.is_some() {
                         let _ = tx
                             .send(Ok(StreamEvent::Usage(TokenUsage {
@@ -846,7 +855,12 @@ impl ModelProvider for AnthropicModelProvider {
             system
         };
 
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"max_tokens": self.max_tokens, "model": model})), "API request");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"max_tokens": self.max_tokens, "model": model})),
+            "API request"
+        );
         let request = NativeChatRequest {
             model: model.to_string(),
             max_tokens: self.max_tokens,
@@ -928,7 +942,12 @@ impl ModelProvider for AnthropicModelProvider {
         } else {
             system_prompt
         };
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"max_tokens": self.max_tokens, "model": model})), "streaming API request");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"max_tokens": self.max_tokens, "model": model})),
+            "streaming API request"
+        );
         let native_request = NativeChatRequest {
             model: model.to_string(),
             max_tokens: self.max_tokens,
@@ -986,11 +1005,21 @@ impl ModelProvider for AnthropicModelProvider {
             .iter()
             .filter_map(|t| {
                 let func = t.get("function").or_else(|| {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Skipping malformed tool definition (missing 'function' key)");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        "Skipping malformed tool definition (missing 'function' key)"
+                    );
                     None
                 })?;
                 let name = func.get("name").and_then(|n| n.as_str()).or_else(|| {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Skipping tool with missing or non-string 'name'");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        "Skipping tool with missing or non-string 'name'"
+                    );
                     None
                 })?;
                 Some(ToolSpec {
@@ -1092,7 +1121,12 @@ impl ModelProvider for AnthropicModelProvider {
             system_prompt
         };
 
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"max_tokens": self.max_tokens, "model": model})), "stream_chat request");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"max_tokens": self.max_tokens, "model": model})),
+            "stream_chat request"
+        );
         let native_request = NativeChatRequest {
             model: model.to_string(),
             max_tokens: self.max_tokens,
@@ -1349,11 +1383,8 @@ data: {\"type\":\"message_stop\"}\n\n";
 
     #[test]
     fn custom_base_url_trims_trailing_slash() {
-        let p = AnthropicModelProvider::with_base_url(
-            "test",
-            None,
-            Some("https://api.example.com/"),
-        );
+        let p =
+            AnthropicModelProvider::with_base_url("test", None, Some("https://api.example.com/"));
         assert_eq!(p.base_url, "https://api.example.com");
     }
 
@@ -2414,4 +2445,3 @@ data: {\"type\":\"message_stop\"}\n\n";
         }
     }
 }
-

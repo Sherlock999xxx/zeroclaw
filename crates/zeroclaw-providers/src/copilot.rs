@@ -211,7 +211,15 @@ impl CopilotModelProvider {
             });
 
         if let Err(err) = std::fs::create_dir_all(&token_dir) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Failed to create Copilot token directory {:?}: {err}. Token caching is disabled.", token_dir));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "Failed to create Copilot token directory {:?}: {err}. Token caching is disabled.",
+                    token_dir
+                )
+            );
         } else {
             #[cfg(unix)]
             {
@@ -220,7 +228,15 @@ impl CopilotModelProvider {
                 if let Err(err) =
                     std::fs::set_permissions(&token_dir, std::fs::Permissions::from_mode(0o700))
                 {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Failed to set Copilot token directory permissions on {:?}: {err}", token_dir));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!(
+                            "Failed to set Copilot token directory permissions on {:?}: {err}",
+                            token_dir
+                        )
+                    );
                 }
             }
         }
@@ -639,8 +655,20 @@ async fn write_file_secure(path: &Path, content: &str) {
 
     match result {
         Ok(Ok(())) => {}
-        Ok(Err(err)) => ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string()})), "Failed to write secure file"),
-        Err(err) => ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string()})), "Failed to spawn blocking write"),
+        Ok(Err(err)) => ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"error": err.to_string()})),
+            "Failed to write secure file"
+        ),
+        Err(err) => ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"error": err.to_string()})),
+            "Failed to spawn blocking write"
+        ),
     }
 }
 

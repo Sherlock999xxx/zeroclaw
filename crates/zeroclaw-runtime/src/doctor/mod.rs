@@ -451,7 +451,10 @@ fn check_config_semantics(config: &Config, items: &mut Vec<DiagItem>) {
     } else {
         items.push(DiagItem::error(
             cat,
-            format!("config file not found: {}", config.config_path.display().to_string()),
+            format!(
+                "config file not found: {}",
+                config.config_path.display().to_string()
+            ),
         ));
     }
 

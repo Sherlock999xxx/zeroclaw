@@ -35,8 +35,7 @@ pub fn install_global_subscriber(default_filter: &str) {
         .finish()
         .with(LogCaptureLayer);
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("setting default subscriber failed");
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
 /// Test-only helper: install a minimal global subscriber that routes

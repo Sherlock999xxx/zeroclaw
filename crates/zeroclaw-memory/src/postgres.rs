@@ -72,7 +72,12 @@ impl PostgresMemory {
                 Self::try_enable_pgvector(&mut c, &qualified_table, pgvector_dimensions).is_ok()
             };
             if !ext_ok {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "pgvector extension not available; falling back to keyword-only recall");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "pgvector extension not available; falling back to keyword-only recall"
+                );
             }
             Ok(Self {
                 alias: alias.to_string(),
@@ -322,7 +327,12 @@ impl PostgresMemory {
             client.execute(&stmt, &[new, old])?;
         }
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"rewritten": rewrites.len()})), "Normalized session_id values in memories table to sanitized form");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"rewritten": rewrites.len()})),
+            "Normalized session_id values in memories table to sanitized form"
+        );
 
         Ok(())
     }
@@ -810,9 +820,7 @@ impl Memory for PostgresMemory {
 
 impl ::zeroclaw_api::attribution::Attributable for PostgresMemory {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Memory(
-            ::zeroclaw_api::attribution::MemoryKind::Postgres,
-        )
+        ::zeroclaw_api::attribution::Role::Memory(::zeroclaw_api::attribution::MemoryKind::Postgres)
     }
     fn alias(&self) -> &str {
         &self.alias
@@ -857,7 +865,7 @@ mod tests {
     async fn new_does_not_panic_inside_tokio_runtime() {
         let outcome = std::panic::catch_unwind(|| {
             PostgresMemory::new(
-               "test",
+                "test",
                 "postgres://zeroclaw:password@127.0.0.1:1/zeroclaw",
                 "public",
                 "memories",

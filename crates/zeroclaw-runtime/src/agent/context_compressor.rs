@@ -223,7 +223,12 @@ impl ContextCompressor {
         // Fast-trim pass — may resolve overflow without an LLM call
         let chars_saved = self.fast_trim_tool_results(history);
         if chars_saved > 0 {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"chars_saved": chars_saved})), "Fast-trim saved chars from old tool results");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"chars_saved": chars_saved})),
+                "Fast-trim saved chars from old tool results"
+            );
             let recheck = estimate_tokens(history);
             if recheck <= threshold {
                 return Ok(CompressionResult {
@@ -275,7 +280,12 @@ impl ContextCompressor {
             self.context_window = next_probe_tier(self.context_window);
         }
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"context_window": self.context_window})), "Context limit adjusted, re-compressing");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"context_window": self.context_window})),
+            "Context limit adjusted, re-compressing"
+        );
 
         let result = self
             .compress_if_needed(history, model_provider, model, temperature)
@@ -349,11 +359,25 @@ impl ContextCompressor {
         {
             Ok(Ok(s)) => s,
             Ok(Err(e)) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Summarization LLM call failed, using transcript truncation");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "Summarization LLM call failed, using transcript truncation"
+                );
                 truncate_chars(&transcript, self.config.summary_max_chars)
             }
             Err(_) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Summarization timed out after {}s, using transcript truncation", self.config.timeout_secs));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "Summarization timed out after {}s, using transcript truncation",
+                        self.config.timeout_secs
+                    )
+                );
                 truncate_chars(&transcript, self.config.summary_max_chars)
             }
         };
@@ -373,9 +397,19 @@ impl ContextCompressor {
                 )
                 .await
             {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "Failed to save compression summary to memory");
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "Failed to save compression summary to memory"
+                );
             } else {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"message_count": message_count})), "Saved compression summary to memory before discarding  messages");
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"message_count": message_count})),
+                    "Saved compression summary to memory before discarding  messages"
+                );
             }
         }
 
@@ -585,9 +619,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "CaptureSummarizerModelProvider" }
+        fn alias(&self) -> &str {
+            "CaptureSummarizerModelProvider"
+        }
     }
-
 
     #[test]
     fn test_estimate_tokens() {

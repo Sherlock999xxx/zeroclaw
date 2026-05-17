@@ -47,9 +47,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "CapabilityMockModelProvider" }
+        fn alias(&self) -> &str {
+            "CapabilityMockModelProvider"
+        }
     }
-
 
     #[test]
     fn chat_message_constructors() {
@@ -280,9 +281,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "MockModelProvider" }
+        fn alias(&self) -> &str {
+            "MockModelProvider"
+        }
     }
-
 
     #[test]
     fn provider_convert_tools_default() {
@@ -375,9 +377,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "EchoSystemModelProvider" }
+        fn alias(&self) -> &str {
+            "EchoSystemModelProvider"
+        }
     }
-
 
     struct CustomConvertModelProvider;
 
@@ -411,9 +414,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "CustomConvertModelProvider" }
+        fn alias(&self) -> &str {
+            "CustomConvertModelProvider"
+        }
     }
-
 
     struct InvalidConvertModelProvider;
 
@@ -447,9 +451,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "InvalidConvertModelProvider" }
+        fn alias(&self) -> &str {
+            "InvalidConvertModelProvider"
+        }
     }
-
 
     #[tokio::test]
     async fn provider_chat_prompt_guided_preserves_existing_system_not_first() {
@@ -570,9 +575,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "StreamingChunkOnlyModelProvider" }
+        fn alias(&self) -> &str {
+            "StreamingChunkOnlyModelProvider"
+        }
     }
-
 
     #[tokio::test]
     async fn provider_stream_chat_default_maps_legacy_chunks_to_events() {

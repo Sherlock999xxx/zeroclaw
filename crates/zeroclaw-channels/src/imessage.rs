@@ -60,7 +60,13 @@ fn resolve_message_content(rowid: i64, text: Option<String>, body: Option<Vec<u8
         .or_else(|| {
             let parsed = body.as_deref().and_then(extract_text_from_attributed_body);
             if parsed.is_none() && body.as_ref().is_some_and(|b| !b.is_empty()) {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"rowid": rowid})), "failed to parse attributedBody");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"rowid": rowid})),
+                    "failed to parse attributedBody"
+                );
             }
             parsed
         })
@@ -215,7 +221,11 @@ end tell"#
     }
 
     async fn listen(&self, tx: mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "iMessage channel listening (AppleScript bridge)...");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "iMessage channel listening (AppleScript bridge)..."
+        );
 
         // Query the Messages SQLite database for new messages
         // The database is at ~/Library/Messages/chat.db
@@ -327,7 +337,13 @@ end tell"#
                     }
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "iMessage poll error");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "iMessage poll error"
+                    );
                 }
             }
         }

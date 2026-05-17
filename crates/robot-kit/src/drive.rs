@@ -40,13 +40,24 @@ impl DriveBackend for MockDrive {
         angular_z: f64,
         duration_ms: u64,
     ) -> Result<()> {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("MOCK DRIVE: linear=({:.2}, {:.2}), angular={:.2}, duration={}ms", linear_x, linear_y, angular_z, duration_ms));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "MOCK DRIVE: linear=({:.2}, {:.2}), angular={:.2}, duration={}ms",
+                linear_x, linear_y, angular_z, duration_ms
+            )
+        );
         tokio::time::sleep(Duration::from_millis(duration_ms.min(100))).await;
         Ok(())
     }
 
     async fn stop(&self) -> Result<()> {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "MOCK DRIVE: STOP");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "MOCK DRIVE: STOP"
+        );
         Ok(())
     }
 }

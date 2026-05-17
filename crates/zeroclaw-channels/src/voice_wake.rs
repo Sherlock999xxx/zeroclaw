@@ -132,7 +132,13 @@ impl Channel for VoiceWakeChannel {
                     let _ = audio_tx_clone.try_send(data.to_vec());
                 },
                 move |err| {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string()})), "VoiceWake: audio stream error");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": err.to_string()})),
+                        "VoiceWake: audio stream error"
+                    );
                 },
                 None,
             )?;
@@ -155,7 +161,12 @@ impl Channel for VoiceWakeChannel {
         let mut capture_start = Instant::now();
         let mut msg_counter: u64 = 0;
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"wake_word": wake_word})), "VoiceWake: entering listen loop");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"wake_word": wake_word})),
+            "VoiceWake: entering listen loop"
+        );
 
         while let Some(chunk) = audio_rx.recv().await {
             let energy = compute_rms_energy(&chunk);
@@ -163,7 +174,15 @@ impl Channel for VoiceWakeChannel {
             match state {
                 WakeState::Listening => {
                     if energy >= energy_threshold {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"energy": energy})), "VoiceWake: energy spike — transitioning to Triggered");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"energy": energy})),
+                            "VoiceWake: energy spike — transitioning to Triggered"
+                        );
                         state = WakeState::Triggered;
                         capture_buf.clear();
                         capture_buf.extend_from_slice(&chunk);
@@ -183,30 +202,63 @@ impl Channel for VoiceWakeChannel {
 
                     // After enough silence or max time, transcribe to check for wake word.
                     if since_voice >= silence_timeout || since_start >= max_capture {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "VoiceWake: Triggered window closed — transcribing for wake word");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            ),
+                            "VoiceWake: Triggered window closed — transcribing for wake word"
+                        );
 
                         let wav_bytes =
                             encode_wav_from_f32(&capture_buf, sample_rate, channels_count);
 
-                        match transcription_manager.transcribe(&wav_bytes, "wake_check.wav")
+                        match transcription_manager
+                            .transcribe(&wav_bytes, "wake_check.wav")
                             .await
                         {
                             Ok(text) => {
                                 let lower = text.to_lowercase();
                                 if lower.contains(&wake_word) {
-                                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"text": text})), "VoiceWake: wake word detected — capturing utterance");
+                                    ::zeroclaw_log::record!(
+                                        INFO,
+                                        ::zeroclaw_log::Event::new(
+                                            module_path!(),
+                                            ::zeroclaw_log::Action::Note
+                                        )
+                                        .with_attrs(::serde_json::json!({"text": text})),
+                                        "VoiceWake: wake word detected — capturing utterance"
+                                    );
                                     state = WakeState::Capturing;
                                     capture_buf.clear();
                                     last_voice_at = Instant::now();
                                     capture_start = Instant::now();
                                 } else {
-                                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"text": text})), "VoiceWake: no wake word — back to Listening");
+                                    ::zeroclaw_log::record!(
+                                        DEBUG,
+                                        ::zeroclaw_log::Event::new(
+                                            module_path!(),
+                                            ::zeroclaw_log::Action::Note
+                                        )
+                                        .with_attrs(::serde_json::json!({"text": text})),
+                                        "VoiceWake: no wake word — back to Listening"
+                                    );
                                     state = WakeState::Listening;
                                     capture_buf.clear();
                                 }
                             }
                             Err(e) => {
-                                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "VoiceWake: transcription error during wake check");
+                                ::zeroclaw_log::record!(
+                                    WARN,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                                    "VoiceWake: transcription error during wake check"
+                                );
                                 state = WakeState::Listening;
                                 capture_buf.clear();
                             }
@@ -224,12 +276,20 @@ impl Channel for VoiceWakeChannel {
                     let since_start = capture_start.elapsed();
 
                     if since_voice >= silence_timeout || since_start >= max_capture {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "VoiceWake: utterance capture complete — transcribing");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            ),
+                            "VoiceWake: utterance capture complete — transcribing"
+                        );
 
                         let wav_bytes =
                             encode_wav_from_f32(&capture_buf, sample_rate, channels_count);
 
-                        match transcription_manager.transcribe(&wav_bytes, "utterance.wav")
+                        match transcription_manager
+                            .transcribe(&wav_bytes, "utterance.wav")
                             .await
                         {
                             Ok(text) => {
@@ -255,12 +315,32 @@ impl Channel for VoiceWakeChannel {
                                     };
 
                                     if let Err(e) = tx.send(msg).await {
-                                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "VoiceWake: failed to dispatch message");
+                                        ::zeroclaw_log::record!(
+                                            WARN,
+                                            ::zeroclaw_log::Event::new(
+                                                module_path!(),
+                                                ::zeroclaw_log::Action::Note
+                                            )
+                                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                            .with_attrs(
+                                                ::serde_json::json!({"error": e.to_string()})
+                                            ),
+                                            "VoiceWake: failed to dispatch message"
+                                        );
                                     }
                                 }
                             }
                             Err(e) => {
-                                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "VoiceWake: transcription error for utterance");
+                                ::zeroclaw_log::record!(
+                                    WARN,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                                    "VoiceWake: transcription error for utterance"
+                                );
                             }
                         }
 

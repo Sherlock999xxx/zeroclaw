@@ -206,7 +206,13 @@ pub fn enforce_signature_policy(
             match mode {
                 SignatureMode::Strict => Err(PluginError::UnsignedPlugin(plugin_name.to_string())),
                 SignatureMode::Permissive => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"plugin": plugin_name})), "plugin is unsigned; loading in permissive mode");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"plugin": plugin_name})),
+                        "plugin is unsigned; loading in permissive mode"
+                    );
                     Ok(VerificationResult::Unsigned)
                 }
                 SignatureMode::Disabled => Ok(VerificationResult::Unsigned),

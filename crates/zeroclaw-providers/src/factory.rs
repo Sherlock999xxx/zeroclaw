@@ -96,7 +96,10 @@ impl<T: CompatFamilySpec> FamilyProviderFactory for T {
         api_url: Option<&str>,
         opts: &ModelProviderRuntimeOptions,
     ) -> Result<Box<dyn ModelProvider>> {
-        Ok(apply_compat_options(self.build_compat(alias, key, api_url), opts))
+        Ok(apply_compat_options(
+            self.build_compat(alias, key, api_url),
+            opts,
+        ))
     }
 }
 
@@ -631,8 +634,9 @@ impl FamilyProviderFactory for OpenAIModelProviderConfig {
         // the typed alias — operators set it via the schema-mirror grammar
         // alongside any other OpenAI alias field.
         if self.base.requires_openai_auth {
-            return Ok(Box::new(crate::openai_codex::OpenAiCodexModelProvider::new(alias, opts, key,
-            )?));
+            return Ok(Box::new(
+                crate::openai_codex::OpenAiCodexModelProvider::new(alias, opts, key)?,
+            ));
         }
         let mut p = crate::openai::OpenAiModelProvider::with_base_url(alias, api_url, key);
         if let Some(mt) = opts.provider_max_tokens {
@@ -662,7 +666,8 @@ impl FamilyProviderFactory for OllamaModelProviderConfig {
             self.temperature_override,
         );
         Ok(Box::new(
-            crate::ollama::OllamaModelProvider::new_with_reasoning(alias,
+            crate::ollama::OllamaModelProvider::new_with_reasoning(
+                alias,
                 api_url,
                 key,
                 opts.reasoning_enabled,
@@ -687,7 +692,8 @@ impl FamilyProviderFactory for GeminiModelProviderConfig {
             )
         });
         let auth_service = crate::auth::AuthService::new(&state_dir, opts.secrets_encrypt);
-        Ok(Box::new(crate::gemini::GeminiModelProvider::new_with_auth(alias,
+        Ok(Box::new(crate::gemini::GeminiModelProvider::new_with_auth(
+            alias,
             key,
             auth_service,
             opts.auth_profile_override.clone(),
@@ -706,7 +712,9 @@ impl FamilyProviderFactory for TelnyxModelProviderConfig {
         _api_url: Option<&str>,
         _opts: &ModelProviderRuntimeOptions,
     ) -> Result<Box<dyn ModelProvider>> {
-        Ok(Box::new(crate::telnyx::TelnyxModelProvider::new(alias, key)))
+        Ok(Box::new(crate::telnyx::TelnyxModelProvider::new(
+            alias, key,
+        )))
     }
 }
 
@@ -734,12 +742,15 @@ impl FamilyProviderFactory for AzureModelProviderConfig {
             )
         })?;
         let api_version = self.api_version.as_deref();
-        Ok(Box::new(crate::azure_openai::AzureOpenAiModelProvider::new(alias,
-            key,
-            resource,
-            deployment,
-            api_version,
-        )))
+        Ok(Box::new(
+            crate::azure_openai::AzureOpenAiModelProvider::new(
+                alias,
+                key,
+                resource,
+                deployment,
+                api_version,
+            ),
+        ))
     }
 }
 
@@ -872,9 +883,9 @@ impl FamilyProviderFactory for CopilotModelProviderConfig {
         _api_url: Option<&str>,
         _opts: &ModelProviderRuntimeOptions,
     ) -> Result<Box<dyn ModelProvider>> {
-        Ok(Box::new(
-            crate::copilot::CopilotModelProvider::new(alias, key),
-        ))
+        Ok(Box::new(crate::copilot::CopilotModelProvider::new(
+            alias, key,
+        )))
     }
 }
 
@@ -886,9 +897,10 @@ impl FamilyProviderFactory for GeminiCliModelProviderConfig {
         _api_url: Option<&str>,
         _opts: &ModelProviderRuntimeOptions,
     ) -> Result<Box<dyn ModelProvider>> {
-        Ok(Box::new(
-            crate::gemini_cli::GeminiCliModelProvider::new(alias, self.binary_path.as_deref()),
-        ))
+        Ok(Box::new(crate::gemini_cli::GeminiCliModelProvider::new(
+            alias,
+            self.binary_path.as_deref(),
+        )))
     }
 }
 
@@ -900,9 +912,10 @@ impl FamilyProviderFactory for KiloCliModelProviderConfig {
         _api_url: Option<&str>,
         _opts: &ModelProviderRuntimeOptions,
     ) -> Result<Box<dyn ModelProvider>> {
-        Ok(Box::new(
-            crate::kilocli::KiloCliModelProvider::new(alias, self.binary_path.as_deref()),
-        ))
+        Ok(Box::new(crate::kilocli::KiloCliModelProvider::new(
+            alias,
+            self.binary_path.as_deref(),
+        )))
     }
 }
 

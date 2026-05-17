@@ -84,7 +84,13 @@ impl Tool for SopApproveTool {
             && let Some(ref run) = run_snapshot
             && let Err(e) = audit.log_approval(run, run.current_step).await
         {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "SOP audit log after approve failed");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "SOP audit log after approve failed"
+            );
         }
 
         // Metrics collector (independent of audit)

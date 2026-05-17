@@ -1373,7 +1373,15 @@ async fn main() -> Result<()> {
                                 Box::pin(run_onboard(&mut cfg, &mut ui, target, &flags)).await?;
                             }
                             Err(e) => {
-                                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"e": e.to_string()})), "TUI init failed");
+                                ::zeroclaw_log::record!(
+                                    DEBUG,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_attrs(::serde_json::json!({"e": e.to_string()})),
+                                    "TUI init failed"
+                                );
                                 eprintln!(
                                     "TUI init failed ({e}); falling back to terminal prompts."
                                 );
@@ -1607,13 +1615,26 @@ async fn main() -> Result<()> {
                 Some(zeroclaw::GatewayCommands::Restart { port, host }) => {
                     let (port, host) = resolve_gateway_addr(&config, port, host);
                     let addr = format!("{host}:{port}");
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"addr": addr})), "🔄 Restarting ZeroClaw Gateway on");
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(::serde_json::json!({"addr": addr})),
+                        "🔄 Restarting ZeroClaw Gateway on"
+                    );
 
                     // Try to gracefully shutdown existing gateway via admin endpoint
                     match shutdown_gateway(&host, port, config.gateway.path_prefix.as_deref()).await
                     {
                         Ok(()) => {
-                            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"addr": addr})), "✓ Existing gateway on shut down gracefully");
+                            ::zeroclaw_log::record!(
+                                INFO,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_attrs(::serde_json::json!({"addr": addr})),
+                                "✓ Existing gateway on shut down gracefully"
+                            );
                             // Poll until the port is free (connection refused) or timeout
                             let deadline =
                                 tokio::time::Instant::now() + tokio::time::Duration::from_secs(5);
@@ -1621,7 +1642,16 @@ async fn main() -> Result<()> {
                                 match tokio::net::TcpStream::connect(&addr).await {
                                     Err(_) => break, // port is free
                                     Ok(_) if tokio::time::Instant::now() >= deadline => {
-                                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"port": port})), "Timed out waiting for port to be released");
+                                        ::zeroclaw_log::record!(
+                                            WARN,
+                                            ::zeroclaw_log::Event::new(
+                                                module_path!(),
+                                                ::zeroclaw_log::Action::Note
+                                            )
+                                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                            .with_attrs(::serde_json::json!({"port": port})),
+                                            "Timed out waiting for port to be released"
+                                        );
                                         break;
                                     }
                                     Ok(_) => {
@@ -1632,7 +1662,15 @@ async fn main() -> Result<()> {
                             }
                         }
                         Err(e) => {
-                            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "   No existing gateway to shut down");
+                            ::zeroclaw_log::record!(
+                                INFO,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                                "   No existing gateway to shut down"
+                            );
                         }
                     }
 
@@ -1715,15 +1753,33 @@ async fn main() -> Result<()> {
                     } else {
                         "Consider installing to /usr/local/bin for system-wide service."
                     };
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Daemon running from user home directory: {}. {install_hint}", exe.display()));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!(
+                            "Daemon running from user home directory: {}. {install_hint}",
+                            exe.display()
+                        )
+                    );
                 }
             }
             let port = port.unwrap_or(config.gateway.port);
             let host = host.unwrap_or_else(|| config.gateway.host.clone());
             if port == 0 {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"host": host})), "🧠 Starting ZeroClaw Daemon on (random port)");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"host": host})),
+                    "🧠 Starting ZeroClaw Daemon on (random port)"
+                );
             } else {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"host": host, "port": port})), "🧠 Starting ZeroClaw Daemon on");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"host": host, "port": port})),
+                    "🧠 Starting ZeroClaw Daemon on"
+                );
             }
 
             #[cfg(target_os = "linux")]
@@ -1754,7 +1810,13 @@ async fn main() -> Result<()> {
                         (true, false) => "security.sandbox.backend = \"docker\"",
                         _ => "runtime.kind = \"docker\"",
                     };
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"which": which})), "Docker memory limits are configured but the Linux kernel has no memcg support. Affected config: . Consequence: --memory limits are silently ignored; agents can OOM the host. Fix: add 'cgroup_memory=1 cgroup_enable=memory' to /boot/firmware/cmdline.txt (Raspberry Pi) or enable CONFIG_MEMCG in your kernel, then reboot.");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"which": which})),
+                        "Docker memory limits are configured but the Linux kernel has no memcg support. Affected config: . Consequence: --memory limits are silently ignored; agents can OOM the host. Fix: add 'cgroup_memory=1 cgroup_enable=memory' to /boot/firmware/cmdline.txt (Raspberry Pi) or enable CONFIG_MEMCG in your kernel, then reboot."
+                    );
                 }
             }
 
@@ -1841,7 +1903,8 @@ async fn main() -> Result<()> {
                                 SopEngine::new(SopConfig::default())
                             };
                             let engine = Arc::new(Mutex::new(engine));
-                            let audit = Arc::new(SopAuditLogger::new(Arc::new(NoneMemory::new("none"))));
+                            let audit =
+                                Arc::new(SopAuditLogger::new(Arc::new(NoneMemory::new("none"))));
                             Box::pin(async move {
                                 zeroclaw_channels::orchestrator::mqtt::run_mqtt_sop_listener(
                                     &mqtt_config,
@@ -1863,7 +1926,14 @@ async fn main() -> Result<()> {
                 match exit {
                     daemon::DaemonExit::Shutdown => break,
                     daemon::DaemonExit::Reload => {
-                        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "🔄 Daemon reload — re-reading config from disk");
+                        ::zeroclaw_log::record!(
+                            INFO,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            ),
+                            "🔄 Daemon reload — re-reading config from disk"
+                        );
                         current_config = Box::pin(Config::load_or_init()).await?;
                         // Continue loop: fresh subsystems with the new config.
                     }
@@ -3141,9 +3211,19 @@ fn resolve_gateway_addr(config: &Config, port: Option<u16>, host: Option<String>
 /// Log gateway startup message.
 fn log_gateway_start(host: &str, port: u16) {
     if port == 0 {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"host": host})), "🚀 Starting ZeroClaw Gateway on (random port)");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"host": host})),
+            "🚀 Starting ZeroClaw Gateway on (random port)"
+        );
     } else {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"host": host, "port": port})), "🚀 Starting ZeroClaw Gateway on");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"host": host, "port": port})),
+            "🚀 Starting ZeroClaw Gateway on"
+        );
     }
 }
 

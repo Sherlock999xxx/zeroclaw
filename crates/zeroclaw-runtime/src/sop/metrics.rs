@@ -98,7 +98,12 @@ impl SopMetricsCollector {
     /// Call after `audit.log_run_complete()`.
     pub fn record_run_complete(&self, run: &SopRun) {
         let Ok(mut state) = self.inner.write() else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "SOP metrics collector lock poisoned in record_run_complete");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "SOP metrics collector lock poisoned in record_run_complete"
+            );
             return;
         };
 
@@ -133,7 +138,12 @@ impl SopMetricsCollector {
     /// Call after `audit.log_approval()`.
     pub fn record_approval(&self, sop_name: &str, run_id: &str) {
         let Ok(mut state) = self.inner.write() else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "SOP metrics collector lock poisoned in record_approval");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "SOP metrics collector lock poisoned in record_approval"
+            );
             return;
         };
         state.global.counters.human_approvals += 1;
@@ -156,7 +166,12 @@ impl SopMetricsCollector {
     /// Call after `audit.log_timeout_auto_approve()`.
     pub fn record_timeout_auto_approve(&self, sop_name: &str, run_id: &str) {
         let Ok(mut state) = self.inner.write() else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "SOP metrics collector lock poisoned in record_timeout_auto_approve");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "SOP metrics collector lock poisoned in record_timeout_auto_approve"
+            );
             return;
         };
         state.global.counters.timeout_auto_approvals += 1;
@@ -474,7 +489,13 @@ fn parse_completed_at(ts: &str) -> Option<DateTime<Utc>> {
         return Some(n.and_utc());
     }
     // Last resort
-    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"ts": ts})), "SOP metrics: could not parse completed_at timestamp: ");
+    ::zeroclaw_log::record!(
+        WARN,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+            .with_attrs(::serde_json::json!({"ts": ts})),
+        "SOP metrics: could not parse completed_at timestamp: "
+    );
     None
 }
 

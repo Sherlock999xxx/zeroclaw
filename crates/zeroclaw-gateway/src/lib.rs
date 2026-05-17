@@ -1,7 +1,7 @@
 #![allow(
     clippy::to_string_in_format_args,
     clippy::useless_format,
-    clippy::collapsible_if,
+    clippy::collapsible_if
 )]
 //! Axum-based HTTP gateway with proper HTTP/1.1 compliance, body limits, and timeouts.
 //!
@@ -459,10 +459,15 @@ pub async fn run_gateway(
         && config.tunnel.tunnel_provider == "none"
         && !config.gateway.allow_public_bind
     {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "⚠️  Binding to {host} — gateway will be exposed to all network interfaces.\n\
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "⚠️  Binding to {host} — gateway will be exposed to all network interfaces.\n\
              Suggestion: use --host 127.0.0.1 (default), configure a tunnel, or set\n\
              [gateway] allow_public_bind = true in config.toml to silence this warning.\n\n\
-             Docker/VM: if you are running inside a container or VM, this is expected.");
+             Docker/VM: if you are running inside a container or VM, this is expected."
+        );
     }
     let config_state = Arc::new(RwLock::new(config.clone()));
 
@@ -511,19 +516,27 @@ pub async fn run_gateway(
         .filter(|m| !m.is_empty())
     {
         Some(m) => m.to_string(),
-        None => match config.resolve_default_model() {
-            Some(m) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"model_provider": model_provider_name, "model": m})), "first model_provider has no `model` set; using first configured \
+        None => {
+            match config.resolve_default_model() {
+                Some(m) => {
+                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"model_provider": model_provider_name, "model": m})), "first model_provider has no `model` set; using first configured \
                      providers.models entry as default. Set \
                      [model_providers.<type>.<alias>] model = \"...\" to silence \
                      this warning.");
-                m
+                    m
+                }
+                None => {
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"display_addr": display_addr})),
+                        "Gateway booting without a configured model. Visit http:///onboard to complete browser onboarding. Chat endpoints will return 503 needs_onboarding until at least one [model_providers.<type>.<alias>] model = \"...\" is set."
+                    );
+                    String::new()
+                }
             }
-            None => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"display_addr": display_addr})), "Gateway booting without a configured model. Visit http:///onboard to complete browser onboarding. Chat endpoints will return 503 needs_onboarding until at least one [model_providers.<type>.<alias>] model = \"...\" is set.");
-                String::new()
-            }
-        },
+        }
     };
     // Preserve `Option<f64>` end-to-end. Substituting a hardcoded default
     // here would clobber the "let the provider decide" intent for models
@@ -644,7 +657,12 @@ pub async fn run_gateway(
             (Vec::new(), None)
         }
         (None, _) => {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"display_addr": display_addr})), "Gateway: no [agents.<alias>] configured — booting with empty tools registry. Visit http:///onboard to add an agent.");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"display_addr": display_addr})),
+                "Gateway: no [agents.<alias>] configured — booting with empty tools registry. Visit http:///onboard to add an agent."
+            );
             (Vec::new(), None)
         }
     };
@@ -652,7 +670,14 @@ pub async fn run_gateway(
     // ── Wire MCP tools into the gateway tool registry (non-fatal) ───
     // Without this, the `/api/tools` endpoint misses MCP tools.
     if config.mcp.enabled && !config.mcp.servers.is_empty() {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Gateway: initializing MCP client — {} server(s) configured", config.mcp.servers.len()));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "Gateway: initializing MCP client — {} server(s) configured",
+                config.mcp.servers.len()
+            )
+        );
         match tools::McpRegistry::connect_all(&config.mcp.servers).await {
             Ok(registry) => {
                 let registry = std::sync::Arc::new(registry);
@@ -660,7 +685,15 @@ pub async fn run_gateway(
                     let deferred_set =
                         tools::DeferredMcpToolSet::from_registry(std::sync::Arc::clone(&registry))
                             .await;
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Gateway MCP deferred: {} tool stub(s) from {} server(s)", deferred_set.len(), registry.server_count()));
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        &format!(
+                            "Gateway MCP deferred: {} tool stub(s) from {} server(s)",
+                            deferred_set.len(),
+                            registry.server_count()
+                        )
+                    );
                     let activated =
                         std::sync::Arc::new(std::sync::Mutex::new(tools::ActivatedToolSet::new()));
                     tools_registry_raw.push(Box::new(tools::ToolSearchTool::new(
@@ -685,11 +718,25 @@ pub async fn run_gateway(
                             registered += 1;
                         }
                     }
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Gateway MCP: {} tool(s) registered from {} server(s)", registered, registry.server_count()));
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        &format!(
+                            "Gateway MCP: {} tool(s) registered from {} server(s)",
+                            registered,
+                            registry.server_count()
+                        )
+                    );
                 }
             }
             Err(e) => {
-                ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string()})), "MCP registry failed to initialize");
+                ::zeroclaw_log::record!(
+                    ERROR,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "MCP registry failed to initialize"
+                );
             }
         }
     }
@@ -879,17 +926,35 @@ pub async fn run_gateway(
             &config.channels.session_backend,
         ) {
             Ok(backend) => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Gateway session persistence enabled (backend={})", config.channels.session_backend));
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    &format!(
+                        "Gateway session persistence enabled (backend={})",
+                        config.channels.session_backend
+                    )
+                );
                 if config.gateway.session_ttl_hours > 0
                     && let Ok(cleaned) = backend.cleanup_stale(config.gateway.session_ttl_hours)
                     && cleaned > 0
                 {
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"cleaned": cleaned})), "Cleaned up stale gateway sessions");
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(::serde_json::json!({"cleaned": cleaned})),
+                        "Cleaned up stale gateway sessions"
+                    );
                 }
                 Some(backend)
             }
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Session persistence disabled");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "Session persistence disabled"
+                );
                 None
             }
         }
@@ -982,23 +1047,41 @@ pub async fn run_gateway(
     {
         Some(explicit) if explicit.join("index.html").is_file() => Some(explicit),
         Some(stale) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"configured": stale.display().to_string()})), "gateway.web_dist_dir points at a path that doesn't contain index.html on \
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"configured": stale.display().to_string()})),
+                "gateway.web_dist_dir points at a path that doesn't contain index.html on \
                  this machine; falling back to auto-detect. Update or remove the setting in \
-                 config.toml to silence this warning.");
+                 config.toml to silence this warning."
+            );
             auto_detect_web_dist()
         }
         None => auto_detect_web_dist(),
     };
 
     if let Some(ref dir) = web_dist_dir {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Web dashboard: serving from {}", dir.display().to_string()));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!("Web dashboard: serving from {}", dir.display().to_string())
+        );
     } else if config.gateway.web_dist_dir.is_some() {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Web dashboard: not available — configured gateway.web_dist_dir is missing on \
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "Web dashboard: not available — configured gateway.web_dist_dir is missing on \
              this machine and no fallback location was found. Build with `cargo web build` \
-             and point gateway.web_dist_dir at the resulting web/dist directory.");
+             and point gateway.web_dist_dir at the resulting web/dist directory."
+        );
     } else {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Web dashboard: not available — no web/dist found. Build with `cargo web build` \
-             and point gateway.web_dist_dir at the resulting web/dist directory.");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "Web dashboard: not available — no web/dist found. Build with `cargo web build` \
+             and point gateway.web_dist_dir at the resulting web/dist directory."
+        );
     }
 
     let pfx = path_prefix.unwrap_or("");
@@ -1317,7 +1400,7 @@ pub async fn run_gateway(
         .route("/api/sessions/running", get(api::handle_api_sessions_running))
         .route(
             "/api/sessions/{id}/messages",
-            get(api::handle_api_session_messages),
+            get(api::handle_api_session_messages).post(api::handle_api_session_message_post),
         )
         .route("/api/sessions/{id}", delete(api::handle_api_session_delete).put(api::handle_api_session_rename))
         .route("/api/sessions/{id}/state", get(api::handle_api_session_state))
@@ -1439,9 +1522,17 @@ pub async fn run_gateway(
         Some(tls_cfg) if tls_cfg.enabled => {
             let has_mtls = tls_cfg.client_auth.as_ref().is_some_and(|ca| ca.enabled);
             if has_mtls {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "TLS enabled with mutual TLS (mTLS) client verification");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "TLS enabled with mutual TLS (mTLS) client verification"
+                );
             } else {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "TLS enabled (no client certificate requirement)");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "TLS enabled (no client certificate requirement)"
+                );
             }
             Some(tls::build_tls_acceptor(tls_cfg)?)
         }
@@ -1505,7 +1596,11 @@ pub async fn run_gateway(
         )
         .with_graceful_shutdown(async move {
             let _ = shutdown_rx.changed().await;
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "ZeroClaw Gateway shutting down");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "ZeroClaw Gateway shutting down"
+            );
         })
         .await?;
     }
@@ -1604,7 +1699,12 @@ async fn handle_pair(
     let rate_key =
         client_key_from_request(Some(peer_addr), &headers, state.trust_forwarded_headers);
     if !state.rate_limiter.allow_pair(&rate_key) {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "/pair rate limit exceeded");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "/pair rate limit exceeded"
+        );
         let err = serde_json::json!({
             "error": "Too many pairing requests. Please retry later.",
             "retry_after": RATE_LIMIT_WINDOW_SECS,
@@ -1614,7 +1714,13 @@ async fn handle_pair(
 
     // ── Auth rate limiting (brute-force protection) ──
     if let Err(e) = state.auth_limiter.check_rate_limit(&rate_key) {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"rate_key": rate_key})), "pairing auth rate limit exceeded");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"rate_key": rate_key})),
+            "pairing auth rate limit exceeded"
+        );
         let err = serde_json::json!({
             "error": format!("Too many auth attempts. Try again in {}s.", e.retry_after_secs),
             "retry_after": e.retry_after_secs,
@@ -1629,11 +1735,21 @@ async fn handle_pair(
 
     match state.pairing.try_pair(code, &rate_key).await {
         Ok(Some(token)) => {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "new client paired successfully");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "new client paired successfully"
+            );
             if let Err(err) =
                 Box::pin(persist_pairing_tokens(state.config.clone(), &state.pairing)).await
             {
-                ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": err.to_string()})), "pairing succeeded but token persistence failed");
+                ::zeroclaw_log::record!(
+                    ERROR,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                        .with_attrs(::serde_json::json!({"error": err.to_string()})),
+                    "pairing succeeded but token persistence failed"
+                );
                 let body = serde_json::json!({
                     "paired": true,
                     "persisted": false,
@@ -1653,12 +1769,23 @@ async fn handle_pair(
         }
         Ok(None) => {
             state.auth_limiter.record_attempt(&rate_key);
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "pairing attempt with invalid code");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "pairing attempt with invalid code"
+            );
             let err = serde_json::json!({"error": "Invalid pairing code"});
             (StatusCode::FORBIDDEN, Json(err))
         }
         Err(lockout_secs) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"lockout_secs": lockout_secs})), "pairing locked out; too many failed attempts");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"lockout_secs": lockout_secs})),
+                "pairing locked out; too many failed attempts"
+            );
             let err = serde_json::json!({
                 "error": format!("Too many failed attempts. Try again in {lockout_secs}s."),
                 "retry_after": lockout_secs
@@ -1857,7 +1984,12 @@ async fn handle_webhook(
     let rate_key =
         client_key_from_request(Some(peer_addr), &headers, state.trust_forwarded_headers);
     if !state.rate_limiter.allow_webhook(&rate_key) {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "/webhook rate limit exceeded");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "/webhook rate limit exceeded"
+        );
         let err = serde_json::json!({
             "error": "Too many webhook requests. Please retry later.",
             "retry_after": RATE_LIMIT_WINDOW_SECS,
@@ -1868,7 +2000,13 @@ async fn handle_webhook(
     // ── Bearer token auth (pairing) with auth rate limiting ──
     if state.pairing.require_pairing() {
         if let Err(e) = state.auth_limiter.check_rate_limit(&rate_key) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"rate_key": rate_key})), "webhook: auth rate limit exceeded for");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"rate_key": rate_key})),
+                "webhook: auth rate limit exceeded for"
+            );
             let err = serde_json::json!({
                 "error": format!("Too many auth attempts. Try again in {}s.", e.retry_after_secs),
                 "retry_after": e.retry_after_secs,
@@ -1882,7 +2020,12 @@ async fn handle_webhook(
         let token = auth.strip_prefix("Bearer ").unwrap_or("");
         if !state.pairing.is_authenticated(token) {
             state.auth_limiter.record_attempt(&rate_key);
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "webhook: rejected — not paired / invalid bearer token");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "webhook: rejected — not paired / invalid bearer token"
+            );
             let err = serde_json::json!({
                 "error": "Unauthorized — pair first via POST /pair, then send Authorization: Bearer <token>"
             });
@@ -1901,7 +2044,12 @@ async fn handle_webhook(
         match header_hash {
             Some(val) if constant_time_eq(&val, secret_hash.as_ref()) => {}
             _ => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "webhook: rejected request — invalid or missing X-Webhook-Secret");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "webhook: rejected request — invalid or missing X-Webhook-Secret"
+                );
                 let err = serde_json::json!({"error": "Unauthorized — invalid or missing X-Webhook-Secret header"});
                 return (StatusCode::UNAUTHORIZED, Json(err));
             }
@@ -1912,7 +2060,13 @@ async fn handle_webhook(
     let Json(webhook_body) = match body {
         Ok(b) => b,
         Err(e) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "webhook JSON parse error");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "webhook JSON parse error"
+            );
             let err = serde_json::json!({
                 "error": "Invalid JSON body. Expected: {\"message\": \"...\"}"
             });
@@ -1928,7 +2082,12 @@ async fn handle_webhook(
         .filter(|value| !value.is_empty())
         && !state.idempotency_store.record_if_new(idempotency_key)
     {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"idempotency_key": idempotency_key})), "webhook duplicate ignored");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"idempotency_key": idempotency_key})),
+            "webhook duplicate ignored"
+        );
         let body = serde_json::json!({
             "status": "duplicate",
             "idempotent": true,
@@ -2055,15 +2214,26 @@ async fn handle_webhook(
             );
 
             if is_needs_onboarding_err(&e) {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Webhook chat refused: gateway has no model configured; \
-                     visit /onboard");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "Webhook chat refused: gateway has no model configured; \
+                     visit /onboard"
+                );
                 let body = serde_json::json!({
                     "error": "needs_onboarding",
                     "url": "/onboard"
                 });
                 (StatusCode::SERVICE_UNAVAILABLE, Json(body))
             } else {
-                ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": sanitized})), "webhook model_provider error");
+                ::zeroclaw_log::record!(
+                    ERROR,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                        .with_attrs(::serde_json::json!({"error": sanitized})),
+                    "webhook model_provider error"
+                );
                 let err = serde_json::json!({"error": "LLM request failed"});
                 (StatusCode::INTERNAL_SERVER_ERROR, Json(err))
             }
@@ -2098,13 +2268,24 @@ async fn handle_whatsapp_verify(
         .is_some_and(|t| constant_time_eq(t, wa.verify_token()));
     if params.mode.as_deref() == Some("subscribe") && token_matches {
         if let Some(ch) = params.challenge {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"channel": "whatsapp"})), "webhook verified successfully");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"channel": "whatsapp"})),
+                "webhook verified successfully"
+            );
             return (StatusCode::OK, ch);
         }
         return (StatusCode::BAD_REQUEST, "Missing hub.challenge".to_string());
     }
 
-    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"channel": "whatsapp"})), "webhook verification failed — token mismatch");
+    ::zeroclaw_log::record!(
+        WARN,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+            .with_attrs(::serde_json::json!({"channel": "whatsapp"})),
+        "webhook verification failed — token mismatch"
+    );
     (StatusCode::FORBIDDEN, "Forbidden".to_string())
 }
 
@@ -2156,11 +2337,20 @@ async fn handle_whatsapp_message(
             .unwrap_or("");
 
         if !verify_whatsapp_signature(app_secret, &body, signature) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"channel": "whatsapp"})), &format!("webhook signature verification failed (signature: {})", if signature.is_empty() {
-                    "missing"
-                } else {
-                    "invalid"
-                }));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"channel": "whatsapp"})),
+                &format!(
+                    "webhook signature verification failed (signature: {})",
+                    if signature.is_empty() {
+                        "missing"
+                    } else {
+                        "invalid"
+                    }
+                )
+            );
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({"error": "Invalid signature"})),
@@ -2227,16 +2417,35 @@ async fn handle_whatsapp_message(
                     .send(&SendMessage::new(response, &msg.reply_target))
                     .await
                 {
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string()})), "Failed to send WhatsApp reply");
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "Failed to send WhatsApp reply"
+                    );
                 }
             }
             Err(e) => {
                 let reply = if is_needs_onboarding_err(&e) {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "WhatsApp chat refused: gateway has no model configured; \
-                         visit /onboard");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        "WhatsApp chat refused: gateway has no model configured; \
+                         visit /onboard"
+                    );
                     needs_onboarding_channel_reply()
                 } else {
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"channel": "whatsapp", "error": e.to_string()})), "LLM error");
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(
+                                ::serde_json::json!({"channel": "whatsapp", "error": e.to_string()})
+                            ),
+                        "LLM error"
+                    );
                     "Sorry, I couldn't process your message right now.".to_string()
                 };
                 let _ = wa.send(&SendMessage::new(reply, &msg.reply_target)).await;
@@ -2281,11 +2490,19 @@ async fn handle_linq_webhook(
             timestamp,
             signature,
         ) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Linq webhook signature verification failed (signature: {})", if signature.is_empty() {
-                    "missing"
-                } else {
-                    "invalid"
-                }));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "Linq webhook signature verification failed (signature: {})",
+                    if signature.is_empty() {
+                        "missing"
+                    } else {
+                        "invalid"
+                    }
+                )
+            );
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({"error": "Invalid signature"})),
@@ -2342,16 +2559,35 @@ async fn handle_linq_webhook(
                     .send(&SendMessage::new(response, &msg.reply_target))
                     .await
                 {
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string()})), "Failed to send Linq reply");
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "Failed to send Linq reply"
+                    );
                 }
             }
             Err(e) => {
                 let reply = if is_needs_onboarding_err(&e) {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Linq chat refused: gateway has no model configured; \
-                         visit /onboard");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        "Linq chat refused: gateway has no model configured; \
+                         visit /onboard"
+                    );
                     needs_onboarding_channel_reply()
                 } else {
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"channel": "linq", "error": e.to_string()})), "LLM error");
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(
+                                ::serde_json::json!({"channel": "linq", "error": e.to_string()})
+                            ),
+                        "LLM error"
+                    );
                     "Sorry, I couldn't process your message right now.".to_string()
                 };
                 let _ = linq.send(&SendMessage::new(reply, &msg.reply_target)).await;
@@ -2374,7 +2610,12 @@ async fn handle_wati_verify(
 
     // WATI may use Meta-style webhook verification; echo the challenge
     if let Some(challenge) = params.challenge {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"channel": "wati"})), "webhook verified successfully");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"channel": "wati"})),
+            "webhook verified successfully"
+        );
         return (StatusCode::OK, challenge);
     }
 
@@ -2455,16 +2696,35 @@ async fn handle_wati_webhook(State(state): State<AppState>, body: Bytes) -> impl
                     .send(&SendMessage::new(response, &msg.reply_target))
                     .await
                 {
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string()})), "Failed to send WATI reply");
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "Failed to send WATI reply"
+                    );
                 }
             }
             Err(e) => {
                 let reply = if is_needs_onboarding_err(&e) {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "WATI chat refused: gateway has no model configured; \
-                         visit /onboard");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        "WATI chat refused: gateway has no model configured; \
+                         visit /onboard"
+                    );
                     needs_onboarding_channel_reply()
                 } else {
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"channel": "wati", "error": e.to_string()})), "LLM error");
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(
+                                ::serde_json::json!({"channel": "wati", "error": e.to_string()})
+                            ),
+                        "LLM error"
+                    );
                     "Sorry, I couldn't process your message right now.".to_string()
                 };
                 let _ = wati.send(&SendMessage::new(reply, &msg.reply_target)).await;
@@ -2509,11 +2769,19 @@ async fn handle_nextcloud_talk_webhook(
             &body_str,
             signature,
         ) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Nextcloud Talk webhook signature verification failed (signature: {})", if signature.is_empty() {
-                    "missing"
-                } else {
-                    "invalid"
-                }));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "Nextcloud Talk webhook signature verification failed (signature: {})",
+                    if signature.is_empty() {
+                        "missing"
+                    } else {
+                        "invalid"
+                    }
+                )
+            );
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({"error": "Invalid signature"})),
@@ -2572,13 +2840,30 @@ async fn handle_nextcloud_talk_webhook(
                         .send(&SendMessage::new(response, &msg.reply_target))
                         .await
                     {
-                        ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string()})), "Failed to send Nextcloud Talk reply");
+                        ::zeroclaw_log::record!(
+                            ERROR,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Fail
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "Failed to send Nextcloud Talk reply"
+                        );
                     }
                 }
                 Err(e) => {
                     let reply = if is_needs_onboarding_err(&e) {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Nextcloud Talk chat refused: gateway has no model configured; \
-                             visit /onboard");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            "Nextcloud Talk chat refused: gateway has no model configured; \
+                             visit /onboard"
+                        );
                         needs_onboarding_channel_reply()
                     } else {
                         ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"channel": "nextcloud_talk", "error": e.to_string()})), "LLM error");
@@ -2630,7 +2915,13 @@ async fn handle_gmail_push_webhook(
             .unwrap_or("");
 
         if provided != secret {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"channel": "gmail_push"})), "webhook: unauthorized request");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"channel": "gmail_push"})),
+                "webhook: unauthorized request"
+            );
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({"error": "Unauthorized"})),
@@ -2643,7 +2934,15 @@ async fn handle_gmail_push_webhook(
         match serde_json::from_str(&body_str) {
             Ok(e) => e,
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string(), "channel": "gmail_push"})), "webhook: invalid payload");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(
+                            ::serde_json::json!({"error": e.to_string(), "channel": "gmail_push"})
+                        ),
+                    "webhook: invalid payload"
+                );
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({"error": "Invalid Pub/Sub envelope"})),
@@ -2655,7 +2954,15 @@ async fn handle_gmail_push_webhook(
     let channel = Arc::clone(gmail_push);
     tokio::spawn(async move {
         if let Err(e) = channel.handle_notification(&envelope).await {
-            ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"channel": "gmail_push", "error": e.to_string()})), "push notification processing failed");
+            ::zeroclaw_log::record!(
+                ERROR,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                    .with_attrs(
+                        ::serde_json::json!({"channel": "gmail_push", "error": e.to_string()})
+                    ),
+                "push notification processing failed"
+            );
         }
     });
 
@@ -2694,7 +3001,11 @@ async fn handle_admin_shutdown(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     require_localhost(&peer)?;
-    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "admin shutdown request received; initiating graceful shutdown");
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+        "admin shutdown request received; initiating graceful shutdown"
+    );
 
     let body = AdminResponse {
         success: true,
@@ -2738,7 +3049,11 @@ async fn handle_admin_reload(
         ));
     };
 
-    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "admin reload request received");
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+        "admin reload request received"
+    );
     // Clear the pending-reload flag before the daemon supervisor brings up
     // the new gateway instance. The fresh instance starts with the flag
     // already false, matching its "subsystems just-loaded, no pending
@@ -2816,7 +3131,11 @@ async fn handle_admin_paircode_new(
     require_localhost(&peer)?;
     match state.pairing.generate_new_pairing_code() {
         Some(code) => {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "new pairing code generated via admin endpoint");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "new pairing code generated via admin endpoint"
+            );
             let body = serde_json::json!({
                 "success": true,
                 "pairing_required": state.pairing.require_pairing(),
@@ -3550,9 +3869,10 @@ mod tests {
                 ::zeroclaw_api::attribution::MemoryKind::InMemory,
             )
         }
-        fn alias(&self) -> &str { "MockMemory" }
+        fn alias(&self) -> &str {
+            "MockMemory"
+        }
     }
-
 
     #[derive(Default)]
     struct MockModelProvider {
@@ -3580,9 +3900,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "MockModelProvider" }
+        fn alias(&self) -> &str {
+            "MockModelProvider"
+        }
     }
-
 
     #[derive(Default)]
     struct TrackingMemory {
@@ -3673,9 +3994,10 @@ mod tests {
                 ::zeroclaw_api::attribution::MemoryKind::InMemory,
             )
         }
-        fn alias(&self) -> &str { "TrackingMemory" }
+        fn alias(&self) -> &str {
+            "TrackingMemory"
+        }
     }
-
 
     fn test_connect_info() -> ConnectInfo<SocketAddr> {
         ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 30_300)))
@@ -4257,9 +4579,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "SlowProvider" }
+        fn alias(&self) -> &str {
+            "SlowProvider"
+        }
     }
-
 
     #[tokio::test]
     async fn nextcloud_talk_webhook_returns_before_llm_call_completes() {

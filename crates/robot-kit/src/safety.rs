@@ -152,7 +152,15 @@ impl SafetyMonitor {
                 ));
             }
             // Allow reduced distance
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Reducing {} distance from {:.2}m to {:.2}m due to obstacle", direction, distance, safe_distance));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "Reducing {} distance from {:.2}m to {:.2}m due to obstacle",
+                    direction, distance, safe_distance
+                )
+            );
         }
 
         // Update last command time
@@ -189,7 +197,12 @@ impl SafetyMonitor {
 
     /// Trigger emergency stop
     pub async fn emergency_stop(&self, reason: &str) {
-        ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure), &format!("EMERGENCY STOP: {}", reason));
+        ::zeroclaw_log::record!(
+            ERROR,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                .with_outcome(::zeroclaw_log::EventOutcome::Failure),
+            &format!("EMERGENCY STOP: {}", reason)
+        );
         self.state.estop_active.store(true, Ordering::SeqCst);
         self.state.can_move.store(false, Ordering::SeqCst);
         *self.state.block_reason.write().await = Some(reason.to_string());
@@ -201,7 +214,11 @@ impl SafetyMonitor {
 
     /// Reset emergency stop (requires explicit action)
     pub async fn reset_estop(&self) {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "E-STOP RESET");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "E-STOP RESET"
+        );
         self.state.estop_active.store(false, Ordering::SeqCst);
         self.state.can_move.store(true, Ordering::SeqCst);
         *self.state.block_reason.write().await = None;
@@ -239,7 +256,12 @@ impl SafetyMonitor {
 
     /// Report bump sensor triggered
     pub async fn bump_detected(&self, sensor: &str) {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("BUMP DETECTED: {}", sensor));
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            &format!("BUMP DETECTED: {}", sensor)
+        );
 
         // Immediate stop
         self.state.can_move.store(false, Ordering::SeqCst);
@@ -383,7 +405,14 @@ impl crate::traits::Tool for SafeDrive {
                 modified_args["speed"] = serde_json::json!(original_speed * speed_mult);
 
                 if speed_mult < 1.0 {
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Safety: Reducing speed to {:.0}% due to obstacle proximity", speed_mult * 100.0));
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        &format!(
+                            "Safety: Reducing speed to {:.0}% due to obstacle proximity",
+                            speed_mult * 100.0
+                        )
+                    );
                 }
 
                 self.inner_drive.execute(modified_args).await

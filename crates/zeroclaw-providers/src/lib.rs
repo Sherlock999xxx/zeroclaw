@@ -500,7 +500,13 @@ fn resolve_qwen_oauth_context(credential_override: Option<&str>) -> QwenOauthPro
                 cached = Some(refreshed);
             }
             Err(error) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": error.to_string()})), "OAuth refresh failed");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": error.to_string()})),
+                    "OAuth refresh failed"
+                );
             }
         }
     }
@@ -1063,7 +1069,8 @@ fn create_model_provider_inner(
     // factory callers that pass the legacy spelling expect a working
     // construction here.
     if matches!(name, "openai-codex" | "openai_codex" | "codex") {
-        return Ok(Box::new(openai_codex::OpenAiCodexModelProvider::new(alias, options, api_key,
+        return Ok(Box::new(openai_codex::OpenAiCodexModelProvider::new(
+            alias, options, api_key,
         )?));
     }
     // Resolve credential and break static-analysis taint chain from the
@@ -1157,7 +1164,8 @@ pub fn create_resilient_model_provider_with_options(
     let primary_model_provider =
         create_model_provider_inner(None, primary_name, "default", api_key, api_url, options)?;
 
-    let reliable = ReliableModelProvider::new(primary_name,
+    let reliable = ReliableModelProvider::new(
+        primary_name,
         vec![(primary_name.to_string(), primary_model_provider)],
         reliability.provider_retries,
         reliability.provider_backoff_ms,
@@ -1183,7 +1191,8 @@ pub fn create_resilient_model_provider_for_alias(
     let primary_model_provider =
         create_model_provider_inner(Some(config), family, alias, api_key, api_url, options)?;
 
-    let reliable = ReliableModelProvider::new(alias,
+    let reliable = ReliableModelProvider::new(
+        alias,
         vec![(family.to_string(), primary_model_provider)],
         reliability.provider_retries,
         reliability.provider_backoff_ms,
@@ -1264,7 +1273,13 @@ pub fn create_routed_model_provider_with_options(
                 if name == primary_name {
                     return Err(e);
                 }
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"model_provider": name.as_str()})), "Ignoring routed model_provider that failed to initialize");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"model_provider": name.as_str()})),
+                    "Ignoring routed model_provider that failed to initialize"
+                );
             }
         }
     }
@@ -1283,7 +1298,8 @@ pub fn create_routed_model_provider_with_options(
         })
         .collect();
 
-    Ok(Box::new(router::RouterModelProvider::new(primary_name,
+    Ok(Box::new(router::RouterModelProvider::new(
+        primary_name,
         model_providers,
         routes,
         default_model.to_string(),

@@ -135,7 +135,14 @@ impl McpServer {
             tools: tool_list.tools,
         };
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("MCP server `{}` connected — {} tool(s) available", inner.config.name, tool_count));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "MCP server `{}` connected — {} tool(s) available",
+                inner.config.name, tool_count
+            )
+        );
 
         Ok(Self {
             inner: Arc::new(Mutex::new(inner)),
@@ -230,7 +237,12 @@ impl McpRegistry {
                 }
                 // Non-fatal — log and continue with remaining servers
                 Err(e) => {
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure), &format!("Failed to connect to MCP server `{}`: {:#}", config.name, e));
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure),
+                        &format!("Failed to connect to MCP server `{}`: {:#}", config.name, e)
+                    );
                 }
             }
         }

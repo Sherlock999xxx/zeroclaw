@@ -112,11 +112,23 @@ mod tests {
 
     #[test]
     fn record_compiles_with_attrs_and_outcome() {
-        record!(WARN, Event::new(module_path!(), Action::Fail).with_outcome(EventOutcome::Failure).with_attrs(json!({"code": 42})), "failed");
+        record!(
+            WARN,
+            Event::new(module_path!(), Action::Fail)
+                .with_outcome(EventOutcome::Failure)
+                .with_attrs(json!({"code": 42})),
+            "failed"
+        );
     }
 
     #[test]
     fn record_compiles_with_duration() {
-        record!(INFO, Event::new(module_path!(), Action::Complete).with_outcome(EventOutcome::Success).with_duration(123), "done");
+        record!(
+            INFO,
+            Event::new(module_path!(), Action::Complete)
+                .with_outcome(EventOutcome::Success)
+                .with_duration(123),
+            "done"
+        );
     }
 }

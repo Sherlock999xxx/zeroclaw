@@ -89,7 +89,12 @@ impl SkillImprover {
         let temp_path = skill_dir.join(".SKILL.toml.tmp");
         tokio::fs::write(&temp_path, final_content.as_bytes())
             .await
-            .with_context(|| format!("Failed to write temp file: {}", temp_path.display().to_string()))?;
+            .with_context(|| {
+                format!(
+                    "Failed to write temp file: {}",
+                    temp_path.display().to_string()
+                )
+            })?;
 
         // Validate the temp file is readable and valid.
         let written = tokio::fs::read_to_string(&temp_path).await?;

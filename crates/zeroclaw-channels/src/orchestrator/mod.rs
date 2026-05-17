@@ -76,7 +76,6 @@ pub use zeroclaw_infra::session_backend::SessionBackend;
 pub use zeroclaw_infra::session_sqlite::SqliteSessionBackend;
 pub use zeroclaw_infra::stall_watchdog::StallWatchdog;
 
-use zeroclaw_log::Instrument;
 use anyhow::{Context, Result};
 use parking_lot::RwLock;
 use portable_atomic::{AtomicU64, Ordering};
@@ -91,6 +90,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio_util::sync::CancellationToken;
 use zeroclaw_api::session_keys::sanitize_session_key;
 use zeroclaw_config::schema::Config;
+use zeroclaw_log::Instrument;
 use zeroclaw_memory::{self, MEMORY_CONTEXT_CLOSE, MEMORY_CONTEXT_OPEN, Memory};
 use zeroclaw_providers::reliable::{scope_provider_fallback, take_last_provider_fallback};
 use zeroclaw_providers::{self, ChatMessage, ModelProvider};
@@ -1223,7 +1223,13 @@ fn append_sender_turn(ctx: &ChannelRuntimeContext, sender_key: &str, turn: ChatM
     if let Some(ref store) = ctx.session_store
         && let Err(e) = store.append(sender_key, &turn)
     {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Failed to persist session turn");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+            "Failed to persist session turn"
+        );
     }
 
     // Use the user-configured max_history_messages (fall back to
@@ -1362,7 +1368,13 @@ fn rollback_orphan_user_turn(
     if let Some(ref store) = ctx.session_store
         && let Err(e) = store.remove_last(sender_key)
     {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Failed to rollback session store entry");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+            "Failed to rollback session store entry"
+        );
     }
 
     true
@@ -1520,7 +1532,15 @@ async fn get_or_create_provider(
     let model_provider: Arc<dyn ModelProvider> = Arc::from(model_provider);
 
     if let Err(err) = model_provider.warmup().await {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"model_provider": provider_name, "err": err.to_string()})), "ModelProvider warmup failed");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(
+                    ::serde_json::json!({"model_provider": provider_name, "err": err.to_string()})
+                ),
+            "ModelProvider warmup failed"
+        );
     }
 
     let mut cache = ctx.provider_cache.lock().unwrap_or_else(|e| e.into_inner());
@@ -1862,7 +1882,15 @@ async fn handle_runtime_command_if_needed(
             if let Some(ref store) = ctx.session_store
                 && let Err(e) = store.delete_session(&sender_key)
             {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string(), "sender_key": sender_key})), "Failed to delete persisted session for");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(
+                            ::serde_json::json!({"error": e.to_string(), "sender_key": sender_key})
+                        ),
+                    "Failed to delete persisted session for"
+                );
             }
             mark_sender_for_new_session(ctx, &sender_key);
             "Conversation history cleared. Starting fresh.".to_string()
@@ -1873,7 +1901,15 @@ async fn handle_runtime_command_if_needed(
         .send(&SendMessage::new(response, &msg.reply_target).in_thread(msg.thread_ts.clone()))
         .await
     {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Failed to send runtime command response on {}: {err}", channel.name()));
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            &format!(
+                "Failed to send runtime command response on {}: {err}",
+                channel.name()
+            )
+        );
     }
 
     true
@@ -2323,7 +2359,13 @@ fn sanitize_channel_response(response: &str, tools: &[Box<dyn Tool>]) -> String 
     match zeroclaw_runtime::security::LeakDetector::new().scan(&sanitized) {
         zeroclaw_runtime::security::LeakResult::Clean => sanitized,
         zeroclaw_runtime::security::LeakResult::Detected { patterns, redacted } => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"patterns": patterns})), "output guardrail: credential leak detected in outbound channel response");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"patterns": patterns})),
+                "output guardrail: credential leak detected in outbound channel response"
+            );
             redacted
         }
     }
@@ -2603,7 +2645,15 @@ fn spawn_supervised_listener_with_health_interval(
 
                 match result {
                     Ok(()) => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Channel {} exited unexpectedly; restarting", ch.name()));
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            &format!("Channel {} exited unexpectedly; restarting", ch.name())
+                        );
                         zeroclaw_runtime::health::mark_component_error(
                             &component,
                             "listener exited unexpectedly",
@@ -2611,7 +2661,16 @@ fn spawn_supervised_listener_with_health_interval(
                         backoff = initial_backoff_secs.max(1);
                     }
                     Err(e) => {
-                        ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string()})), "channel listener error; restarting");
+                        ::zeroclaw_log::record!(
+                            ERROR,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Fail
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "channel listener error; restarting"
+                        );
                         zeroclaw_runtime::health::mark_component_error(&component, e.to_string());
                     }
                 }
@@ -2639,7 +2698,13 @@ fn compute_max_in_flight_messages(channel_count: usize) -> usize {
 
 fn log_worker_join_result(result: Result<(), tokio::task::JoinError>) {
     if let Err(error) = result {
-        ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": error.to_string()})), "Channel message worker crashed");
+        ::zeroclaw_log::record!(
+            ERROR,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                .with_attrs(::serde_json::json!({"error": error.to_string()})),
+            "Channel message worker crashed"
+        );
     }
 }
 
@@ -2666,7 +2731,12 @@ fn spawn_scoped_typing_task(
         }
 
         if let Err(e) = channel.stop_typing(&recipient).await {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "failed to stop typing");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "failed to stop typing"
+            );
         }
     })
 }
@@ -2707,13 +2777,22 @@ async fn process_channel_message_body(
     cancellation_token: CancellationToken,
     channel_composite: String,
 ) {
-    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Inbound), "channel inbound message");
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Inbound),
+        "channel inbound message"
+    );
 
     // ── Hook: on_message_received (modifying) ────────────
     let mut msg = if let Some(hooks) = &ctx.hooks {
         match hooks.run_on_message_received(msg).await {
             zeroclaw_runtime::hooks::HookResult::Cancel(reason) => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"reason": reason.to_string()})), "incoming message dropped by hook");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"reason": reason.to_string()})),
+                    "incoming message dropped by hook"
+                );
                 return;
             }
             zeroclaw_runtime::hooks::HookResult::Continue(modified) => modified,
@@ -2749,7 +2828,12 @@ async fn process_channel_message_body(
         };
         let enriched = link_enricher::enrich_message(&msg.content, &enricher_cfg).await;
         if enriched != msg.content {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"sender": msg.sender})), "Link enricher: prepended URL summaries to message");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"sender": msg.sender})),
+                "Link enricher: prepended URL summaries to message"
+            );
             msg.content = enriched;
         }
     }
@@ -2770,20 +2854,36 @@ async fn process_channel_message_body(
     // identical normalization so they agree on what "self" means.
     if let Some(channel) = target_channel.as_ref() {
         if channel.drop_self_messages(&msg) {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"sender": msg.sender})), "dropping self-authored inbound message (self-loop guard, sdk layer)");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"sender": msg.sender})),
+                "dropping self-authored inbound message (self-loop guard, sdk layer)"
+            );
             return;
         }
         if zeroclaw_runtime::peers::should_drop_self_loop(
             &msg.sender,
             channel.self_handle().as_deref(),
         ) {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"sender": msg.sender})), "dropping self-authored inbound message (self-loop guard, agent-loop fallback)");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"sender": msg.sender})),
+                "dropping self-authored inbound message (self-loop guard, agent-loop fallback)"
+            );
             return;
         }
     }
 
     if let Err(err) = maybe_apply_runtime_config_update(ctx.as_ref()).await {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string()})), "Failed to apply runtime config update");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"error": err.to_string()})),
+            "Failed to apply runtime config update"
+        );
     }
     if handle_runtime_command_if_needed(ctx.as_ref(), &msg, target_channel.as_ref()).await {
         return;
@@ -2813,7 +2913,15 @@ async fn process_channel_message_body(
             sender_id: Some(msg.sender.as_str()).filter(|s| !s.is_empty()),
         };
         if let Err(e) = store.set_session_context(&history_key, context) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"history_key": history_key, "e": e.to_string()})), "Failed to stamp session routing context");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(
+                        ::serde_json::json!({"history_key": history_key, "e": e.to_string()})
+                    ),
+                "Failed to stamp session routing context"
+            );
         }
     }
     let mut route = get_route_selection(ctx.as_ref(), &history_key);
@@ -2876,7 +2984,12 @@ async fn process_channel_message_body(
             .await;
     }
 
-    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"message_id": msg.id})), "processing inbound message");
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+            .with_attrs(::serde_json::json!({"message_id": msg.id})),
+        "processing inbound message"
+    );
     let started_at = Instant::now();
 
     let force_fresh_session = take_pending_new_session(ctx.as_ref(), &history_key);
@@ -3047,7 +3160,13 @@ async fn process_channel_message_body(
                 ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"sender": msg.sender, "tokens_before": result.tokens_before, "tokens_after": result.tokens_after, "passes": result.passes_used})), "Proactive context compression applied before LLM call");
             }
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Context compression failed, proceeding without");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "Context compression failed, proceeding without"
+                );
             }
             _ => {}
         }
@@ -3089,7 +3208,14 @@ async fn process_channel_message_body(
                 .add_reaction(&msg.reply_target, &msg.id, emoji)
                 .await
             {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Failed to add {emoji} no-reply reaction on {}: {e}", channel.name()));
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    &format!(
+                        "Failed to add {emoji} no-reply reaction on {}: {e}",
+                        channel.name()
+                    )
+                );
             }
         }
         runtime_trace::record_event(
@@ -3136,7 +3262,12 @@ async fn process_channel_message_body(
             {
                 Ok(id) => id,
                 Err(e) => {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), &format!("Failed to send draft on {}", channel.name()));
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        &format!("Failed to send draft on {}", channel.name())
+                    );
                     None
                 }
             }
@@ -3169,7 +3300,15 @@ async fn process_channel_message_body(
                                 .update_draft_progress(&reply_target, &draft_id, &visible)
                                 .await
                             {
-                                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "Draft progress update failed");
+                                ::zeroclaw_log::record!(
+                                    DEBUG,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                                    "Draft progress update failed"
+                                );
                             }
                         }
                         StreamDelta::Text(text) => {
@@ -3179,7 +3318,15 @@ async fn process_channel_message_body(
                                 .update_draft(&reply_target, &draft_id, &visible)
                                 .await
                             {
-                                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "Draft update failed");
+                                ::zeroclaw_log::record!(
+                                    DEBUG,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                                    "Draft update failed"
+                                );
                             }
                         }
                     }
@@ -3199,7 +3346,12 @@ async fn process_channel_message_body(
             .add_reaction(&msg.reply_target, &msg.id, "\u{1F440}")
             .await
     {
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "Failed to add reaction");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+            "Failed to add reaction"
+        );
     }
 
     // Skip typing only for Partial mode — the draft message itself provides
@@ -3277,7 +3429,12 @@ async fn process_channel_message_body(
     let llm_call_start = Instant::now();
     #[allow(clippy::cast_possible_truncation)]
     let elapsed_before_llm_ms = started_at.elapsed().as_millis() as u64;
-    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"elapsed_before_llm_ms": elapsed_before_llm_ms})), "starting LLM call");
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+            .with_attrs(::serde_json::json!({"elapsed_before_llm_ms": elapsed_before_llm_ms})),
+        "starting LLM call"
+    );
     // Per-turn collector. `tool_execution::execute_one_tool` pushes
     // `<tool_name>: <receipt>` here whenever a receipt is generated, so the
     // orchestrator can render the trailing `Tool receipts:` block after the
@@ -3359,7 +3516,14 @@ async fn process_channel_message_body(
             if let LlmExecutionResult::Completed(Ok(Err(ref e))) = loop_result
                 && let Some((new_model_provider, new_model)) = is_model_switch_requested(e)
             {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Model switch requested, switching from {} {} to {} {}", route.model_provider, route.model, new_model_provider, new_model));
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    &format!(
+                        "Model switch requested, switching from {} {} to {} {}",
+                        route.model_provider, route.model, new_model_provider, new_model
+                    )
+                );
 
                 match create_resilient_model_provider_nonblocking(
                     &new_model_provider,
@@ -3384,7 +3548,16 @@ async fn process_channel_message_body(
                         continue;
                     }
                     Err(err) => {
-                        ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"err": err.to_string()})), "Failed to create model_provider after model switch");
+                        ::zeroclaw_log::record!(
+                            ERROR,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Fail
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(::serde_json::json!({"err": err.to_string()})),
+                            "Failed to create model_provider after model switch"
+                        );
                         clear_model_switch_request();
                         // Fall through with the original error
                     }
@@ -3399,12 +3572,20 @@ async fn process_channel_message_body(
     .await;
 
     // Drop all senders so updater tasks can exit (rx.recv() returns None).
-    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Post-loop: dropping delta_tx and awaiting draft updater");
+    ::zeroclaw_log::record!(
+        DEBUG,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+        "Post-loop: dropping delta_tx and awaiting draft updater"
+    );
     drop(delta_tx);
     if let Some(handle) = draft_updater {
         let _ = handle.await;
     }
-    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Post-loop: draft updater completed");
+    ::zeroclaw_log::record!(
+        DEBUG,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+        "Post-loop: draft updater completed"
+    );
 
     // Thread the final reply only if tools were used (multi-message response)
     if notify_observer_flag.tools_used.load(Ordering::Relaxed) && msg.channel != "cli" {
@@ -3421,7 +3602,12 @@ async fn process_channel_message_body(
     let llm_call_ms = llm_call_start.elapsed().as_millis() as u64;
     #[allow(clippy::cast_possible_truncation)]
     let total_ms = started_at.elapsed().as_millis() as u64;
-    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"llm_call_ms": llm_call_ms, "total_ms": total_ms})), "LLM call completed");
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+            .with_attrs(::serde_json::json!({"llm_call_ms": llm_call_ms, "total_ms": total_ms})),
+        "LLM call completed"
+    );
 
     if let Some(token) = typing_cancellation.as_ref() {
         token.cancel();
@@ -3437,7 +3623,12 @@ async fn process_channel_message_body(
 
     match llm_result {
         LlmExecutionResult::Cancelled => {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"sender": msg.sender})), "Cancelled in-flight channel request due to newer message");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"sender": msg.sender})),
+                "Cancelled in-flight channel request due to newer message"
+            );
             runtime_trace::record_event(
                 "channel_message_cancelled",
                 Some(channel_composite.as_str()),
@@ -3455,7 +3646,12 @@ async fn process_channel_message_body(
                 (target_channel.as_ref(), draft_message_id.as_deref())
                 && let Err(err) = channel.cancel_draft(&msg.reply_target, draft_id).await
             {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": err.to_string()})), &format!("Failed to cancel draft on {}", channel.name()));
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"error": err.to_string()})),
+                    &format!("Failed to cancel draft on {}", channel.name())
+                );
             }
         }
         LlmExecutionResult::Completed(Ok(Ok(response))) => {
@@ -3471,7 +3667,15 @@ async fn process_channel_message_body(
                     .await
                 {
                     zeroclaw_runtime::hooks::HookResult::Cancel(reason) => {
-                        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"reason": reason.to_string()})), "outgoing message suppressed by hook");
+                        ::zeroclaw_log::record!(
+                            INFO,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"reason": reason.to_string()})),
+                            "outgoing message suppressed by hook"
+                        );
                         if let (Some(channel), Some(draft_id)) =
                             (target_channel.as_ref(), draft_message_id.as_deref())
                         {
@@ -3599,7 +3803,15 @@ async fn process_channel_message_body(
                     )
                     .await
                     {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "Memory consolidation skipped");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "Memory consolidation skipped"
+                        );
                     }
                 });
             }
@@ -3634,7 +3846,16 @@ async fn process_channel_message_body(
                         .finalize_draft(&msg.reply_target, draft_id, &delivered_response)
                         .await
                     {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Failed to finalize draft; sending as new message");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "Failed to finalize draft; sending as new message"
+                        );
                         let _ = channel
                             .send(
                                 &SendMessage::new(&delivered_response, &msg.reply_target)
@@ -3650,7 +3871,13 @@ async fn process_channel_message_body(
                     )
                     .await
                 {
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string()})), "failed to reply");
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "failed to reply"
+                    );
                 }
                 // Send tool receipts as a separate message in the same thread.
                 // The block is the operator-facing audit surface for the feature,
@@ -3664,7 +3891,13 @@ async fn process_channel_message_body(
                         )
                         .await
                 {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "failed to send tool receipts block");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "failed to send tool receipts block"
+                    );
                 }
             }
         }
@@ -3672,7 +3905,12 @@ async fn process_channel_message_body(
             if zeroclaw_runtime::agent::loop_::is_tool_loop_cancelled(&e)
                 || cancellation_token.is_cancelled()
             {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"sender": msg.sender})), "Cancelled in-flight channel request due to newer message");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"sender": msg.sender})),
+                    "Cancelled in-flight channel request due to newer message"
+                );
                 runtime_trace::record_event(
                     "channel_message_cancelled",
                     Some(channel_composite.as_str()),
@@ -3690,7 +3928,12 @@ async fn process_channel_message_body(
                     (target_channel.as_ref(), draft_message_id.as_deref())
                     && let Err(err) = channel.cancel_draft(&msg.reply_target, draft_id).await
                 {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": err.to_string()})), &format!("Failed to cancel draft on {}", channel.name()));
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(::serde_json::json!({"error": err.to_string()})),
+                        &format!("Failed to cancel draft on {}", channel.name())
+                    );
                 }
             } else if is_context_window_overflow_error(&e) {
                 let compacted = compact_sender_history(ctx.as_ref(), &history_key);
@@ -3745,7 +3988,17 @@ async fn process_channel_message_body(
                         provider_cache_key(&route.model_provider, route.api_key.as_deref());
                     let mut cache = ctx.provider_cache.lock().unwrap_or_else(|p| p.into_inner());
                     if cache.remove(&cache_key).is_some() {
-                        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"model_provider": route.model_provider})), "Evicted cached model_provider after auth error; next request will re-create with fresh credentials");
+                        ::zeroclaw_log::record!(
+                            INFO,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(
+                                ::serde_json::json!({"model_provider": route.model_provider})
+                            ),
+                            "Evicted cached model_provider after auth error; next request will re-create with fresh credentials"
+                        );
                     }
                 }
                 let safe_error = zeroclaw_providers::sanitize_api_error(&e.to_string());
@@ -3887,7 +4140,12 @@ async fn dispatch_worker(
         };
 
         if interrupt_enabled && let Some(previous) = previous {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"sender": msg.sender})), "interrupting previous in-flight request for sender");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"sender": msg.sender})),
+                "interrupting previous in-flight request for sender"
+            );
             previous.cancellation.cancel();
             previous.completion.wait().await;
         }
@@ -4008,7 +4266,12 @@ async fn run_message_dispatch_loop(
                         .await;
                 });
             } else {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "stop command: no registered channel found for reply");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "stop command: no registered channel found for reply"
+                );
             }
             continue;
         }
@@ -4974,7 +5237,13 @@ fn collect_configured_channels(
                     discord_ch = discord_ch.with_archive_memory(std::sync::Arc::new(mem));
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "discord: archive enabled but failed to open discord.db");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "discord: archive enabled but failed to open discord.db"
+                    );
                 }
             }
         }
@@ -5107,14 +5376,28 @@ fn collect_configured_channels(
                 });
             }
             Err(e) => {
-                ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string()})), "Matrix channel construction failed");
+                ::zeroclaw_log::record!(
+                    ERROR,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "Matrix channel construction failed"
+                );
             }
         }
     }
 
     #[cfg(not(feature = "channel-matrix"))]
     if !config.channels.matrix.is_empty() {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Matrix channel is configured but this build was compiled without `channel-matrix`; skipping Matrix {}.", matrix_skip_context));
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            &format!(
+                "Matrix channel is configured but this build was compiled without `channel-matrix`; skipping Matrix {}.",
+                matrix_skip_context
+            )
+        );
     }
 
     for (alias, sig) in &config.channels.signal {
@@ -5157,7 +5440,12 @@ fn collect_configured_channels(
             continue;
         }
         if wa.is_ambiguous_config() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "WhatsApp config has both phone_number_id and session_path set; preferring Cloud API mode. Remove one selector to avoid ambiguity.");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "WhatsApp config has both phone_number_id and session_path set; preferring Cloud API mode. Remove one selector to avoid ambiguity."
+            );
         }
         // Runtime negotiation: detect backend type from config
         match wa.backend_type() {
@@ -5187,7 +5475,12 @@ fn collect_configured_channels(
                         ),
                     });
                 } else {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "WhatsApp Cloud API configured but missing required fields (phone_number_id, access_token, verify_token)");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        "WhatsApp Cloud API configured but missing required fields (phone_number_id, access_token, verify_token)"
+                    );
                 }
             }
             "web" => {
@@ -5211,11 +5504,21 @@ fn collect_configured_channels(
                         ),
                     });
                 } else {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "WhatsApp Web configured but session_path not set");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        "WhatsApp Web configured but session_path not set"
+                    );
                 }
                 #[cfg(not(feature = "whatsapp-web"))]
                 {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "WhatsApp Web backend requires 'whatsapp-web' feature. Enable with: cargo build --features whatsapp-web");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        "WhatsApp Web backend requires 'whatsapp-web' feature. Enable with: cargo build --features whatsapp-web"
+                    );
                     eprintln!(
                         "  ⚠ WhatsApp Web is configured but the 'whatsapp-web' feature is not compiled in."
                     );
@@ -5223,7 +5526,12 @@ fn collect_configured_channels(
                 }
             }
             _ => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "WhatsApp config invalid: neither phone_number_id (Cloud API) nor session_path (Web) is set");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "WhatsApp config invalid: neither phone_number_id (Cloud API) nor session_path (Web) is set"
+                );
             }
         }
     }
@@ -5416,7 +5724,12 @@ fn collect_configured_channels(
 
     #[cfg(not(feature = "channel-lark"))]
     if !config.channels.lark.is_empty() {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Lark/Feishu channel is configured but this build was compiled without `channel-lark`; skipping Lark/Feishu health check.");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "Lark/Feishu channel is configured but this build was compiled without `channel-lark`; skipping Lark/Feishu health check."
+        );
     }
 
     #[cfg(feature = "channel-line")]
@@ -5445,7 +5758,12 @@ fn collect_configured_channels(
 
     #[cfg(not(feature = "channel-line"))]
     if !config.channels.line.is_empty() {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "LINE channel is configured but this build was compiled without `channel-line`; skipping LINE health check.");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "LINE channel is configured but this build was compiled without `channel-line`; skipping LINE health check."
+        );
     }
 
     for (alias, dt) in &config.channels.dingtalk {
@@ -5614,7 +5932,13 @@ fn collect_configured_channels(
     #[cfg(not(feature = "channel-wechat"))]
     for alias in config.channels.wechat.keys() {
         if active_channel_aliases.contains(&format!("wechat.{alias}")) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"matrix_skip_context": matrix_skip_context})), "WeChat channel is configured but this build was compiled without `channel-wechat`; skipping WeChat .");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"matrix_skip_context": matrix_skip_context})),
+                "WeChat channel is configured but this build was compiled without `channel-wechat`; skipping WeChat ."
+            );
         }
     }
 
@@ -5636,8 +5960,13 @@ fn collect_configured_channels(
     if config.notion.enabled && !config.notion.database_id.trim().is_empty() {
         let notion_api_key = config.notion.api_key.trim().to_string();
         if notion_api_key.is_empty() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Notion channel enabled but `notion.api_key` is unset. Set it via the schema-mirror grammar: \
-                 `ZEROCLAW_notion__api_key=...`.");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "Notion channel enabled but `notion.api_key` is unset. Set it via the schema-mirror grammar: \
+                 `ZEROCLAW_notion__api_key=...`."
+            );
         } else {
             channels.push(ConfiguredChannel {
                 display_name: "Notion",
@@ -5864,10 +6193,15 @@ pub async fn start_channels(
     // completes onboarding at /onboard and reloads via /admin/reload to
     // bring channels up.
     if resolved_default_model(&config).is_err() {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Channels supervisor exiting: no model configured but \
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "Channels supervisor exiting: no model configured but \
              channels are present. Complete browser onboarding at \
              /onboard (or set [model_providers.<type>.<alias>] model = \"...\" \
-             and reload the daemon) before channels can route messages.");
+             and reload the daemon) before channels can route messages."
+        );
         return Ok(());
     }
 
@@ -5915,11 +6249,24 @@ pub async fn start_channels(
                 &config.channels.session_backend,
             ) {
                 Ok(backend) => {
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("📂 Session persistence enabled (backend: {})", config.channels.session_backend));
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        &format!(
+                            "📂 Session persistence enabled (backend: {})",
+                            config.channels.session_backend
+                        )
+                    );
                     Some(backend)
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Session persistence disabled");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "Session persistence disabled"
+                    );
                     None
                 }
             }
@@ -5976,7 +6323,15 @@ pub async fn start_channels(
         );
 
         if let Err(e) = model_provider.warmup().await {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string(), "agent": agent_alias})), "ModelProvider warmup failed (non-fatal)");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(
+                        ::serde_json::json!({"error": e.to_string(), "agent": agent_alias})
+                    ),
+                "ModelProvider warmup failed (non-fatal)"
+            );
         }
 
         let security = Arc::new(SecurityPolicy::for_agent(&config, agent_alias)?);
@@ -6056,7 +6411,15 @@ pub async fn start_channels(
             std::sync::Arc<std::sync::Mutex<zeroclaw_runtime::tools::ActivatedToolSet>>,
         > = None;
         if config.mcp.enabled && !config.mcp.servers.is_empty() {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"agent": agent_alias})), &format!("Initializing MCP client — {} server(s) configured", config.mcp.servers.len()));
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"agent": agent_alias})),
+                &format!(
+                    "Initializing MCP client — {} server(s) configured",
+                    config.mcp.servers.len()
+                )
+            );
             match zeroclaw_runtime::tools::McpRegistry::connect_all(&config.mcp.servers).await {
                 Ok(registry) => {
                     let registry = std::sync::Arc::new(registry);
@@ -6066,7 +6429,19 @@ pub async fn start_channels(
                                 std::sync::Arc::clone(&registry),
                             )
                             .await;
-                        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"agent": agent_alias})), &format!("MCP deferred: {} tool stub(s) from {} server(s)", deferred_set.len(), registry.server_count()));
+                        ::zeroclaw_log::record!(
+                            INFO,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"agent": agent_alias})),
+                            &format!(
+                                "MCP deferred: {} tool stub(s) from {} server(s)",
+                                deferred_set.len(),
+                                registry.server_count()
+                            )
+                        );
                         deferred_section =
                             zeroclaw_runtime::tools::build_deferred_tools_section(&deferred_set);
                         let activated = std::sync::Arc::new(std::sync::Mutex::new(
@@ -6097,7 +6472,19 @@ pub async fn start_channels(
                                 registered += 1;
                             }
                         }
-                        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"agent": agent_alias})), &format!("MCP: {} tool(s) registered from {} server(s)", registered, registry.server_count()));
+                        ::zeroclaw_log::record!(
+                            INFO,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"agent": agent_alias})),
+                            &format!(
+                                "MCP: {} tool(s) registered from {} server(s)",
+                                registered,
+                                registry.server_count()
+                            )
+                        );
                     }
                 }
                 Err(e) => {
@@ -6619,7 +7006,12 @@ pub async fn start_channels(
                 let closure =
                     ChatMessage::assistant("[Session interrupted — not continuing this request]");
                 if let Err(e) = store.append(&m.key, &closure) {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), &format!("Failed to persist orphan closure for {}", m.key));
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        &format!("Failed to persist orphan closure for {}", m.key)
+                    );
                 }
                 msgs.push(closure);
                 orphans_closed += 1;
@@ -6639,10 +7031,20 @@ pub async fn start_channels(
             hydrated += 1;
         }
         if hydrated > 0 {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"hydrated": hydrated})), "restored sessions from disk");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"hydrated": hydrated})),
+                "restored sessions from disk"
+            );
         }
         if orphans_closed > 0 {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"orphans_closed": orphans_closed})), "closed orphaned session turns from previous crash");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"orphans_closed": orphans_closed})),
+                "closed orphaned session turns from previous crash"
+            );
         }
     }
 
@@ -8002,9 +8404,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "DummyModelProvider" }
+        fn alias(&self) -> &str {
+            "DummyModelProvider"
+        }
     }
-
 
     struct FormatErrorModelProvider;
 
@@ -8046,9 +8449,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "FormatErrorModelProvider" }
+        fn alias(&self) -> &str {
+            "FormatErrorModelProvider"
+        }
     }
-
 
     #[derive(Default)]
     struct RecordingChannel {
@@ -8247,9 +8651,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "SlowModelProvider" }
+        fn alias(&self) -> &str {
+            "SlowModelProvider"
+        }
     }
-
 
     struct ToolCallingModelProvider;
 
@@ -8303,9 +8708,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "ToolCallingModelProvider" }
+        fn alias(&self) -> &str {
+            "ToolCallingModelProvider"
+        }
     }
-
 
     struct SessionsCurrentModelProvider;
 
@@ -8348,9 +8754,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "SessionsCurrentModelProvider" }
+        fn alias(&self) -> &str {
+            "SessionsCurrentModelProvider"
+        }
     }
-
 
     struct ToolCallingAliasModelProvider;
 
@@ -8390,9 +8797,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "ToolCallingAliasModelProvider" }
+        fn alias(&self) -> &str {
+            "ToolCallingAliasModelProvider"
+        }
     }
-
 
     struct RawToolArtifactModelProvider;
 
@@ -8428,9 +8836,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 ),
             )
         }
-        fn alias(&self) -> &str { "RawToolArtifactModelProvider" }
+        fn alias(&self) -> &str {
+            "RawToolArtifactModelProvider"
+        }
     }
-
 
     struct IterativeToolModelProvider {
         required_tool_iterations: usize,
@@ -8481,9 +8890,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 ),
             )
         }
-        fn alias(&self) -> &str { "IterativeToolModelProvider" }
+        fn alias(&self) -> &str {
+            "IterativeToolModelProvider"
+        }
     }
-
 
     #[derive(Default)]
     struct HistoryCaptureModelProvider {
@@ -8525,9 +8935,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 ),
             )
         }
-        fn alias(&self) -> &str { "HistoryCaptureModelProvider" }
+        fn alias(&self) -> &str {
+            "HistoryCaptureModelProvider"
+        }
     }
-
 
     struct DelayedHistoryCaptureModelProvider {
         delay: Duration,
@@ -8573,9 +8984,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 ),
             )
         }
-        fn alias(&self) -> &str { "DelayedHistoryCaptureModelProvider" }
+        fn alias(&self) -> &str {
+            "DelayedHistoryCaptureModelProvider"
+        }
     }
-
 
     struct MockPriceTool;
 
@@ -8619,9 +9031,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 ),
             )
         }
-        fn alias(&self) -> &str { "ModelCaptureModelProvider" }
+        fn alias(&self) -> &str {
+            "ModelCaptureModelProvider"
+        }
     }
-
 
     #[async_trait::async_trait]
     impl Tool for MockPriceTool {
@@ -10237,9 +10650,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 ::zeroclaw_api::attribution::MemoryKind::InMemory,
             )
         }
-        fn alias(&self) -> &str { "NoopMemory" }
+        fn alias(&self) -> &str {
+            "NoopMemory"
+        }
     }
-
 
     struct RecallMemory;
 
@@ -10338,9 +10752,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 ::zeroclaw_api::attribution::MemoryKind::InMemory,
             )
         }
-        fn alias(&self) -> &str { "RecallMemory" }
+        fn alias(&self) -> &str {
+            "RecallMemory"
+        }
     }
-
 
     #[tokio::test]
     async fn message_dispatch_processes_messages_in_parallel() {

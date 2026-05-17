@@ -103,7 +103,9 @@ impl WebhookChannel {
 
 impl ::zeroclaw_api::attribution::Attributable for WebhookChannel {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Channel(::zeroclaw_api::attribution::ChannelKind::Webhook)
+        ::zeroclaw_api::attribution::Role::Channel(
+            ::zeroclaw_api::attribution::ChannelKind::Webhook,
+        )
     }
     fn alias(&self) -> &str {
         &self.alias
@@ -118,7 +120,11 @@ impl Channel for WebhookChannel {
 
     async fn send(&self, message: &SendMessage) -> Result<()> {
         let Some(ref send_url) = self.send_url else {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "channel: no send_url configured, skipping outbound message");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "channel: no send_url configured, skipping outbound message"
+            );
             return Ok(());
         };
 
@@ -212,7 +218,12 @@ impl Channel for WebhookChannel {
                 };
 
                 if !valid {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "invalid signature, rejecting request");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        "invalid signature, rejecting request"
+                    );
                     return StatusCode::UNAUTHORIZED;
                 }
             }
@@ -220,7 +231,13 @@ impl Channel for WebhookChannel {
             let payload: IncomingWebhook = match serde_json::from_slice(&body) {
                 Ok(p) => p,
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "invalid JSON payload");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "invalid JSON payload"
+                    );
                     return StatusCode::BAD_REQUEST;
                 }
             };
@@ -267,7 +284,14 @@ impl Channel for WebhookChannel {
             .with_state(state);
 
         let addr = std::net::SocketAddr::from(([0, 0, 0, 0], self.listen_port));
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Webhook channel listening on http://0.0.0.0:{}{} ...", self.listen_port, self.listen_path));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "Webhook channel listening on http://0.0.0.0:{}{} ...",
+                self.listen_port, self.listen_path
+            )
+        );
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         axum::serve(listener, app)

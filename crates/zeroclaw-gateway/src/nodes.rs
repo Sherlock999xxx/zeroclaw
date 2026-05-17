@@ -331,7 +331,12 @@ async fn handle_node_socket(socket: WebSocket, registry: Arc<NodeRegistry>) {
             } => {
                 // Validate node_id
                 if node_id.is_empty() || node_id.len() > 128 {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Node registration rejected: invalid node_id length");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        "Node registration rejected: invalid node_id length"
+                    );
                     continue;
                 }
 
@@ -343,7 +348,14 @@ async fn handle_node_socket(socket: WebSocket, registry: Arc<NodeRegistry>) {
                 };
 
                 if registry.register(info) {
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"node_id": node_id, "caps_count": caps_count})), "Node registered: with capabilities");
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(
+                                ::serde_json::json!({"node_id": node_id, "caps_count": caps_count})
+                            ),
+                        "Node registered: with capabilities"
+                    );
                     registered_node_id = Some(node_id.clone());
 
                     // Send ack — we can't use `sender` here since it's moved
@@ -353,7 +365,13 @@ async fn handle_node_socket(socket: WebSocket, registry: Arc<NodeRegistry>) {
                     // a registered message. For simplicity, we just log and the
                     // ack is implicit in the protocol.
                 } else {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"node_id": node_id})), "Node registration rejected: registry at capacity for");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"node_id": node_id})),
+                        "Node registration rejected: registry at capacity for"
+                    );
                 }
             }
             NodeMessage::Result {
@@ -376,7 +394,12 @@ async fn handle_node_socket(socket: WebSocket, registry: Arc<NodeRegistry>) {
     // Cleanup: unregister node on disconnect
     if let Some(node_id) = registered_node_id {
         registry.unregister(&node_id);
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"node_id": node_id})), "Node disconnected and unregistered");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"node_id": node_id})),
+            "Node disconnected and unregistered"
+        );
     }
 
     send_task.abort();

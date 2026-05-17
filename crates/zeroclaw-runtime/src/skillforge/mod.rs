@@ -121,7 +121,12 @@ impl SkillForge {
     /// Run the full pipeline: Scout → Evaluate → Integrate.
     pub async fn forge(&self) -> Result<ForgeReport> {
         if !self.config.enabled {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "SkillForge is disabled — skipping");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "SkillForge is disabled — skipping"
+            );
             return Ok(ForgeReport {
                 discovered: 0,
                 evaluated: 0,
@@ -142,16 +147,38 @@ impl SkillForge {
                     let scout = GitHubScout::new(self.config.github_token.clone());
                     match scout.discover().await {
                         Ok(mut found) => {
-                            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"count": found.len()})), "GitHub scout returned candidates");
+                            ::zeroclaw_log::record!(
+                                INFO,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_attrs(::serde_json::json!({"count": found.len()})),
+                                "GitHub scout returned candidates"
+                            );
                             candidates.append(&mut found);
                         }
                         Err(e) => {
-                            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "GitHub scout failed, continuing with other sources");
+                            ::zeroclaw_log::record!(
+                                WARN,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                                "GitHub scout failed, continuing with other sources"
+                            );
                         }
                     }
                 }
                 ScoutSource::ClawHub | ScoutSource::HuggingFace => {
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"source": src.as_str()})), "Source not yet implemented — skipping");
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(::serde_json::json!({"source": src.as_str()})),
+                        "Source not yet implemented — skipping"
+                    );
                 }
             }
         }
@@ -159,7 +186,12 @@ impl SkillForge {
         // Deduplicate by URL
         scout::dedup(&mut candidates);
         let discovered = candidates.len();
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"discovered": discovered})), "Total unique candidates after dedup");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"discovered": discovered})),
+            "Total unique candidates after dedup"
+        );
 
         // --- Evaluate -------------------------------------------------------
         let results: Vec<EvalResult> = candidates

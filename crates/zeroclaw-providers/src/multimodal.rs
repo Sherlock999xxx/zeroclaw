@@ -1106,7 +1106,10 @@ mod tests {
                 role: "assistant".to_string(),
                 content: "I generated the screenshot.".to_string(),
             },
-            ChatMessage::user(format!("Now inspect this [IMAGE:{}]", fresh_path.display().to_string())),
+            ChatMessage::user(format!(
+                "Now inspect this [IMAGE:{}]",
+                fresh_path.display().to_string()
+            )),
         ];
 
         let prepared = prepare_messages_for_provider(&messages, &MultimodalConfig::default())

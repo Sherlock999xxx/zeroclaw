@@ -208,9 +208,18 @@ impl Channel for TwitterChannel {
     }
 
     async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "authenticating...");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "authenticating..."
+        );
         let bot_user_id = self.get_authenticated_user_id().await?;
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"bot_user_id": bot_user_id})), "authenticated as user");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"bot_user_id": bot_user_id})),
+            "authenticated as user"
+        );
 
         // Poll mentions timeline (filtered stream requires elevated access).
         // Using mentions timeline polling as a more accessible approach.
@@ -238,7 +247,16 @@ impl Channel for TwitterChannel {
                     let data: serde_json::Value = match resp.json().await {
                         Ok(d) => d,
                         Err(e) => {
-                            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "failed to parse mentions response");
+                            ::zeroclaw_log::record!(
+                                WARN,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                                "failed to parse mentions response"
+                            );
                             tokio::time::sleep(poll_interval).await;
                             continue;
                         }
@@ -287,7 +305,15 @@ impl Channel for TwitterChannel {
 
                             if !self.is_user_allowed(&username) && !self.is_user_allowed(author_id)
                             {
-                                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"username": username})), "ignoring mention from unauthorized user");
+                                ::zeroclaw_log::record!(
+                                    DEBUG,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_attrs(::serde_json::json!({"username": username})),
+                                    "ignoring mention from unauthorized user"
+                                );
                                 continue;
                             }
 
@@ -318,7 +344,15 @@ impl Channel for TwitterChannel {
                             };
 
                             if tx.send(channel_msg).await.is_err() {
-                                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "message channel closed");
+                                ::zeroclaw_log::record!(
+                                    WARN,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                                    "message channel closed"
+                                );
                                 return Ok(());
                             }
 
@@ -342,7 +376,15 @@ impl Channel for TwitterChannel {
                     let status = resp.status();
                     if status.as_u16() == 429 {
                         // Rate limited — back off
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "rate limited, backing off 60s");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            "rate limited, backing off 60s"
+                        );
                         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                         continue;
                     }
@@ -350,7 +392,13 @@ impl Channel for TwitterChannel {
                     ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string(), "status": status.to_string()})), "mentions request failed");
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "mentions request error");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "mentions request error"
+                    );
                 }
             }
 

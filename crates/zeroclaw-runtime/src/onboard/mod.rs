@@ -1751,7 +1751,10 @@ async fn prompt_agent_system_prompt(
                         )
                     })?;
                 tokio::fs::write(&agents_md, &new).await.with_context(|| {
-                    format!("Failed to write AGENTS.md at {}", agents_md.display().to_string())
+                    format!(
+                        "Failed to write AGENTS.md at {}",
+                        agents_md.display().to_string()
+                    )
                 })?;
             }
             Ok(Nav::Done)

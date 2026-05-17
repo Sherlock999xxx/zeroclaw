@@ -46,7 +46,7 @@ pub use broadcast::{
 pub use chain::display_chain;
 pub use config::{LogConfig, ResolvedPolicy, StoragePolicy, ToolIoPolicy};
 pub use event::{
-    ATTRIBUTION_FIELDS, COMPOSITE_PREFIXES, Action, Event, EventCategory, EventOutcome, LogEvent,
+    ATTRIBUTION_FIELDS, Action, COMPOSITE_PREFIXES, Event, EventCategory, EventOutcome, LogEvent,
     Severity, ZeroclawAttribution, is_attribution_field, severity_text_from_number,
     severity_text_from_tracing_level,
 };

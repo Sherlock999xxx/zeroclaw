@@ -154,7 +154,11 @@ impl EmoteTool {
         match output {
             Ok(out) if out.status.success() => Ok(()),
             _ => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("LED display: {:?} (hardware not connected)", expr));
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    &format!("LED display: {:?} (hardware not connected)", expr)
+                );
                 Ok(()) // Don't fail if LED hardware isn't available
             }
         }
@@ -165,7 +169,11 @@ impl EmoteTool {
         let sound_file = self.sounds_dir.join(format!("{}.wav", emotion));
 
         if !sound_file.exists() {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("No sound file for emotion: {}", emotion));
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!("No sound file for emotion: {}", emotion)
+            );
             return Ok(());
         }
 
@@ -189,10 +197,18 @@ impl EmoteTool {
             }
             "nod" => {
                 // Would control servo if available
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Animation: nod");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "Animation: nod"
+                );
             }
             "shake" => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Animation: shake");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "Animation: shake"
+                );
             }
             "dance" => {
                 // Cycle through expressions

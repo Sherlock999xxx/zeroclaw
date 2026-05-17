@@ -98,7 +98,12 @@ impl Tunnel for OpenVpnTunnel {
 
             match line {
                 Ok(Ok(Some(l))) => {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"l": l})), "openvpn: ");
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(::serde_json::json!({"l": l})),
+                        "openvpn: "
+                    );
                     if l.contains("Initialization Sequence Completed") {
                         connected = true;
                         break;
@@ -133,7 +138,12 @@ impl Tunnel for OpenVpnTunnel {
         // blocking the openvpn process.
         tokio::spawn(async move {
             while let Ok(Some(line)) = reader.next_line().await {
-                ::zeroclaw_log::record!(TRACE, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"line": line})), "openvpn: ");
+                ::zeroclaw_log::record!(
+                    TRACE,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"line": line})),
+                    "openvpn: "
+                );
             }
         });
 

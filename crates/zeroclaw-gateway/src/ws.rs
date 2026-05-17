@@ -319,7 +319,15 @@ async fn handle_socket(
                         if let Some(sid) = &cp.session_id {
                             memory_session_id =
                                 zeroclaw_api::session_keys::sanitize_session_key(sid);
-                            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"session_id": sid})), "WebSocket connect session override received");
+                            ::zeroclaw_log::record!(
+                                DEBUG,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_attrs(::serde_json::json!({"session_id": sid})),
+                                "WebSocket connect session override received"
+                            );
                         }
                         if cp.cwd.is_some() {
                             requested_cwd = cp.cwd;
@@ -378,7 +386,13 @@ async fn handle_socket(
         {
             Ok(a) => a,
             Err(e) => {
-                ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string()})), "Agent initialization failed");
+                ::zeroclaw_log::record!(
+                    ERROR,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "Agent initialization failed"
+                );
                 let err = serde_json::json!({
                     "type": "error",
                     "message": format!("Failed to initialise agent: {e}"),
@@ -594,7 +608,9 @@ async fn handle_socket(
 
             // ── Broadcast event (cron/heartbeat results) ──────────────
             event = broadcast_rx.recv() => {
-                if let Ok(event) = event {
+                if let Ok(event) = event
+                    && event_matches_session(&event, &session_id)
+                {
                     let _ = sender.send(Message::Text(event.to_string().into())).await;
                 }
             }
@@ -654,6 +670,13 @@ fn needs_onboarding_ws_error(
         "message": crate::needs_onboarding_channel_reply(),
         "url": "/onboard",
     }))
+}
+
+fn event_matches_session(event: &serde_json::Value, session_id: &str) -> bool {
+    match event.get("session_id").and_then(|value| value.as_str()) {
+        Some(event_session_id) => event_session_id == session_id,
+        None => true,
+    }
 }
 
 /// Process a single chat message through the agent and send the response.
@@ -998,7 +1021,15 @@ async fn process_chat_message(
                     )
                     .await
                     {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "WS memory consolidation skipped");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "WS memory consolidation skipped"
+                        );
                     }
                 });
             }
@@ -1076,7 +1107,13 @@ async fn process_chat_message(
                 let _ = backend.set_session_state(session_key, "error", Some(&turn_id));
             }
 
-            ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string()})), "Agent turn failed");
+            ::zeroclaw_log::record!(
+                ERROR,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "Agent turn failed"
+            );
             let sanitized = zeroclaw_providers::sanitize_api_error(&e.to_string());
             let error_code = if sanitized.to_lowercase().contains("api key")
                 || sanitized.to_lowercase().contains("authentication")
@@ -1281,6 +1318,28 @@ mod tests {
             "zeroclaw.v1, bearer.zc_tok, other".parse().unwrap(),
         );
         assert_eq!(extract_ws_token(&headers, None), Some("zc_tok"));
+    }
+
+    #[test]
+    fn session_scoped_events_only_match_their_session() {
+        let target_event = serde_json::json!({
+            "type": "message",
+            "session_id": "operator-1",
+            "content": "deploy finished"
+        });
+        let other_event = serde_json::json!({
+            "type": "message",
+            "session_id": "operator-2",
+            "content": "different session"
+        });
+        let global_event = serde_json::json!({
+            "type": "cron_result",
+            "content": "global notification"
+        });
+
+        assert!(event_matches_session(&target_event, "operator-1"));
+        assert!(!event_matches_session(&other_event, "operator-1"));
+        assert!(event_matches_session(&global_event, "operator-1"));
     }
 
     #[test]

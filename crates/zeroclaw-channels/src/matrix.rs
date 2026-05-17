@@ -456,7 +456,15 @@ mod session {
         match serde_json::from_slice::<SessionBlob>(&bytes) {
             Ok(blob) => Ok(Some(blob)),
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("matrix: session blob {} is corrupt JSON ({e}); treating as missing so auto-recovery can re-login", p.display()));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "matrix: session blob {} is corrupt JSON ({e}); treating as missing so auto-recovery can re-login",
+                        p.display()
+                    )
+                );
                 Ok(None)
             }
         }
@@ -638,10 +646,19 @@ mod client {
             config.device_id.as_deref().filter(|s| !s.is_empty()),
         ) && want != blob.device_id
         {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("matrix: configured channels.matrix.device-id ({want}) differs from the saved session ({}). \
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "matrix: configured channels.matrix.device-id ({want}) differs from the saved session ({}). \
                  Honoring the saved device_id (canonical, assigned by the homeserver). \
                  Update channels.matrix.device-id to match (or clear it) to silence this warning, \
-                 or wipe {} entirely to register a different device.", blob.device_id, state_dir.display()));
+                 or wipe {} entirely to register a different device.",
+                    blob.device_id,
+                    state_dir.display()
+                )
+            );
         }
 
         // Detect orphan crypto state — store data without a session blob.
@@ -688,7 +705,11 @@ mod client {
                 .restore_session(session, matrix_sdk::store::RoomLoadSettings::default())
                 .await
             {
-                Ok(()) => ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "matrix: restored session from session.json"),
+                Ok(()) => ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "matrix: restored session from session.json"
+                ),
                 Err(e) => {
                     // restore_session failed despite a matching device_id —
                     // the access token is probably revoked, or the saved
@@ -738,7 +759,13 @@ mod client {
             if let Some(blob) = session_blob_from(&client)
                 && let Err(e) = session::save(state_dir, &blob)
             {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "matrix: failed to persist session.json");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "matrix: failed to persist session.json"
+                );
             }
         }
 
@@ -777,7 +804,15 @@ mod client {
         reason: &str,
     ) -> Result<Client> {
         if can_password_relogin(config) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("matrix: {reason} Auto-recovering: wiping {} and re-authenticating with password.", state_dir.display()));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "matrix: {reason} Auto-recovering: wiping {} and re-authenticating with password.",
+                    state_dir.display()
+                )
+            );
             wipe_state(state_dir)?;
             return Box::pin(build_attempt(config, state_dir, recovery_attempts + 1)).await;
         }
@@ -824,7 +859,11 @@ mod client {
             login = login.device_id(d);
         }
         login.send().await.context("password login failed")?;
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "matrix: logged in via password");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "matrix: logged in via password"
+        );
         Ok(())
     }
 
@@ -852,7 +891,11 @@ mod client {
             .restore_session(session, matrix_sdk::store::RoomLoadSettings::default())
             .await
             .context("attach matrix session via access_token")?;
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "matrix: logged in via access_token");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "matrix: logged in via access_token"
+        );
         Ok(())
     }
 
@@ -1054,7 +1097,11 @@ mod client {
             recovery.state(),
             matrix_sdk::encryption::recovery::RecoveryState::Enabled
         ) {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "matrix: recovery already enabled, skipping recover()");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "matrix: recovery already enabled, skipping recover()"
+            );
             return;
         }
 
@@ -1063,9 +1110,19 @@ mod client {
 
         match recovery.recover(key).await {
             Ok(()) => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "matrix: E2EE recovery completed (cross-signing + room keys imported)")
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "matrix: E2EE recovery completed (cross-signing + room keys imported)"
+                )
             }
-            Err(e) => ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"e": e.to_string()})), "matrix: E2EE recovery failed: ; full error chain = . If the input length above is unexpected (base58 keys are typically ~58 chars, passphrases vary), the wrong value may be in channels.matrix.recovery-key."),
+            Err(e) => ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"e": e.to_string()})),
+                "matrix: E2EE recovery failed: ; full error chain = . If the input length above is unexpected (base58 keys are typically ~58 chars, passphrases vary), the wrong value may be in channels.matrix.recovery-key."
+            ),
         }
     }
 
@@ -1083,16 +1140,34 @@ mod client {
             Ok(Some(raw)) => match raw.deserialize() {
                 Ok(content) => Some(content),
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "matrix: cannot deserialize default secret-storage key event");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "matrix: cannot deserialize default secret-storage key event"
+                    );
                     None
                 }
             },
             Ok(None) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"input_len": input_len})), "matrix: server has no m.secret_storage.default_key set; recovery cannot proceed (input_len=). Set up Secure Backup in Element first.");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"input_len": input_len})),
+                    "matrix: server has no m.secret_storage.default_key set; recovery cannot proceed (input_len=). Set up Secure Backup in Element first."
+                );
                 return;
             }
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "matrix: failed to fetch default secret-storage key event");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "matrix: failed to fetch default secret-storage key event"
+                );
                 return;
             }
         };
@@ -1110,20 +1185,41 @@ mod client {
                 let json = raw.json().get();
                 let has_passphrase =
                     json.contains("\"passphrase\"") && json.contains("\"iterations\"");
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("matrix: secret-storage diagnostics: default_key_id={key_id}, \
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    &format!(
+                        "matrix: secret-storage diagnostics: default_key_id={key_id}, \
                      has_passphrase_info={has_passphrase}, input_len={input_len}. \
-                     {}", if has_passphrase {
-                        "SDK will try passphrase derivation first; if your input is a base58 key the passphrase MAC will fail and the error you see may be the passphrase error rather than the base58 fallback's error."
-                    } else {
-                        "SDK will use base58 decoding directly."
-                    }));
+                     {}",
+                        if has_passphrase {
+                            "SDK will try passphrase derivation first; if your input is a base58 key the passphrase MAC will fail and the error you see may be the passphrase error rather than the base58 fallback's error."
+                        } else {
+                            "SDK will use base58 decoding directly."
+                        }
+                    )
+                );
                 let _ = SecretStorageKeyEventContent::TYPE; // keep import live
             }
             Ok(None) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"key_id": key_id})), "matrix: default key id has no corresponding key event on the account — secret storage is in an inconsistent state. Re-running Secure Backup setup in Element will repair this.");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"key_id": key_id})),
+                    "matrix: default key id has no corresponding key event on the account — secret storage is in an inconsistent state. Re-running Secure Backup setup in Element will repair this."
+                );
             }
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string(), "key_id": key_id})), "matrix: failed to fetch key event for");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(
+                            ::serde_json::json!({"error": e.to_string(), "key_id": key_id})
+                        ),
+                    "matrix: failed to fetch key event for"
+                );
             }
         }
     }
@@ -1153,7 +1249,13 @@ mod client {
     ) -> Result<OwnedRoomId> {
         let (id_or_alias, normalized) = normalize_recipient(id_or_alias);
         if normalized {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"id_or_alias": id_or_alias})), "matrix: recipient contains `||`; using as the room target. Update channels.matrix or cron `delivery.to` to a plain room id/alias to silence this warning.");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"id_or_alias": id_or_alias})),
+                "matrix: recipient contains `||`; using as the room target. Update channels.matrix or cron `delivery.to` to a plain room id/alias to silence this warning."
+            );
         }
         if id_or_alias.starts_with('!') {
             return id_or_alias
@@ -1263,7 +1365,16 @@ mod inbound {
                 let ctx = handler_ctx.clone();
                 async move {
                     if let Err(e) = handle_message(ctx, ev, room, raw).await {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "matrix: handle_message failed");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "matrix: handle_message failed"
+                        );
                     }
                 }
             },
@@ -1284,7 +1395,11 @@ mod inbound {
             });
         let _encrypted_handler_guard = client.event_handler_drop_guard(encrypted_handler);
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "matrix: starting sync loop");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "matrix: starting sync loop"
+        );
         // Run an initial sync once so the sync token + state are populated,
         // then flip the health flag and enter the long-running sync loop.
         if let Err(e) = client.sync_once(SyncSettings::default()).await {
@@ -1316,11 +1431,26 @@ mod inbound {
         if already {
             return;
         }
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("matrix: reacting ❓ to undecryptable event {} from {}", event_id, ev.sender));
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "matrix: reacting ❓ to undecryptable event {} from {}",
+                event_id, ev.sender
+            )
+        );
         let content =
             ReactionEventContent::new(Annotation::new(event_id.clone(), "❓".to_string()));
         if let Err(e) = room.send(content).await {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string(), "event_id": event_id})), "matrix: failed to react ❓ on undecryptable event");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(
+                        ::serde_json::json!({"error": e.to_string(), "event_id": event_id})
+                    ),
+                "matrix: failed to react ❓ on undecryptable event"
+            );
         }
     }
 
@@ -1353,11 +1483,21 @@ mod inbound {
 
         let allowed_peers = (ctx.peer_resolver)();
         if !allowlist::user_allowed(&allowed_peers, sender) {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"sender": sender})), "matrix: drop message from non-allowed sender");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"sender": sender})),
+                "matrix: drop message from non-allowed sender"
+            );
             return Ok(());
         }
         if !allowlist::room_allowed_static(&ctx.config.allowed_rooms, room_id) {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"room_id": room_id})), "matrix: drop message from non-allowed room");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"room_id": room_id})),
+                "matrix: drop message from non-allowed room"
+            );
             return Ok(());
         }
 
@@ -1370,7 +1510,12 @@ mod inbound {
                 mention_user_ids.as_deref(),
                 &body,
             ) {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"sender": sender})), "matrix: drop unmentioned message from");
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"sender": sender})),
+                    "matrix: drop unmentioned message from"
+                );
                 return Ok(());
             }
         }
@@ -1392,7 +1537,13 @@ mod inbound {
                         );
                     }
                 }
-                Err(e) => ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string(), "tid": tid})), "matrix: failed to fetch thread root"),
+                Err(e) => ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string(), "tid": tid})),
+                    "matrix: failed to fetch thread root"
+                ),
             }
         }
 
@@ -1503,7 +1654,13 @@ mod inbound {
         };
 
         if let Err(e) = ctx.tx.send(msg).await {
-            ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string()})), "matrix: failed to forward inbound message");
+            ::zeroclaw_log::record!(
+                ERROR,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "matrix: failed to forward inbound message"
+            );
         }
         Ok(())
     }
@@ -1655,12 +1812,27 @@ mod inbound {
                             content = format!("[voice transcript]: {text}\n\n{content}");
                         }
                         Ok(_) => {}
-                        Err(e) => ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "matrix: voice transcription failed"),
+                        Err(e) => ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "matrix: voice transcription failed"
+                        ),
                     }
                 }
             }
             Ok(None) => {}
-            Err(e) => ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "matrix: media handling failed"),
+            Err(e) => ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "matrix: media handling failed"
+            ),
         }
         content
     }
@@ -1739,7 +1911,15 @@ mod inbound {
         workspace: Option<&std::path::PathBuf>,
     ) -> anyhow::Result<Option<std::path::PathBuf>> {
         let Some(workspace) = workspace else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("matrix: cannot persist {} — channels.matrix workspace_dir not configured. Set ZEROCLAW_DIR or run via the orchestrator.", info.file_name));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "matrix: cannot persist {} — channels.matrix workspace_dir not configured. Set ZEROCLAW_DIR or run via the orchestrator.",
+                    info.file_name
+                )
+            );
             return Ok(None);
         };
         let dir = workspace.join("matrix_files");
@@ -1766,7 +1946,16 @@ mod inbound {
         let path = dir.join(unique);
         std::fs::write(&path, &bytes)
             .map_err(|e| anyhow::anyhow!("write {}: {e}", path.display()))?;
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("matrix: saved {} bytes ({}) to {}", bytes.len(), source_kind, path.display()));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "matrix: saved {} bytes ({}) to {}",
+                bytes.len(),
+                source_kind,
+                path.display()
+            )
+        );
         Ok(Some(path))
     }
 
@@ -2190,7 +2379,15 @@ mod outbound {
                         MarkerFailure::Refused => "trust boundary",
                         MarkerFailure::Failed => "not found",
                     };
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("matrix: skipping outbound marker for {} ({label}): {e}", marker.target));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!(
+                            "matrix: skipping outbound marker for {} ({label}): {e}",
+                            marker.target
+                        )
+                    );
                     failed_markers.push((marker.target.clone(), kind));
                     continue;
                 }
@@ -2199,7 +2396,18 @@ mod outbound {
                 MarkerTarget::Local(path) => match tokio::fs::read(&path).await {
                     Ok(b) => b,
                     Err(e) => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("matrix: skipping outbound marker for {} (read failed): {e}", marker.target));
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            &format!(
+                                "matrix: skipping outbound marker for {} (read failed): {e}",
+                                marker.target
+                            )
+                        );
                         failed_markers.push((marker.target.clone(), MarkerFailure::Failed));
                         continue;
                     }
@@ -2207,7 +2415,18 @@ mod outbound {
                 MarkerTarget::Http(url) => match fetch_http(url).await {
                     Ok(b) => b,
                     Err(e) => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("matrix: skipping outbound marker for {} (http failed): {e}", marker.target));
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            &format!(
+                                "matrix: skipping outbound marker for {} (http failed): {e}",
+                                marker.target
+                            )
+                        );
                         failed_markers.push((marker.target.clone(), MarkerFailure::Failed));
                         continue;
                     }
@@ -2223,7 +2442,15 @@ mod outbound {
             match upload_attachment(room, &att, kind, thread_anchor).await {
                 Ok(id) => last_attachment_id = Some(id),
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("matrix: skipping outbound marker for {} (upload failed): {e}", marker.target));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!(
+                            "matrix: skipping outbound marker for {} (upload failed): {e}",
+                            marker.target
+                        )
+                    );
                     failed_markers.push((marker.target.clone(), MarkerFailure::Failed));
                 }
             }
@@ -2328,7 +2555,13 @@ mod outbound {
             let content =
                 ReactionEventContent::new(Annotation::new(event_id.clone(), emoji.to_string()));
             if let Err(e) = room.send(content).await {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string(), "emoji": emoji})), "matrix: failed to send reaction on outgoing message");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string(), "emoji": emoji})),
+                    "matrix: failed to send reaction on outgoing message"
+                );
             }
         }
     }
@@ -2803,7 +3036,13 @@ impl MatrixChannel {
                 let mut msg = SendMessage::new(paragraph, recipient);
                 msg.thread_ts = thread_anchor.as_ref().map(|e| e.to_string());
                 if let Err(e) = outbound::send(&self.outbox(client), &msg).await {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "matrix: multi-message paragraph send failed");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "matrix: multi-message paragraph send failed"
+                    );
                 }
                 if !delay.is_zero() {
                     tokio::time::sleep(delay).await;
@@ -2997,7 +3236,18 @@ impl Channel for MatrixChannel {
                                 outbound::edit(client, recipient, &draft.event_id, &delivery.text)
                                     .await
                             {
-                                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"edit_err": edit_err.to_string()})), "matrix: partial finalize edit failed: ; sending cleaned text fallback");
+                                ::zeroclaw_log::record!(
+                                    WARN,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                    .with_attrs(
+                                        ::serde_json::json!({"edit_err": edit_err.to_string()})
+                                    ),
+                                    "matrix: partial finalize edit failed: ; sending cleaned text fallback"
+                                );
                                 let mut fallback = SendMessage::new(&delivery.text, recipient);
                                 fallback.thread_ts =
                                     draft.thread_anchor.as_ref().map(|e| e.to_string());
@@ -3035,7 +3285,16 @@ impl Channel for MatrixChannel {
                             )
                             .await
                             {
-                                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"err": err.to_string()})), "matrix: partial finalize redaction failed after attachment-only upload: ; leaving placeholder to avoid duplicate attachment retry");
+                                ::zeroclaw_log::record!(
+                                    WARN,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                    .with_attrs(::serde_json::json!({"err": err.to_string()})),
+                                    "matrix: partial finalize redaction failed after attachment-only upload: ; leaving placeholder to avoid duplicate attachment retry"
+                                );
                             }
                         }
                         streaming::PartialFinalizeAction::EmptyError => {

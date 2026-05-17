@@ -200,9 +200,10 @@ mod tests {
                 ::zeroclaw_api::attribution::MemoryKind::InMemory,
             )
         }
-        fn alias(&self) -> &str { "MockMemory" }
+        fn alias(&self) -> &str {
+            "MockMemory"
+        }
     }
-
 
     #[async_trait]
     impl Memory for MockMemoryWithEntries {
@@ -286,9 +287,10 @@ mod tests {
                 ::zeroclaw_api::attribution::MemoryKind::InMemory,
             )
         }
-        fn alias(&self) -> &str { "MockMemoryWithEntries" }
+        fn alias(&self) -> &str {
+            "MockMemoryWithEntries"
+        }
     }
-
 
     #[tokio::test]
     async fn default_loader_formats_context() {

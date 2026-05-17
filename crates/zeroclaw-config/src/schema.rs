@@ -4495,6 +4495,10 @@ pub struct SkillsConfig {
     #[serde(default)]
     #[nested]
     pub skill_creation: SkillCreationConfig,
+    /// Prompt-triggered install suggestions for missing skills.
+    #[serde(default, alias = "install-suggestions")]
+    #[nested]
+    pub install_suggestions: SkillInstallSuggestionsConfig,
     /// Automatic skill self-improvement after successful skill usage.
     #[serde(default)]
     #[nested]
@@ -4526,6 +4530,17 @@ impl Default for SkillCreationConfig {
             similarity_threshold: 0.85,
         }
     }
+}
+
+/// Prompt-triggered skill install suggestions (`[skills.install_suggestions]` section).
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable, Default)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "skills.install-suggestions"]
+#[serde(default)]
+pub struct SkillInstallSuggestionsConfig {
+    /// Enable suggestions for installable skills before normal agent turns.
+    /// Default: `false`.
+    pub enabled: bool,
 }
 
 /// Skill self-improvement configuration (`[skills.auto_improve]` section).
@@ -7483,7 +7498,15 @@ pub fn build_runtime_proxy_client(service_key: &str) -> reqwest::Client {
 
     let builder = apply_runtime_proxy_to_builder(reqwest::Client::builder(), service_key);
     let client = builder.build().unwrap_or_else(|error| {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"service_key": service_key, "error": error.to_string()})), "Failed to build proxied client: ");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(
+                    ::serde_json::json!({"service_key": service_key, "error": error.to_string()})
+                ),
+            "Failed to build proxied client: "
+        );
         reqwest::Client::new()
     });
     set_runtime_proxy_cached_client(cache_key, client.clone());
@@ -7506,7 +7529,15 @@ pub fn build_runtime_proxy_client_with_timeouts(
         .connect_timeout(std::time::Duration::from_secs(connect_timeout_secs));
     let builder = apply_runtime_proxy_to_builder(builder, service_key);
     let client = builder.build().unwrap_or_else(|error| {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"service_key": service_key, "error": error.to_string()})), "Failed to build proxied timeout client: ");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(
+                    ::serde_json::json!({"service_key": service_key, "error": error.to_string()})
+                ),
+            "Failed to build proxied timeout client: "
+        );
         reqwest::Client::new()
     });
     set_runtime_proxy_cached_client(cache_key, client.clone());
@@ -12757,8 +12788,14 @@ fn expand_tilde_path(path: &str) -> PathBuf {
             }
         }
         // If UserDirs also fails, log a warning and use the literal path
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"path": path})), "Failed to expand tilde: HOME environment variable is not set and UserDirs failed. \
-             In cron/non-TTY environments, use absolute paths or set HOME explicitly.");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"path": path})),
+            "Failed to expand tilde: HOME environment variable is not set and UserDirs failed. \
+             In cron/non-TTY environments, use absolute paths or set HOME explicitly."
+        );
     }
 
     PathBuf::from(expanded_str)
@@ -12779,18 +12816,28 @@ async fn resolve_runtime_config_dirs(
                 .filter(|v| !v.trim().is_empty())
                 .is_some()
             {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "ZEROCLAW_CONFIG_DIR is set; ZEROCLAW_DATA_DIR is ignored \
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "ZEROCLAW_CONFIG_DIR is set; ZEROCLAW_DATA_DIR is ignored \
                      (CONFIG_DIR pins both the config directory and the data \
-                     directory under it).");
+                     directory under it)."
+                );
             }
             if std::env::var("ZEROCLAW_WORKSPACE")
                 .ok()
                 .filter(|v| !v.is_empty())
                 .is_some()
             {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "ZEROCLAW_CONFIG_DIR is set; ZEROCLAW_WORKSPACE (deprecated) \
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "ZEROCLAW_CONFIG_DIR is set; ZEROCLAW_WORKSPACE (deprecated) \
                      is ignored. ZEROCLAW_WORKSPACE will be removed in a future \
-                     release; switch any remaining references to ZEROCLAW_DATA_DIR.");
+                     release; switch any remaining references to ZEROCLAW_DATA_DIR."
+                );
             }
             let zeroclaw_dir = expand_tilde_path(custom_config_dir);
             return Ok((
@@ -12809,9 +12856,14 @@ async fn resolve_runtime_config_dirs(
             .filter(|v| !v.is_empty())
             .is_some()
         {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "ZEROCLAW_DATA_DIR and ZEROCLAW_WORKSPACE are both set; \
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "ZEROCLAW_DATA_DIR and ZEROCLAW_WORKSPACE are both set; \
                  ZEROCLAW_WORKSPACE (deprecated) is ignored. \
-                 ZEROCLAW_WORKSPACE will be removed in a future release.");
+                 ZEROCLAW_WORKSPACE will be removed in a future release."
+            );
         }
         let expanded = expand_tilde_path(&custom_data);
         let (zeroclaw_dir, data_dir) = resolve_config_dir_for_data(&expanded);
@@ -12821,8 +12873,13 @@ async fn resolve_runtime_config_dirs(
     if let Ok(custom_workspace) = std::env::var("ZEROCLAW_WORKSPACE")
         && !custom_workspace.is_empty()
     {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "ZEROCLAW_WORKSPACE is deprecated; use ZEROCLAW_DATA_DIR instead. \
-             ZEROCLAW_WORKSPACE will be removed in a future release.");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "ZEROCLAW_WORKSPACE is deprecated; use ZEROCLAW_DATA_DIR instead. \
+             ZEROCLAW_WORKSPACE will be removed in a future release."
+        );
         let expanded = expand_tilde_path(&custom_workspace);
         let (zeroclaw_dir, data_dir) = resolve_config_dir_for_data(&expanded);
         return Ok((
@@ -13107,12 +13164,24 @@ impl Config {
             && let Err(e) =
                 crate::migration::migrate_legacy_workspace_to_default_agent(&zeroclaw_dir)
         {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"e": e.to_string()})), "[system] filesystem migration failed (continuing with legacy layout): ");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"e": e.to_string()})),
+                "[system] filesystem migration failed (continuing with legacy layout): "
+            );
         }
         // Heal pre-shared-workspace V3 installs whose skills landed in
         // `agents/default/workspace/skills/`. Idempotent.
         if let Err(e) = crate::migration::relocate_default_agent_skills_to_shared(&zeroclaw_dir) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"e": e.to_string()})), "[system] skills relocation to shared workspace failed (continuing): ");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"e": e.to_string()})),
+                "[system] skills relocation to shared workspace failed (continuing): "
+            );
         }
 
         let config_path = zeroclaw_dir.join("config.toml");
@@ -13135,9 +13204,12 @@ impl Config {
         // and markdown (MEMORY.md, IDENTITY.md, SOUL.md) lives at
         // `Config::agent_workspace_dir(alias)` instead.
         let data_dir = zeroclaw_dir.join("data");
-        fs::create_dir_all(&data_dir)
-            .await
-            .with_context(|| format!("Failed to create data directory: {}", data_dir.display().to_string()))?;
+        fs::create_dir_all(&data_dir).await.with_context(|| {
+            format!(
+                "Failed to create data directory: {}",
+                data_dir.display().to_string()
+            )
+        })?;
         // Legacy alias retained for clarity in the struct initializer
         // and existing field assignments below.
         let workspace_dir = data_dir;
@@ -13166,8 +13238,18 @@ impl Config {
                 if let Ok(meta) = fs::metadata(&config_path).await
                     && meta.permissions().mode() & 0o004 != 0
                 {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Config file {:?} is world-readable (mode {:o}). \
-                             Consider restricting with: chmod 600 {:?}", config_path, meta.permissions().mode() & 0o777, config_path));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!(
+                            "Config file {:?} is world-readable (mode {:o}). \
+                             Consider restricting with: chmod 600 {:?}",
+                            config_path,
+                            meta.permissions().mode() & 0o777,
+                            config_path
+                        )
+                    );
                 }
             }
 
@@ -13212,11 +13294,20 @@ impl Config {
                 }
             }
             if let Some(from_version) = stale_version {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Config at {} is schema_version {from_version}; auto-migrated to {} in memory. \
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "Config at {} is schema_version {from_version}; auto-migrated to {} in memory. \
                      Run `zeroclaw config migrate` to commit the migration to disk. \
                      V0.8.0 also replaced the env-var override grammar; see \
                      https://github.com/zeroclaw-labs/zeroclaw/blob/master/docs/book/src/reference/env-vars.md \
-                     for the migration recipes.", config_path.display().to_string(), crate::migration::CURRENT_SCHEMA_VERSION));
+                     for the migration recipes.",
+                        config_path.display().to_string(),
+                        crate::migration::CURRENT_SCHEMA_VERSION
+                    )
+                );
             }
 
             // Ensure the built-in default auto_approve entries are always
@@ -13247,7 +13338,13 @@ impl Config {
             // This replaces the previous serde_ignored-based approach which
             // had false-positive issues with #[serde(default)] nested structs.
             for key in Self::unknown_keys(&contents) {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"key": key})), "Unknown config key ignored: \"\". Check config.toml for typos or deprecated options.");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"key": key})),
+                    "Unknown config key ignored: \"\". Check config.toml for typos or deprecated options."
+                );
             }
             // Set computed paths that are skipped during serialization
             config.config_path = config_path.clone();
@@ -13262,7 +13359,15 @@ impl Config {
                     crate::skill_bundles::resolve_directory(&config, &install_root, &alias)
                     && let Err(e) = std::fs::create_dir_all(&dir)
                 {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("skill-bundle '{alias}' directory creation failed at {}: {e}", dir.display().to_string()));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!(
+                            "skill-bundle '{alias}' directory creation failed at {}: {e}",
+                            dir.display().to_string()
+                        )
+                    );
                 }
             }
 
@@ -13285,8 +13390,14 @@ impl Config {
             // still come up so the user can navigate to the bad section
             // and repair it.
             if let Err(e) = config.validate() {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": format!("{e:#}")})), "[system] config has validation errors — booting anyway so you \
-                     can fix them via /config or `zeroclaw config set`");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": format!("{e:#}")})),
+                    "[system] config has validation errors — booting anyway so you \
+                     can fix them via /config or `zeroclaw config set`"
+                );
             }
             ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"path": config.config_path.display().to_string(), "workspace": config.data_dir.display().to_string(), "source": resolution_source.as_str(), "initialized": true})), "Config loaded");
             Ok(config)
@@ -13316,8 +13427,14 @@ impl Config {
             // a fresh-init config can't realistically fail validation,
             // but if it does we still want the daemon up.
             if let Err(e) = config.validate() {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": format!("{e:#}")})), "[system] freshly-initialized config has validation errors — \
-                     booting anyway so you can fix them via /config");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": format!("{e:#}")})),
+                    "[system] freshly-initialized config has validation errors — \
+                     booting anyway so you can fix them via /config"
+                );
             }
             ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"path": config.config_path.display().to_string(), "workspace": config.data_dir.display().to_string(), "source": resolution_source.as_str(), "initialized": true})), "Config loaded");
             Ok(config)
@@ -13671,7 +13788,13 @@ impl Config {
         // collect_warnings; emit each one to tracing here so the existing
         // log behavior is preserved.
         for w in self.collect_warnings() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"path": w.path, "code": w.code})), &format!("{}", w.message));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"path": w.path, "code": w.code})),
+                &format!("{}", w.message)
+            );
         }
 
         // Ollama cloud-routing safety checks
@@ -14613,7 +14736,16 @@ async fn write_config_atomically(config_path: &Path, toml_str: &str) -> Result<(
     {
         use std::{fs::Permissions, os::unix::fs::PermissionsExt};
         if let Err(err) = fs::set_permissions(config_path, Permissions::from_mode(0o600)).await {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Failed to harden config permissions to 0600 at {}: {}", config_path.display().to_string(), err));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "Failed to harden config permissions to 0600 at {}: {}",
+                    config_path.display().to_string(),
+                    err
+                )
+            );
         }
     }
 
@@ -14772,12 +14904,18 @@ fn set_path_in_doc(root: &mut toml_edit::Table, segs: &[&str], value: &toml::Val
 async fn sync_directory(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
-        let dir = File::open(path)
-            .await
-            .with_context(|| format!("Failed to open directory for fsync: {}", path.display().to_string()))?;
-        dir.sync_all()
-            .await
-            .with_context(|| format!("Failed to fsync directory metadata: {}", path.display().to_string()))?;
+        let dir = File::open(path).await.with_context(|| {
+            format!(
+                "Failed to open directory for fsync: {}",
+                path.display().to_string()
+            )
+        })?;
+        dir.sync_all().await.with_context(|| {
+            format!(
+                "Failed to fsync directory metadata: {}",
+                path.display().to_string()
+            )
+        })?;
         Ok(())
     }
 
@@ -14789,17 +14927,32 @@ async fn sync_directory(path: &Path) -> Result<()> {
             .read(true)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
             .open(path)
-            .with_context(|| format!("Failed to open directory for fsync: {}", path.display().to_string()))?;
+            .with_context(|| {
+                format!(
+                    "Failed to open directory for fsync: {}",
+                    path.display().to_string()
+                )
+            })?;
         // FlushFileBuffers on directory handles returns ERROR_ACCESS_DENIED on
         // Windows (OS Error 5). This is expected — NTFS does not support
         // flushing directory metadata the same way Unix does. The individual
         // files have already been synced, so it is safe to ignore this error.
         if let Err(e) = dir.sync_all() {
             if e.raw_os_error() == Some(5) {
-                ::zeroclaw_log::record!(TRACE, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Ignoring expected ACCESS_DENIED when fsyncing directory on Windows: {}", path.display().to_string()));
+                ::zeroclaw_log::record!(
+                    TRACE,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    &format!(
+                        "Ignoring expected ACCESS_DENIED when fsyncing directory on Windows: {}",
+                        path.display().to_string()
+                    )
+                );
             } else {
                 return Err(e).with_context(|| {
-                    format!("Failed to fsync directory metadata: {}", path.display().to_string())
+                    format!(
+                        "Failed to fsync directory metadata: {}",
+                        path.display().to_string()
+                    )
                 });
             }
         }
@@ -15094,12 +15247,37 @@ mod tests {
         assert!(c.first_model_provider().is_none());
         assert!(!c.skills.open_skills_enabled);
         assert!(!c.skills.allow_scripts);
+        assert!(!c.skills.install_suggestions.enabled);
         assert_eq!(
             c.skills.prompt_injection_mode,
             SkillsPromptInjectionMode::Full
         );
         assert!(c.data_dir.to_string_lossy().contains("data"));
         assert!(c.config_path.to_string_lossy().contains("config.toml"));
+    }
+
+    #[test]
+    async fn skills_install_suggestions_config_deserializes_enabled() {
+        let c = parse_test_config(
+            r#"
+[skills.install_suggestions]
+enabled = true
+"#,
+        );
+
+        assert!(c.skills.install_suggestions.enabled);
+    }
+
+    #[test]
+    async fn skills_install_suggestions_config_accepts_hyphen_alias() {
+        let c = parse_test_config(
+            r#"
+[skills.install-suggestions]
+enabled = true
+"#,
+        );
+
+        assert!(c.skills.install_suggestions.enabled);
     }
 
     fn capture_log_events() -> tokio::sync::broadcast::Receiver<serde_json::Value> {

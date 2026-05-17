@@ -188,12 +188,20 @@ impl Channel for DingTalkChannel {
     }
 
     async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "registering gateway connection...");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "registering gateway connection..."
+        );
 
         let gw = self.register_connection().await?;
         let ws_url = format!("{}?ticket={}", gw.endpoint, gw.ticket);
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "connecting to stream WebSocket...");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "connecting to stream WebSocket..."
+        );
         let (ws_stream, _) = zeroclaw_config::schema::ws_connect_with_proxy(
             &ws_url,
             "channel.dingtalk",
@@ -202,14 +210,24 @@ impl Channel for DingTalkChannel {
         .await?;
         let (mut write, mut read) = ws_stream.split();
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "connected and listening for messages...");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "connected and listening for messages..."
+        );
 
         while let Some(msg) = read.next().await {
             let msg = match msg {
                 Ok(Message::Text(t)) => t,
                 Ok(Message::Close(_)) => break,
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "WebSocket error");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "WebSocket error"
+                    );
                     break;
                 }
                 _ => continue,
@@ -242,7 +260,16 @@ impl Channel for DingTalkChannel {
                     });
 
                     if let Err(e) = write.send(Message::Text(pong.to_string().into())).await {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "failed to send pong");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "failed to send pong"
+                        );
                         break;
                     }
                 }
@@ -251,7 +278,14 @@ impl Channel for DingTalkChannel {
                     let data = match Self::parse_stream_data(&frame) {
                         Some(v) => v,
                         None => {
-                            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "frame has no parseable data payload");
+                            ::zeroclaw_log::record!(
+                                DEBUG,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                ),
+                                "frame has no parseable data payload"
+                            );
                             continue;
                         }
                     };
@@ -274,7 +308,16 @@ impl Channel for DingTalkChannel {
                         .unwrap_or("unknown");
 
                     if !self.is_user_allowed(sender_id) {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"sender_id": sender_id})), "ignoring message from unauthorized user");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"sender_id": sender_id})),
+                            "ignoring message from unauthorized user"
+                        );
                         continue;
                     }
 
@@ -325,7 +368,15 @@ impl Channel for DingTalkChannel {
                     };
 
                     if tx.send(channel_msg).await.is_err() {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "message channel closed");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            "message channel closed"
+                        );
                         break;
                     }
                 }

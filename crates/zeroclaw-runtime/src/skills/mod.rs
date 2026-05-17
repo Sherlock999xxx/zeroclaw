@@ -22,6 +22,7 @@ pub mod improver;
 pub mod reference;
 pub mod scaffold;
 pub mod service;
+mod suggestions;
 pub mod testing;
 
 pub use bundle::{BundleError, BundleSummary};
@@ -30,6 +31,7 @@ pub use frontmatter::SkillFrontmatter;
 pub use reference::{SkillRef, SkillRefError};
 pub use scaffold::{ScaffoldError, ScaffoldOptions};
 pub use service::{RemoveMode, ServiceError, SkillSummary, SkillsService};
+pub(crate) use suggestions::render_missing_skill_install_suggestion;
 
 const OPEN_SKILLS_REPO_URL: &str = "https://github.com/besoeasy/open-skills";
 const OPEN_SKILLS_SYNC_MARKER: &str = ".zeroclaw-open-skills-sync";
@@ -197,17 +199,18 @@ pub fn lookup_registry_skill_tier(registry_dir: &Path, name: &str) -> (SkillTier
 /// missing-tag fallback) gets the Community warn block.
 pub fn build_install_tier_banner(name: &str, version: Option<&str>, tier: SkillTier) -> String {
     let version_label = version.unwrap_or("?");
-    match tier {
-        SkillTier::Official => {
-            format!("Installing {name} v{version_label} — Official (zeroclaw-labs maintained)\n")
+    let args = [("name", name), ("version", version_label)];
+    let key = match tier {
+        SkillTier::Official => "cli-skills-install-tier-official",
+        SkillTier::Community | SkillTier::Featured | SkillTier::Unknown => {
+            "cli-skills-install-tier-community"
         }
-        SkillTier::Community | SkillTier::Featured | SkillTier::Unknown => format!(
-            "Installing {name} v{version_label} — Community submission\n\
-             This skill is not audited by ZeroClaw. Review the skill content\n\
-             and run `zeroclaw skills audit {name}` before granting any\n\
-             permissions or running it in production.\n"
-        ),
+    };
+    let mut banner = crate::i18n::get_required_cli_string_with_args(key, &args);
+    if !banner.ends_with('\n') {
+        banner.push('\n');
     }
+    banner
 }
 
 /// Print the install-time tier banner to stdout.
@@ -222,8 +225,16 @@ pub fn print_install_tier_banner(name: &str, version: Option<&str>, tier: SkillT
 fn warn_skipped_skill(path: &Path, summary: &str, allow_scripts: bool) {
     let scripts_blocked = summary.contains("script-like files are blocked");
     if scripts_blocked && !allow_scripts {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("skipping skill directory {}: {summary}. \
-             To allow script files in skills, set `skills.allow_scripts = true` in your config.", path.display().to_string()));
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            &format!(
+                "skipping skill directory {}: {summary}. \
+             To allow script files in skills, set `skills.allow_scripts = true` in your config.",
+                path.display().to_string()
+            )
+        );
         eprintln!(
             "warning: skill '{}' was skipped because it contains script files. \
              Set `skills.allow_scripts = true` in your zeroclaw config to enable it.",
@@ -232,7 +243,15 @@ fn warn_skipped_skill(path: &Path, summary: &str, allow_scripts: bool) {
                 .unwrap_or_else(|| path.display().to_string()),
         );
     } else {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("skipping insecure skill directory {}: {summary}", path.display().to_string()));
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            &format!(
+                "skipping insecure skill directory {}: {summary}",
+                path.display().to_string()
+            )
+        );
     }
 }
 
@@ -249,12 +268,28 @@ fn warn_metadata_drift(skill_dir: &Path, toml_skill: &Skill, md_path: &Path) {
     if let Some(ref md_name) = parsed.meta.name
         && md_name != &toml_skill.name
     {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("skill '{}': name mismatch between TOML ('{}') and SKILL.md ('{}')", dir_name, toml_skill.name, md_name));
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            &format!(
+                "skill '{}': name mismatch between TOML ('{}') and SKILL.md ('{}')",
+                dir_name, toml_skill.name, md_name
+            )
+        );
     }
     if let Some(ref md_desc) = parsed.meta.description {
         let md_desc = md_desc.trim();
         if !md_desc.is_empty() && md_desc != ">-" && md_desc != toml_skill.description.trim() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("skill '{}': description mismatch between TOML and SKILL.md — TOML takes precedence", dir_name));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "skill '{}': description mismatch between TOML and SKILL.md — TOML takes precedence",
+                    dir_name
+                )
+            );
         }
     }
 }
@@ -415,7 +450,15 @@ pub fn load_skills_from_directory(skills_dir: &Path, allow_scripts: bool) -> Vec
                 continue;
             }
             Err(err) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("skipping unauditable skill directory {}: {err}", path.display().to_string()));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "skipping unauditable skill directory {}: {err}",
+                        path.display().to_string()
+                    )
+                );
                 continue;
             }
         }
@@ -486,7 +529,15 @@ fn load_open_skills_from_directory(skills_dir: &Path, allow_scripts: bool) -> Ve
                 continue;
             }
             Err(err) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("skipping unauditable open-skill directory {}: {err}", path.display().to_string()));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "skipping unauditable open-skill directory {}: {err}",
+                        path.display().to_string()
+                    )
+                );
                 continue;
             }
         }
@@ -558,11 +609,28 @@ fn load_open_skills(repo_dir: &Path, allow_scripts: bool) -> Vec<Skill> {
         match audit::audit_open_skill_markdown(&path, repo_dir) {
             Ok(report) if report.is_clean() => {}
             Ok(report) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("skipping insecure open-skill file {}: {}", path.display().to_string(), report.summary()));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "skipping insecure open-skill file {}: {}",
+                        path.display().to_string(),
+                        report.summary()
+                    )
+                );
                 continue;
             }
             Err(err) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("skipping unauditable open-skill file {}: {err}", path.display().to_string()));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "skipping unauditable open-skill file {}: {err}",
+                        path.display().to_string()
+                    )
+                );
                 continue;
             }
         }
@@ -592,7 +660,12 @@ fn open_skills_enabled_from_sources(
             return enabled;
         }
         if !raw.trim().is_empty() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Ignoring invalid ZEROCLAW_OPEN_SKILLS_ENABLED (valid: 1|0|true|false|yes|no|on|off)");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "Ignoring invalid ZEROCLAW_OPEN_SKILLS_ENABLED (valid: 1|0|true|false|yes|no|on|off)"
+            );
         }
     }
 
@@ -659,7 +732,15 @@ fn ensure_open_skills_repo(
         if pull_open_skills_repo(&repo_dir) {
             let _ = mark_open_skills_synced(&repo_dir);
         } else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("open-skills update failed; using local copy from {}", repo_dir.display().to_string()));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "open-skills update failed; using local copy from {}",
+                    repo_dir.display().to_string()
+                )
+            );
         }
     }
 
@@ -670,7 +751,15 @@ fn clone_open_skills_repo(repo_dir: &Path) -> bool {
     if let Some(parent) = repo_dir.parent()
         && let Err(err) = std::fs::create_dir_all(parent)
     {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("failed to create open-skills parent directory {}: {err}", parent.display().to_string()));
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            &format!(
+                "failed to create open-skills parent directory {}: {err}",
+                parent.display().to_string()
+            )
+        );
         return false;
     }
 
@@ -681,16 +770,35 @@ fn clone_open_skills_repo(repo_dir: &Path) -> bool {
 
     match output {
         Ok(result) if result.status.success() => {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("initialized open-skills at {}", repo_dir.display().to_string()));
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!(
+                    "initialized open-skills at {}",
+                    repo_dir.display().to_string()
+                )
+            );
             true
         }
         Ok(result) => {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"stderr": stderr})), "failed to clone open-skills: ");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"stderr": stderr})),
+                "failed to clone open-skills: "
+            );
             false
         }
         Err(err) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string()})), "failed to run git clone for open-skills");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": err.to_string()})),
+                "failed to run git clone for open-skills"
+            );
             false
         }
     }
@@ -712,11 +820,23 @@ fn pull_open_skills_repo(repo_dir: &Path) -> bool {
         Ok(result) if result.status.success() => true,
         Ok(result) => {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"stderr": stderr})), "failed to pull open-skills updates: ");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"stderr": stderr})),
+                "failed to pull open-skills updates: "
+            );
             false
         }
         Err(err) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string()})), "failed to run git pull for open-skills");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": err.to_string()})),
+                "failed to run git pull for open-skills"
+            );
             false
         }
     }
@@ -1151,7 +1271,15 @@ pub fn skills_to_tools(
                     )));
                 }
                 other => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Unknown skill tool kind '{}' for {}.{}, skipping", other, skill.name, tool.name));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!(
+                            "Unknown skill tool kind '{}' for {}.{}, skipping",
+                            other, skill.name, tool.name
+                        )
+                    );
                 }
             }
         }
@@ -1414,17 +1542,28 @@ fn copy_dir_recursive_secure(src: &Path, dest: &Path) -> Result<()> {
         );
     }
     if !src_meta.is_dir() {
-        anyhow::bail!("Skill source must be a directory: {}", src.display().to_string());
+        anyhow::bail!(
+            "Skill source must be a directory: {}",
+            src.display().to_string()
+        );
     }
 
-    std::fs::create_dir_all(dest)
-        .with_context(|| format!("failed to create destination {}", dest.display().to_string()))?;
+    std::fs::create_dir_all(dest).with_context(|| {
+        format!(
+            "failed to create destination {}",
+            dest.display().to_string()
+        )
+    })?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
         let dest_path = dest.join(entry.file_name());
-        let metadata = std::fs::symlink_metadata(&src_path)
-            .with_context(|| format!("failed to read metadata for {}", src_path.display().to_string()))?;
+        let metadata = std::fs::symlink_metadata(&src_path).with_context(|| {
+            format!(
+                "failed to read metadata for {}",
+                src_path.display().to_string()
+            )
+        })?;
 
         if metadata.file_type().is_symlink() {
             anyhow::bail!(
@@ -1469,7 +1608,10 @@ pub fn install_local_skill_source(
         .context("Source path must include a directory name")?;
     let dest = skills_path.join(name);
     if dest.exists() {
-        anyhow::bail!("Destination skill already exists: {}", dest.display().to_string());
+        anyhow::bail!(
+            "Destination skill already exists: {}",
+            dest.display().to_string()
+        );
     }
 
     if let Err(err) = copy_dir_recursive_secure(&source_path, &dest) {
@@ -1582,8 +1724,12 @@ pub fn install_clawhub_skill_source(
             std::fs::create_dir_all(parent)?;
         }
 
-        let mut out_file = std::fs::File::create(&out_path)
-            .with_context(|| format!("failed to create extracted file: {}", out_path.display().to_string()))?;
+        let mut out_file = std::fs::File::create(&out_path).with_context(|| {
+            format!(
+                "failed to create extracted file: {}",
+                out_path.display().to_string()
+            )
+        })?;
         std::io::copy(&mut entry, &mut out_file)?;
     }
 
@@ -1631,8 +1777,12 @@ pub fn is_registry_source(source: &str) -> bool {
 
 fn clone_skills_registry(registry_dir: &Path, repo_url: &str) -> Result<()> {
     if let Some(parent) = registry_dir.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create registry parent: {}", parent.display().to_string()))?;
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create registry parent: {}",
+                parent.display().to_string()
+            )
+        })?;
     }
 
     let output = Command::new("git")
@@ -1646,7 +1796,14 @@ fn clone_skills_registry(registry_dir: &Path, repo_url: &str) -> Result<()> {
         anyhow::bail!("failed to clone skills registry: {stderr}");
     }
 
-    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("cloned skills registry to {}", registry_dir.display().to_string()));
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+        &format!(
+            "cloned skills registry to {}",
+            registry_dir.display().to_string()
+        )
+    );
     mark_skills_registry_synced(registry_dir)?;
     Ok(())
 }
@@ -1666,11 +1823,23 @@ fn pull_skills_registry(registry_dir: &Path) -> bool {
         Ok(result) if result.status.success() => true,
         Ok(result) => {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"stderr": stderr})), "failed to pull skills registry updates: ");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"stderr": stderr})),
+                "failed to pull skills registry updates: "
+            );
             false
         }
         Err(err) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string()})), "failed to run git pull for skills registry");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": err.to_string()})),
+                "failed to run git pull for skills registry"
+            );
             false
         }
     }
@@ -1708,7 +1877,15 @@ fn ensure_skills_registry(workspace_dir: &Path, registry_url: Option<&str>) -> R
         if pull_skills_registry(&registry_dir) {
             let _ = mark_skills_registry_synced(&registry_dir);
         } else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("skills registry update failed; using local copy from {}", registry_dir.display().to_string()));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "skills registry update failed; using local copy from {}",
+                    registry_dir.display().to_string()
+                )
+            );
         }
     }
 
@@ -1758,7 +1935,10 @@ pub fn install_registry_skill_source(
 
     install_local_skill_source(
         skill_dir.to_str().with_context(|| {
-            format!("registry path is not valid UTF-8: {}", skill_dir.display().to_string())
+            format!(
+                "registry path is not valid UTF-8: {}",
+                skill_dir.display().to_string()
+            )
         })?,
         skills_path,
         allow_scripts,
@@ -1797,7 +1977,13 @@ pub fn load_plugin_skills_from_config(config: &zeroclaw_config::schema::Config) 
     ) {
         Ok(host) => host,
         Err(err) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string()})), "failed to discover plugin skills");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": err.to_string()})),
+                "failed to discover plugin skills"
+            );
             return Vec::new();
         }
     };

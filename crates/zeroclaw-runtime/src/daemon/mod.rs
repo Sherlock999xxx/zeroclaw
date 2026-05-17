@@ -209,11 +209,19 @@ pub async fn run(
             ));
         } else {
             crate::health::mark_component_ok("channels");
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "No channels configured; channel supervisor disabled");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "No channels configured; channel supervisor disabled"
+            );
         }
     } else {
         crate::health::mark_component_ok("channels");
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Channels subsystem not wired; channel supervisor disabled");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "Channels subsystem not wired; channel supervisor disabled"
+        );
     }
 
     // Wire up MQTT SOP listener if configured and referenced by an enabled agent
@@ -279,7 +287,11 @@ pub async fn run(
         ));
     } else {
         crate::health::mark_component_ok("scheduler");
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Cron disabled; scheduler supervisor not started");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "Cron disabled; scheduler supervisor not started"
+        );
     }
 
     println!("🧠 ZeroClaw daemon started");
@@ -369,13 +381,27 @@ where
             match run_component().await {
                 Ok(()) => {
                     crate::health::mark_component_error(name, "component exited unexpectedly");
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"name": name})), "Daemon component '' exited unexpectedly");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"name": name})),
+                        "Daemon component '' exited unexpectedly"
+                    );
                     // Clean exit — reset backoff since the component ran successfully
                     backoff = initial_backoff_secs.max(1);
                 }
                 Err(e) => {
                     crate::health::mark_component_error(name, e.to_string());
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string(), "name": name})), "Daemon component '' failed");
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(
+                                ::serde_json::json!({"error": e.to_string(), "name": name})
+                            ),
+                        "Daemon component '' failed"
+                    );
                 }
             }
 
@@ -450,10 +476,27 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                     );
                     match tokio::time::timeout(Duration::from_secs(30), delivery_fut).await {
                         Ok(Err(e)) => {
-                            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Deadman alert delivery failed");
+                            ::zeroclaw_log::record!(
+                                WARN,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                                "Deadman alert delivery failed"
+                            );
                         }
                         Err(_) => {
-                            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Deadman alert delivery timed out (30s)");
+                            ::zeroclaw_log::record!(
+                                WARN,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                                "Deadman alert delivery timed out (30s)"
+                            );
                         }
                         Ok(Ok(())) => {}
                     }
@@ -540,7 +583,14 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                 Ok(response) => {
                     let indices = HeartbeatEngine::parse_decision_response(&response, tasks.len());
                     if indices.is_empty() {
-                        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "heartbeat phase 1: skip (nothing to do)");
+                        ::zeroclaw_log::record!(
+                            INFO,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            ),
+                            "heartbeat phase 1: skip (nothing to do)"
+                        );
                         crate::health::mark_component_ok("heartbeat");
                         #[allow(clippy::cast_precision_loss)]
                         let elapsed = tick_start.elapsed().as_millis() as f64;
@@ -554,7 +604,13 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                         .collect()
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "heartbeat phase 1 failed; running all tasks");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "heartbeat phase 1 failed; running all tasks"
+                    );
                     tasks
                 }
             }
@@ -722,14 +778,31 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                                     "heartbeat",
                                     format!("delivery failed: {e}"),
                                 );
-                                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Heartbeat delivery failed");
+                                ::zeroclaw_log::record!(
+                                    WARN,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                                    "Heartbeat delivery failed"
+                                );
                             }
                             Err(_) => {
                                 crate::health::mark_component_error(
                                     "heartbeat",
                                     "delivery timed out (30s)".to_string(),
                                 );
-                                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Heartbeat delivery timed out (30s)");
+                                ::zeroclaw_log::record!(
+                                    WARN,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                                    "Heartbeat delivery timed out (30s)"
+                                );
                             }
                             Ok(Ok(())) => {}
                         }
@@ -752,7 +825,13 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                         config.heartbeat.max_run_history,
                     );
                     crate::health::mark_component_error("heartbeat", e.to_string());
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Heartbeat task failed");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "Heartbeat task failed"
+                    );
                 }
             }
         }
@@ -842,7 +921,12 @@ fn load_heartbeat_session_context(config: &Config) -> Option<String> {
         .filter(|v| !v.is_empty())?;
 
     if channel.contains('/') || channel.contains('\\') || to.contains('/') || to.contains('\\') {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "heartbeat session context: channel/to contains path separators, skipping");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "heartbeat session context: channel/to contains path separators, skipping"
+        );
         return None;
     }
 
@@ -874,7 +958,12 @@ fn load_heartbeat_session_context(config: &Config) -> Option<String> {
         .map(|e| e.path())?;
 
     if !path.exists() {
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"channel": channel, "to": to})), "heartbeat session context: no session file found");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"channel": channel, "to": to})),
+            "heartbeat session context: no session file found"
+        );
         return None;
     }
 
@@ -899,7 +988,11 @@ fn load_heartbeat_session_context(config: &Config) -> Option<String> {
     // Monika's own messages back to her in a loop.
     let has_user_message = recent.iter().any(|m| m.role == "user");
     if !has_user_message {
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "💓 Heartbeat session context: no user messages in recent history — skipping");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "💓 Heartbeat session context: no user messages in recent history — skipping"
+        );
         return None;
     }
 
@@ -927,7 +1020,16 @@ fn load_heartbeat_session_context(config: &Config) -> Option<String> {
         None => String::new(),
     };
 
-    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("💓 Heartbeat session context: {} messages from {}, silence: {}", recent.len(), path.display().to_string(), silence_note.trim()));
+    ::zeroclaw_log::record!(
+        DEBUG,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+        &format!(
+            "💓 Heartbeat session context: {} messages from {}, silence: {}",
+            recent.len(),
+            path.display().to_string(),
+            silence_note.trim()
+        )
+    );
 
     let mut ctx = format!(
         "[Recent conversation history — use this for context when composing your message] {silence_note}",

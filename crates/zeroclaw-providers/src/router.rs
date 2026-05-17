@@ -145,8 +145,13 @@ impl RouterModelProvider {
         }
 
         // Fallback to default
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "No cost-optimized route found with matching pricing data, \
-             falling back to default");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "No cost-optimized route found with matching pricing data, \
+             falling back to default"
+        );
         (self.default_index, self.default_model.clone())
     }
 
@@ -160,7 +165,13 @@ impl RouterModelProvider {
             if let Some((idx, resolved_model)) = self.routes.get(hint) {
                 return (*idx, resolved_model.clone());
             }
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"hint": hint})), "Unknown route hint, falling back to default model_provider");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"hint": hint})),
+                "Unknown route hint, falling back to default model_provider"
+            );
         }
 
         // Not a hint or hint not found — use default model_provider with the model as-is
@@ -330,9 +341,22 @@ impl ModelProvider for RouterModelProvider {
 
     async fn warmup(&self) -> anyhow::Result<()> {
         for (name, model_provider) in &self.model_providers {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"model_provider": name})), "Warming up routed model_provider");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"model_provider": name})),
+                "Warming up routed model_provider"
+            );
             if let Err(e) = model_provider.warmup().await {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string(), "model_provider": name})), "Warmup failed (non-fatal)");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(
+                            ::serde_json::json!({"error": e.to_string(), "model_provider": name})
+                        ),
+                    "Warmup failed (non-fatal)"
+                );
             }
         }
         Ok(())
@@ -417,9 +441,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "MockModelProvider" }
+        fn alias(&self) -> &str {
+            "MockModelProvider"
+        }
     }
-
 
     fn make_router(
         model_providers: Vec<(&'static str, &'static str)>,
@@ -454,8 +479,12 @@ mod tests {
             })
             .collect();
 
-        let router =
-            RouterModelProvider::new("test", provider_list, route_list, "default-model".to_string());
+        let router = RouterModelProvider::new(
+            "test",
+            provider_list,
+            route_list,
+            "default-model".to_string(),
+        );
 
         (router, mocks)
     }
@@ -518,9 +547,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "StreamingMockModelProvider" }
+        fn alias(&self) -> &str {
+            "StreamingMockModelProvider"
+        }
     }
-
 
     // Arc<StreamingMockModelProvider> ModelProvider impl provided by blanket impl in zeroclaw-types.
 
@@ -592,9 +622,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "ToolEventStreamingMockModelProvider" }
+        fn alias(&self) -> &str {
+            "ToolEventStreamingMockModelProvider"
+        }
     }
-
 
     // Arc<ToolEventStreamingMockModelProvider> ModelProvider impl provided by blanket impl in zeroclaw-types.
 
@@ -713,7 +744,9 @@ mod tests {
     #[tokio::test]
     async fn chat_with_system_passes_system_prompt() {
         let mock = Arc::new(MockModelProvider::new("response"));
-        let router = RouterModelProvider::new("test", vec![(
+        let router = RouterModelProvider::new(
+            "test",
+            vec![(
                 "default".into(),
                 Box::new(Arc::clone(&mock)) as Box<dyn ModelProvider>,
             )],
@@ -732,7 +765,9 @@ mod tests {
     #[tokio::test]
     async fn chat_with_tools_delegates_to_resolved_provider() {
         let mock = Arc::new(MockModelProvider::new("tool-response"));
-        let router = RouterModelProvider::new("test", vec![(
+        let router = RouterModelProvider::new(
+            "test",
+            vec![(
                 "default".into(),
                 Box::new(Arc::clone(&mock)) as Box<dyn ModelProvider>,
             )],
@@ -836,9 +871,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "CapableMockModelProvider" }
+        fn alias(&self) -> &str {
+            "CapableMockModelProvider"
+        }
     }
-
 
     /// Build a per-provider pricing map for tests. Each tuple is
     /// `(provider_name, model, input_per_mtok, output_per_mtok)`.
@@ -880,7 +916,8 @@ mod tests {
                 },
             ),
         ];
-        let router = RouterModelProvider::new("test", model_providers, routes, "default-model".into());
+        let router =
+            RouterModelProvider::new("test", model_providers, routes, "default-model".into());
 
         let prices = make_pricing(vec![
             ("expensive", "big-model", 15.0, 75.0),
@@ -921,7 +958,8 @@ mod tests {
                 },
             ),
         ];
-        let router = RouterModelProvider::new("test", model_providers, routes, "default-model".into());
+        let router =
+            RouterModelProvider::new("test", model_providers, routes, "default-model".into());
 
         let prices = make_pricing(vec![
             ("no-vision", "cheap-model", 0.10, 0.40),
@@ -961,7 +999,8 @@ mod tests {
                 },
             ),
         ];
-        let router = RouterModelProvider::new("test", model_providers, routes, "default-model".into());
+        let router =
+            RouterModelProvider::new("test", model_providers, routes, "default-model".into());
 
         let prices = make_pricing(vec![
             ("no-tools", "basic-model", 0.10, 0.40),
@@ -1001,7 +1040,8 @@ mod tests {
                 model: "the-model".into(),
             },
         )];
-        let router = RouterModelProvider::new("test", model_providers, routes, "default-model".into());
+        let router =
+            RouterModelProvider::new("test", model_providers, routes, "default-model".into());
 
         let prices = make_pricing(vec![("only", "the-model", 1.0, 2.0)]);
 
@@ -1049,7 +1089,8 @@ mod tests {
                 },
             ),
         ];
-        let router = RouterModelProvider::new("test", model_providers, routes, "default-model".into());
+        let router =
+            RouterModelProvider::new("test", model_providers, routes, "default-model".into());
 
         let prices = make_pricing(vec![
             ("p1", "model-a", 10.0, 50.0), // total: 60
@@ -1089,7 +1130,9 @@ mod tests {
     #[tokio::test]
     async fn supports_streaming_returns_true_when_any_provider_supports_it() {
         let streaming = Arc::new(StreamingMockModelProvider::new("stream"));
-        let router = RouterModelProvider::new("test", vec![
+        let router = RouterModelProvider::new(
+            "test",
+            vec![
                 (
                     "default".into(),
                     Box::new(MockModelProvider::new("default")) as Box<dyn ModelProvider>,
@@ -1115,7 +1158,9 @@ mod tests {
     #[tokio::test]
     async fn stream_chat_with_history_routes_hint_to_correct_provider_and_model() {
         let streaming = Arc::new(StreamingMockModelProvider::new("streamed response"));
-        let router = RouterModelProvider::new("test", vec![
+        let router = RouterModelProvider::new(
+            "test",
+            vec![
                 (
                     "default".into(),
                     Box::new(MockModelProvider::new("default")) as Box<dyn ModelProvider>,
@@ -1157,7 +1202,9 @@ mod tests {
     #[tokio::test]
     async fn stream_chat_routes_hint_with_structured_tool_events() {
         let streaming = Arc::new(ToolEventStreamingMockModelProvider::new());
-        let router = RouterModelProvider::new("test", vec![
+        let router = RouterModelProvider::new(
+            "test",
+            vec![
                 (
                     "default".into(),
                     Box::new(MockModelProvider::new("default")) as Box<dyn ModelProvider>,
@@ -1225,7 +1272,9 @@ mod tests {
         let default_provider = Box::new(MockModelProvider::new("nope").with_vision(false));
         let vision_route_provider = Box::new(MockModelProvider::new("ok").with_vision(true));
 
-        let router = RouterModelProvider::new("test", vec![
+        let router = RouterModelProvider::new(
+            "test",
+            vec![
                 ("default".into(), default_provider as Box<dyn ModelProvider>),
                 (
                     "vision".into(),
@@ -1253,7 +1302,9 @@ mod tests {
         let default_provider = Box::new(MockModelProvider::new("ok").with_vision(true));
         let aux_provider = Box::new(MockModelProvider::new("nope").with_vision(false));
 
-        let router = RouterModelProvider::new("test", vec![
+        let router = RouterModelProvider::new(
+            "test",
+            vec![
                 ("default".into(), default_provider as Box<dyn ModelProvider>),
                 ("aux".into(), aux_provider as Box<dyn ModelProvider>),
             ],

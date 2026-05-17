@@ -115,14 +115,28 @@ impl WebhookAuditHook {
     pub fn new(config: WebhookAuditConfig) -> Self {
         // Warn if enabled but no URL configured.
         if config.enabled && config.url.is_empty() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"hook": "webhook-audit"})), "webhook-audit hook is enabled but no URL is configured — audit events will be dropped");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"hook": "webhook-audit"})),
+                "webhook-audit hook is enabled but no URL is configured — audit events will be dropped"
+            );
         }
 
         // Validate URL against SSRF if one is provided.
         if !config.url.is_empty()
             && let Err(e) = validate_webhook_url(&config.url)
         {
-            ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"hook": "webhook-audit", "error": e.to_string()})), "webhook URL validation failed");
+            ::zeroclaw_log::record!(
+                ERROR,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                    .with_attrs(
+                        ::serde_json::json!({"hook": "webhook-audit", "error": e.to_string()})
+                    ),
+                "webhook URL validation failed"
+            );
             panic!("webhook-audit: {e}");
         }
 
@@ -245,7 +259,12 @@ impl HookHandler for WebhookAuditHook {
 
     async fn before_tool_call(&self, name: String, args: Value) -> HookResult<(String, Value)> {
         if self.config.include_args && matches_any_pattern(&self.config.tool_patterns, &name) {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"hook": "webhook-audit", "tool": name})), "capturing args for audit");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"hook": "webhook-audit", "tool": name})),
+                "capturing args for audit"
+            );
             self.pending_args
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())

@@ -299,8 +299,17 @@ fn scoped_validate(
         if touches_dirty || err_path.is_empty() {
             return Err(api_err);
         }
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"path": err_path})), &format!("validate() failed on a path outside this PATCH's dirty set; saving anyway and \
-             surfacing as a warning: {}", api_err.message));
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"path": err_path})),
+            &format!(
+                "validate() failed on a path outside this PATCH's dirty set; saving anyway and \
+             surfacing as a warning: {}",
+                api_err.message
+            )
+        );
         return Ok(vec![
             zeroclaw_config::validation_warnings::ValidationWarning::new(
                 "pre_existing_validation_error",
@@ -549,7 +558,13 @@ pub async fn handle_prop_put(
         if let Err(e) =
             zeroclaw_config::comment_writer::apply_comments(&config_path, &annotations).await
         {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "failed to apply PUT comment to config.toml");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "failed to apply PUT comment to config.toml"
+            );
         }
     }
 
@@ -860,9 +875,20 @@ pub async fn handle_delete_map_key(
                 }
             }
             match state.mem.purge_agent(&q.key).await {
-                Ok(rows) if rows > 0 => ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"agent": q.key, "rows": rows})), "agent memory rows purged after alias removal"),
+                Ok(rows) if rows > 0 => ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"agent": q.key, "rows": rows})),
+                    "agent memory rows purged after alias removal"
+                ),
                 Ok(_) => {}
-                Err(err) => ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"agent": q.key, "err": err.to_string()})), "purge_agent failed (backend may not support it)"),
+                Err(err) => ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"agent": q.key, "err": err.to_string()})),
+                    "purge_agent failed (backend may not support it)"
+                ),
             }
         }
         working.mark_dirty(&format!("{}.{}", q.path, q.key));
@@ -920,7 +946,15 @@ pub async fn handle_map_key(
                 zeroclaw_config::skill_bundles::resolve_directory(&working, &install_root, &key)
                 && let Err(e) = tokio::fs::create_dir_all(&dir).await
             {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("skill-bundle '{key}' directory creation failed at {}: {e}", dir.display().to_string()));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "skill-bundle '{key}' directory creation failed at {}: {e}",
+                        dir.display().to_string()
+                    )
+                );
             }
         }
 
@@ -1257,7 +1291,13 @@ pub async fn handle_patch(
     {
         // Comments are best-effort decoration; surface as a non-fatal warn.
         // The patch itself succeeded — return success but log the failure.
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "failed to apply PATCH op comments to config.toml");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+            "failed to apply PATCH op comments to config.toml"
+        );
     }
 
     axum::Json(PatchResponse {
@@ -1389,7 +1429,10 @@ pub async fn handle_migrate(State(state): State<AppState>, headers: HeaderMap) -
                 None => {
                     return error_response(ConfigApiError::new(
                         ConfigApiCode::InternalError,
-                        format!("config path has no parent: {}", config_path.display().to_string()),
+                        format!(
+                            "config path has no parent: {}",
+                            config_path.display().to_string()
+                        ),
                     ));
                 }
             };
@@ -1398,7 +1441,10 @@ pub async fn handle_migrate(State(state): State<AppState>, headers: HeaderMap) -
                 None => {
                     return error_response(ConfigApiError::new(
                         ConfigApiCode::InternalError,
-                        format!("config path has no file name: {}", config_path.display().to_string()),
+                        format!(
+                            "config path has no file name: {}",
+                            config_path.display().to_string()
+                        ),
                     ));
                 }
             };

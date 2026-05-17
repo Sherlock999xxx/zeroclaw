@@ -64,9 +64,10 @@ impl ::zeroclaw_api::attribution::Attributable for MockModelProvider {
             ),
         )
     }
-    fn alias(&self) -> &str { "MockModelProvider" }
+    fn alias(&self) -> &str {
+        "MockModelProvider"
+    }
 }
-
 
 /// Mock model_provider that returns scripted responses AND records every request.
 pub struct RecordingModelProvider {
@@ -128,9 +129,10 @@ impl ::zeroclaw_api::attribution::Attributable for RecordingModelProvider {
             ),
         )
     }
-    fn alias(&self) -> &str { "RecordingModelProvider" }
+    fn alias(&self) -> &str {
+        "RecordingModelProvider"
+    }
 }
-
 
 /// ModelProvider that replays responses from an `LlmTrace` fixture.
 ///
@@ -233,6 +235,7 @@ impl ::zeroclaw_api::attribution::Attributable for TraceLlmModelProvider {
             ),
         )
     }
-    fn alias(&self) -> &str { "TraceLlmModelProvider" }
+    fn alias(&self) -> &str {
+        "TraceLlmModelProvider"
+    }
 }
-

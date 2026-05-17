@@ -46,7 +46,14 @@ impl WasmTool {
             Ok(mut plugin) => match runtime::call_tool_metadata(&mut plugin) {
                 Ok(meta) => (meta.name, meta.description, meta.parameters_schema),
                 Err(e) => {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("plugin at {} has no tool_metadata export ({e}), using fallback", wasm_path.display()));
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        &format!(
+                            "plugin at {} has no tool_metadata export ({e}), using fallback",
+                            wasm_path.display()
+                        )
+                    );
                     (
                         fallback_name.clone(),
                         fallback_description.clone(),
@@ -55,7 +62,15 @@ impl WasmTool {
                 }
             },
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("failed to load WASM plugin at {} for metadata: {e}", wasm_path.display()));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "failed to load WASM plugin at {} for metadata: {e}",
+                        wasm_path.display()
+                    )
+                );
                 (
                     fallback_name.clone(),
                     fallback_description.clone(),

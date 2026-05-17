@@ -47,7 +47,12 @@ impl HookHandler for CommandLoggerHook {
             duration.as_millis(),
             result.success,
         );
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"hook": "command-logger"})), &format!("{}", entry));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"hook": "command-logger"})),
+            &format!("{}", entry)
+        );
         self.log.lock().unwrap().push(entry);
     }
 }

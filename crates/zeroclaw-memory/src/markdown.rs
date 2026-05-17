@@ -316,9 +316,7 @@ impl Memory for MarkdownMemory {
 
 impl ::zeroclaw_api::attribution::Attributable for MarkdownMemory {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Memory(
-            ::zeroclaw_api::attribution::MemoryKind::Markdown,
-        )
+        ::zeroclaw_api::attribution::Role::Memory(::zeroclaw_api::attribution::MemoryKind::Markdown)
     }
     fn alias(&self) -> &str {
         &self.alias

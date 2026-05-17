@@ -405,7 +405,6 @@ impl EdgeTtsProvider {
             binary_path: raw_path,
         })
     }
-
 }
 
 #[async_trait::async_trait]
@@ -498,7 +497,6 @@ impl PiperTtsProvider {
             api_url,
         }
     }
-
 }
 
 #[async_trait::async_trait]
@@ -616,7 +614,15 @@ impl TtsManager {
                     }
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string(), "dotted": dotted})), "Skipping TTS provider");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(
+                                ::serde_json::json!({"error": e.to_string(), "dotted": dotted})
+                            ),
+                        "Skipping TTS provider"
+                    );
                 }
             }
         }
@@ -715,11 +721,9 @@ impl TtsManager {
 
 impl ::zeroclaw_api::attribution::Attributable for OpenAiTtsProvider {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Provider(
-            ::zeroclaw_api::attribution::ProviderKind::Tts(
-                ::zeroclaw_api::attribution::TtsProviderKind::OpenAi,
-            ),
-        )
+        ::zeroclaw_api::attribution::Role::Provider(::zeroclaw_api::attribution::ProviderKind::Tts(
+            ::zeroclaw_api::attribution::TtsProviderKind::OpenAi,
+        ))
     }
     fn alias(&self) -> &str {
         &self.alias
@@ -728,11 +732,9 @@ impl ::zeroclaw_api::attribution::Attributable for OpenAiTtsProvider {
 
 impl ::zeroclaw_api::attribution::Attributable for ElevenLabsTtsProvider {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Provider(
-            ::zeroclaw_api::attribution::ProviderKind::Tts(
-                ::zeroclaw_api::attribution::TtsProviderKind::ElevenLabs,
-            ),
-        )
+        ::zeroclaw_api::attribution::Role::Provider(::zeroclaw_api::attribution::ProviderKind::Tts(
+            ::zeroclaw_api::attribution::TtsProviderKind::ElevenLabs,
+        ))
     }
     fn alias(&self) -> &str {
         &self.alias
@@ -741,11 +743,9 @@ impl ::zeroclaw_api::attribution::Attributable for ElevenLabsTtsProvider {
 
 impl ::zeroclaw_api::attribution::Attributable for GoogleTtsProvider {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Provider(
-            ::zeroclaw_api::attribution::ProviderKind::Tts(
-                ::zeroclaw_api::attribution::TtsProviderKind::Google,
-            ),
-        )
+        ::zeroclaw_api::attribution::Role::Provider(::zeroclaw_api::attribution::ProviderKind::Tts(
+            ::zeroclaw_api::attribution::TtsProviderKind::Google,
+        ))
     }
     fn alias(&self) -> &str {
         &self.alias
@@ -754,11 +754,9 @@ impl ::zeroclaw_api::attribution::Attributable for GoogleTtsProvider {
 
 impl ::zeroclaw_api::attribution::Attributable for EdgeTtsProvider {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Provider(
-            ::zeroclaw_api::attribution::ProviderKind::Tts(
-                ::zeroclaw_api::attribution::TtsProviderKind::Edge,
-            ),
-        )
+        ::zeroclaw_api::attribution::Role::Provider(::zeroclaw_api::attribution::ProviderKind::Tts(
+            ::zeroclaw_api::attribution::TtsProviderKind::Edge,
+        ))
     }
     fn alias(&self) -> &str {
         &self.alias
@@ -767,11 +765,9 @@ impl ::zeroclaw_api::attribution::Attributable for EdgeTtsProvider {
 
 impl ::zeroclaw_api::attribution::Attributable for PiperTtsProvider {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Provider(
-            ::zeroclaw_api::attribution::ProviderKind::Tts(
-                ::zeroclaw_api::attribution::TtsProviderKind::Piper,
-            ),
-        )
+        ::zeroclaw_api::attribution::Role::Provider(::zeroclaw_api::attribution::ProviderKind::Tts(
+            ::zeroclaw_api::attribution::TtsProviderKind::Piper,
+        ))
     }
     fn alias(&self) -> &str {
         &self.alias

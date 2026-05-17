@@ -140,7 +140,12 @@ impl RoutinesEngine {
             }
 
             if !routine.enabled {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"routine": routine.name})), "routine matched but disabled");
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"routine": routine.name})),
+                    "routine matched but disabled"
+                );
                 results.push(RoutineDispatchResult::Disabled {
                     routine_name: routine.name.clone(),
                 });
@@ -191,12 +196,26 @@ pub fn load_routines_from_file(path: &std::path::Path) -> Vec<Routine> {
         Ok(content) => match toml::from_str::<RoutinesManifest>(&content) {
             Ok(manifest) => manifest.routines,
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), &format!("Failed to parse routines file {}", path.display().to_string()));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    &format!(
+                        "Failed to parse routines file {}",
+                        path.display().to_string()
+                    )
+                );
                 Vec::new()
             }
         },
         Err(e) => {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), &format!("Routines file not found at {}", path.display().to_string()));
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                &format!("Routines file not found at {}", path.display().to_string())
+            );
             Vec::new()
         }
     }

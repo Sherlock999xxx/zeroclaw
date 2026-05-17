@@ -304,7 +304,14 @@ pub async fn handle_hardware_context_post(
 
     match append_to_file(&device_path, &content).await {
         Ok(()) => {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"device": req.device, "bytes": content.len()})), "Hardware context appended");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(
+                        ::serde_json::json!({"device": req.device, "bytes": content.len()})
+                    ),
+                "Hardware context appended"
+            );
             (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
         }
         Err(e) => (
@@ -399,7 +406,13 @@ pub async fn handle_hardware_reload(
     let context = zeroclaw_hardware::load_hardware_context_prompt(&[]);
     let context_length = context.len();
 
-    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"context_length": context_length, "tool_count": tool_count})), "Hardware context reloaded (on-disk read)");
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(
+            ::serde_json::json!({"context_length": context_length, "tool_count": tool_count})
+        ),
+        "Hardware context reloaded (on-disk read)"
+    );
 
     (
         StatusCode::OK,

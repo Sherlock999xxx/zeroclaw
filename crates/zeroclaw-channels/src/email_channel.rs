@@ -186,7 +186,15 @@ impl EmailChannel {
             // Check size limit
             total_size += data.len();
             if total_size > self.config.max_attachment_bytes {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Attachment size limit exceeded ({} bytes), dropping remaining attachments", self.config.max_attachment_bytes));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "Attachment size limit exceeded ({} bytes), dropping remaining attachments",
+                        self.config.max_attachment_bytes
+                    )
+                );
                 break;
             }
 
@@ -206,7 +214,11 @@ impl EmailChannel {
     /// Connect to IMAP server with TLS and authenticate
     async fn connect_imap(&self) -> Result<ImapSession> {
         let addr = format!("{}:{}", self.config.imap_host, self.config.imap_port);
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Connecting to IMAP server at {}", addr));
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!("Connecting to IMAP server at {}", addr)
+        );
 
         // Connect TCP
         let tcp = TcpStream::connect(&addr).await?;
@@ -231,7 +243,11 @@ impl EmailChannel {
             .await
             .map_err(|(e, _)| anyhow!("IMAP login failed: {}", e))?;
 
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "IMAP login successful");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "IMAP login successful"
+        );
         Ok(session)
     }
 
@@ -252,7 +268,11 @@ impl EmailChannel {
             return Ok(Vec::new());
         }
 
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Found {} unseen messages", uids.len()));
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!("Found {} unseen messages", uids.len())
+        );
 
         let uid_list: Vec<u32> = uids.into_iter().collect();
         let mut results = Vec::new();
@@ -343,7 +363,11 @@ impl EmailChannel {
         let mut idle = session.idle();
         idle.init().await?;
 
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Entering IMAP IDLE mode");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "Entering IMAP IDLE mode"
+        );
 
         // wait() returns (future, stop_source) - we only need the future
         let (wait_future, _stop_source) = idle.wait();
@@ -353,7 +377,11 @@ impl EmailChannel {
 
         match result {
             Ok(Ok(response)) => {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("IDLE response: {:?}", response));
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    &format!("IDLE response: {:?}", response)
+                );
                 // Done with IDLE, return session to normal mode
                 let session = idle.done().await?;
                 let wait_result = match response {
@@ -370,7 +398,11 @@ impl EmailChannel {
             }
             Err(_) => {
                 // Timeout - RFC 2177 recommends restarting IDLE every 29 minutes
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "IDLE timeout reached, will re-establish");
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "IDLE timeout reached, will re-establish"
+                );
                 let session = idle.done().await?;
                 Ok((IdleWaitResult::Timeout, session))
             }
@@ -393,7 +425,15 @@ impl EmailChannel {
                     return Ok(());
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure), &format!("IMAP session error: {}. Reconnecting in {:?}...", e, backoff));
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure),
+                        &format!(
+                            "IMAP session error: {}. Reconnecting in {:?}...",
+                            e, backoff
+                        )
+                    );
                     sleep(backoff).await;
                     // Exponential backoff with cap
                     backoff = std::cmp::min(backoff * 2, max_backoff);
@@ -423,11 +463,25 @@ impl EmailChannel {
         self.process_unseen(&mut session, tx).await?;
 
         if has_idle {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Email channel listening on {} (IMAP IDLE, instant push)", self.config.imap_folder));
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!(
+                    "Email channel listening on {} (IMAP IDLE, instant push)",
+                    self.config.imap_folder
+                )
+            );
             self.run_idle_inner(session, tx).await
         } else {
             let poll_interval = Duration::from_secs(self.config.poll_interval_secs);
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Email channel listening on {} (IMAP polling, server lacks IDLE, interval: {:?})", self.config.imap_folder, poll_interval));
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!(
+                    "Email channel listening on {} (IMAP polling, server lacks IDLE, interval: {:?})",
+                    self.config.imap_folder, poll_interval
+                )
+            );
             self.run_poll_inner(session, tx, poll_interval).await
         }
     }
@@ -442,7 +496,11 @@ impl EmailChannel {
             // Enter IDLE and wait for changes (consumes session, returns it via result)
             match self.wait_for_changes(session).await {
                 Ok((IdleWaitResult::NewMail, returned_session)) => {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "New mail notification received");
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        "New mail notification received"
+                    );
                     session = returned_session;
                     self.process_unseen(&mut session, tx).await?;
                 }
@@ -452,7 +510,11 @@ impl EmailChannel {
                     self.process_unseen(&mut session, tx).await?;
                 }
                 Ok((IdleWaitResult::Interrupted, _)) => {
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "IDLE interrupted, exiting");
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        "IDLE interrupted, exiting"
+                    );
                     return Ok(());
                 }
                 Err(e) => {
@@ -492,7 +554,12 @@ impl EmailChannel {
         for email in messages {
             // Check allowlist
             if !self.is_sender_allowed(&email.sender) {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Blocked email from {}", email.sender));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!("Blocked email from {}", email.sender)
+                );
                 continue;
             }
 
@@ -625,12 +692,27 @@ impl Channel for EmailChannel {
 
         let transport = self.create_smtp_transport()?;
         transport.send(&email)?;
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Email sent to {} ({} attachments)", message.recipient, message.attachments.len()));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "Email sent to {} ({} attachments)",
+                message.recipient,
+                message.attachments.len()
+            )
+        );
         Ok(())
     }
 
     async fn listen(&self, tx: mpsc::Sender<ChannelMessage>) -> Result<()> {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Starting email channel on {} (IDLE preferred, polling fallback)", self.config.imap_folder));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "Starting email channel on {} (IDLE preferred, polling fallback)",
+                self.config.imap_folder
+            )
+        );
         self.listen_with_reconnect(tx).await
     }
 
@@ -643,11 +725,19 @@ impl Channel for EmailChannel {
                 true
             }
             Ok(Err(e)) => {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Health check failed: {}", e));
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    &format!("Health check failed: {}", e)
+                );
                 false
             }
             Err(_) => {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Health check timed out");
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "Health check timed out"
+                );
                 false
             }
         }

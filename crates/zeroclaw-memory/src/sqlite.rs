@@ -284,7 +284,12 @@ impl SqliteMemory {
         }
 
         if rewritten > 0 {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"rewritten": rewritten})), "Normalized session_id values in memories table to sanitized form");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"rewritten": rewritten})),
+                "Normalized session_id values in memories table to sanitized form"
+            );
         }
 
         Ok(())
@@ -568,7 +573,12 @@ impl SqliteMemory {
                 backup_path.display().to_string(),
             )
         })?;
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"backup": backup_path.display().to_string()})), "multi-agent migration: backed up SQLite memory DB before adding agents table and agent_id column");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"backup": backup_path.display().to_string()})),
+            "multi-agent migration: backed up SQLite memory DB before adding agents table and agent_id column"
+        );
         Ok(())
     }
 
@@ -1681,9 +1691,7 @@ impl Memory for SqliteMemory {
 
 impl ::zeroclaw_api::attribution::Attributable for SqliteMemory {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Memory(
-            ::zeroclaw_api::attribution::MemoryKind::Sqlite,
-        )
+        ::zeroclaw_api::attribution::Role::Memory(::zeroclaw_api::attribution::MemoryKind::Sqlite)
     }
     fn alias(&self) -> &str {
         &self.alias
@@ -2157,7 +2165,9 @@ mod tests {
     fn open_with_timeout_succeeds_when_fast() {
         let tmp = TempDir::new().unwrap();
         let embedder = Arc::new(super::super::embeddings::NoopEmbedding);
-        let mem = SqliteMemory::with_embedder("test", tmp.path(),
+        let mem = SqliteMemory::with_embedder(
+            "test",
+            tmp.path(),
             embedder,
             0.7,
             0.3,
@@ -2175,7 +2185,9 @@ mod tests {
     #[tokio::test]
     async fn open_with_timeout_store_recall_unchanged() {
         let tmp = TempDir::new().unwrap();
-        let mem = SqliteMemory::with_embedder("test", tmp.path(),
+        let mem = SqliteMemory::with_embedder(
+            "test",
+            tmp.path(),
             Arc::new(super::super::embeddings::NoopEmbedding),
             0.7,
             0.3,
@@ -2202,7 +2214,9 @@ mod tests {
     fn with_embedder_noop() {
         let tmp = TempDir::new().unwrap();
         let embedder = Arc::new(super::super::embeddings::NoopEmbedding);
-        let mem = SqliteMemory::with_embedder("test", tmp.path(),
+        let mem = SqliteMemory::with_embedder(
+            "test",
+            tmp.path(),
             embedder,
             0.7,
             0.3,
@@ -2305,7 +2319,9 @@ mod tests {
     #[tokio::test]
     async fn recall_prefix_wildcard_like_fallback_keeps_token_prefix() {
         let tmp = TempDir::new().unwrap();
-        let mem = SqliteMemory::with_embedder("test", tmp.path(),
+        let mem = SqliteMemory::with_embedder(
+            "test",
+            tmp.path(),
             Arc::new(super::super::embeddings::NoopEmbedding),
             0.7,
             0.3,
@@ -2329,7 +2345,9 @@ mod tests {
     #[tokio::test]
     async fn recall_prefix_wildcard_like_fallback_overfetches_filtered_rows() {
         let tmp = TempDir::new().unwrap();
-        let mem = SqliteMemory::with_embedder("test", tmp.path(),
+        let mem = SqliteMemory::with_embedder(
+            "test",
+            tmp.path(),
             Arc::new(super::super::embeddings::NoopEmbedding),
             0.7,
             0.3,
@@ -3328,7 +3346,9 @@ mod tests {
     #[tokio::test]
     async fn search_mode_bm25_only() {
         let tmp = TempDir::new().unwrap();
-        let mem = SqliteMemory::with_embedder("test", tmp.path(),
+        let mem = SqliteMemory::with_embedder(
+            "test",
+            tmp.path(),
             Arc::new(super::super::embeddings::NoopEmbedding),
             0.7,
             0.3,
@@ -3361,7 +3381,9 @@ mod tests {
     async fn search_mode_embedding_only() {
         let tmp = TempDir::new().unwrap();
         // NoopEmbedding returns None, so embedding-only mode will fall back to LIKE
-        let mem = SqliteMemory::with_embedder("test", tmp.path(),
+        let mem = SqliteMemory::with_embedder(
+            "test",
+            tmp.path(),
             Arc::new(super::super::embeddings::NoopEmbedding),
             0.7,
             0.3,

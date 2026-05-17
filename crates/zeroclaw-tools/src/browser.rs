@@ -471,7 +471,11 @@ impl BrowserTool {
         // Add --json for machine-readable output
         cmd.args(args).arg("--json");
 
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Running: agent-browser {} --json", args.join(" ")));
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!("Running: agent-browser {} --json", args.join(" "))
+        );
 
         let output = cmd
             .stdout(Stdio::piped())
@@ -483,7 +487,11 @@ impl BrowserTool {
         let stderr = String::from_utf8_lossy(&output.stderr);
 
         if !stderr.is_empty() {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("agent-browser stderr: {}", stderr));
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!("agent-browser stderr: {}", stderr)
+            );
         }
 
         // Parse JSON response

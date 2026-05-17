@@ -111,7 +111,11 @@ impl Channel for WeComChannel {
         // handled via the gateway webhook subsystem.
         //
         // This listener keeps the channel alive and waits for the sender to close.
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "channel ready (send-only via Bot Webhook)");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "channel ready (send-only via Bot Webhook)"
+        );
         tx.closed().await;
         Ok(())
     }

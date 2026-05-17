@@ -70,13 +70,29 @@ pub fn run_if_due(config: &MemoryConfig, workspace_dir: &Path) -> Result<()> {
     if config.audit_enabled
         && let Err(e) = prune_audit_entries(workspace_dir, config.audit_retention_days)
     {
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "audit pruning skipped");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+            "audit pruning skipped"
+        );
     }
 
     write_state(workspace_dir, &report)?;
 
     if report.total_actions() > 0 {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("memory hygiene complete: archived_memory={} archived_sessions={} purged_memory={} purged_sessions={} pruned_conversation_rows={}", report.archived_memory_files, report.archived_session_files, report.purged_memory_archives, report.purged_session_archives, report.pruned_conversation_rows));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "memory hygiene complete: archived_memory={} archived_sessions={} purged_memory={} purged_sessions={} pruned_conversation_rows={}",
+                report.archived_memory_files,
+                report.archived_session_files,
+                report.purged_memory_archives,
+                report.purged_session_archives,
+                report.pruned_conversation_rows
+            )
+        );
     }
 
     Ok(())
@@ -343,7 +359,13 @@ fn prune_audit_entries(workspace_dir: &Path, retention_days: u32) -> Result<()> 
     )?;
 
     if affected > 0 {
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"affected": affected, "retention_days": retention_days})), "pruned  audit entries older than  days");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(
+                ::serde_json::json!({"affected": affected, "retention_days": retention_days})
+            ),
+            "pruned  audit entries older than  days"
+        );
     }
 
     Ok(())

@@ -13,9 +13,7 @@ use zeroclaw_log::{EventCategory, EventOutcome, LogEvent, Severity};
 
 pub use zeroclaw_log::{LogEvent as RuntimeTraceEvent, LogFilter, LogPage};
 
-fn to_log_config(
-    config: &zeroclaw_config::schema::ObservabilityConfig,
-) -> zeroclaw_log::LogConfig {
+fn to_log_config(config: &zeroclaw_config::schema::ObservabilityConfig) -> zeroclaw_log::LogConfig {
     zeroclaw_log::LogConfig {
         log_persistence: config.log_persistence.clone(),
         log_persistence_path: config.log_persistence_path.clone(),

@@ -158,7 +158,13 @@ impl RedditChannel {
                 .text()
                 .await
                 .unwrap_or_else(|e| format!("<failed to read response: {e}>"));
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"status": status.to_string(), "body": body})), "inbox fetch failed");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"status": status.to_string(), "body": body})),
+                "inbox fetch failed"
+            );
             return Ok(Vec::new());
         }
 
@@ -184,7 +190,12 @@ impl RedditChannel {
             .await?;
 
         if !resp.status().is_success() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("mark_read failed: {}", resp.status()));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!("mark_read failed: {}", resp.status())
+            );
         }
         Ok(())
     }
@@ -333,7 +344,11 @@ impl Channel for RedditChannel {
                     .join(", ")
             )
         };
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("channel listening as u/{} {}...", self.username, scope));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!("channel listening as u/{} {}...", self.username, scope)
+        );
 
         loop {
             tokio::time::sleep(POLL_INTERVAL).await;
@@ -341,7 +356,13 @@ impl Channel for RedditChannel {
             let items = match self.fetch_inbox().await {
                 Ok(items) => items,
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "poll error");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "poll error"
+                    );
                     continue;
                 }
             };
@@ -359,7 +380,13 @@ impl Channel for RedditChannel {
             }
 
             if let Err(e) = self.mark_read(&read_ids).await {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "mark_read error");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "mark_read error"
+                );
             }
         }
     }

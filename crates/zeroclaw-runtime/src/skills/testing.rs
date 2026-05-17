@@ -209,7 +209,11 @@ pub fn test_all_skills(skills_dirs: &[PathBuf], verbose: bool) -> Result<Vec<Ski
                 .unwrap_or_default();
 
             if verbose {
-                println!("  Testing skill: {} ({})", skill_name, path.display().to_string());
+                println!(
+                    "  Testing skill: {} ({})",
+                    skill_name,
+                    path.display().to_string()
+                );
             }
 
             let r = test_skill(&path, &skill_name, verbose)?;

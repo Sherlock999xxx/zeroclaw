@@ -971,7 +971,15 @@ pub async fn handle_section_select(
             if created {
                 let enabled_path = format!("channels.{key}.{alias}.enabled");
                 if let Err(e) = working.set_prop_persistent(&enabled_path, "true") {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"path": enabled_path, "error": e.to_string()})), "failed to default-enable newly created channel; operator must toggle manually");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(
+                                ::serde_json::json!({"path": enabled_path, "error": e.to_string()})
+                            ),
+                        "failed to default-enable newly created channel; operator must toggle manually"
+                    );
                 }
             }
             (format!("channels.{key}.{alias}"), created)

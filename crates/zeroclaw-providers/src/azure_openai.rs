@@ -540,7 +540,8 @@ mod tests {
 
     #[test]
     fn url_construction_default_version() {
-        let p = AzureOpenAiModelProvider::new("test", Some("test-key"), "my-resource", "gpt-4o", None);
+        let p =
+            AzureOpenAiModelProvider::new("test", Some("test-key"), "my-resource", "gpt-4o", None);
         assert_eq!(
             p.chat_completions_url(),
             "https://my-resource.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview"
@@ -549,7 +550,8 @@ mod tests {
 
     #[test]
     fn url_construction_custom_version() {
-        let p = AzureOpenAiModelProvider::new("test", 
+        let p = AzureOpenAiModelProvider::new(
+            "test",
             Some("test-key"),
             "my-resource",
             "gpt-4o",
@@ -563,8 +565,13 @@ mod tests {
 
     #[test]
     fn url_construction_preserves_resource_and_deployment() {
-        let p =
-            AzureOpenAiModelProvider::new("test", Some("key"), "contoso-ai", "my-gpt35-deployment", None);
+        let p = AzureOpenAiModelProvider::new(
+            "test",
+            Some("key"),
+            "contoso-ai",
+            "my-gpt35-deployment",
+            None,
+        );
         let url = p.chat_completions_url();
         assert!(url.contains("contoso-ai.openai.azure.com"));
         assert!(url.contains("/deployments/my-gpt35-deployment/"));
@@ -576,13 +583,20 @@ mod tests {
         // This test verifies the model_provider stores the credential correctly
         // and that the auth header name is "api-key" (verified via the
         // implementation in chat_with_system which uses .header("api-key", ...)).
-        let p = AzureOpenAiModelProvider::new("test", Some("my-azure-key"), "resource", "deployment", None);
+        let p = AzureOpenAiModelProvider::new(
+            "test",
+            Some("my-azure-key"),
+            "resource",
+            "deployment",
+            None,
+        );
         assert_eq!(p.credential.as_deref(), Some("my-azure-key"));
     }
 
     #[test]
     fn creates_with_credential() {
-        let p = AzureOpenAiModelProvider::new("test", 
+        let p = AzureOpenAiModelProvider::new(
+            "test",
             Some("azure-test-credential"),
             "resource",
             "deployment",
@@ -777,7 +791,8 @@ mod tests {
 
     #[test]
     fn custom_api_version_stored() {
-        let p = AzureOpenAiModelProvider::new("test", 
+        let p = AzureOpenAiModelProvider::new(
+            "test",
             Some("key"),
             "resource",
             "deployment",

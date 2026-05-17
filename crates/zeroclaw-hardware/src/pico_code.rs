@@ -357,12 +357,23 @@ impl Tool for DeviceWriteCodeTool {
 
         // Explicit cleanup — log if removal fails rather than silently ignoring.
         if let Err(e) = named_tmp.close() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"path": tmp_str, "err": e.to_string()})), "failed to clean up temp file");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"path": tmp_str, "err": e.to_string()})),
+                "failed to clean up temp file"
+            );
         }
 
         match result {
             Ok((_stdout, _stderr)) => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"alias": alias})), "main.py deployed and device reset");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"alias": alias})),
+                    "main.py deployed and device reset"
+                );
 
                 // Wait for the serial port to reappear after reset.
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -527,7 +538,13 @@ impl Tool for DeviceExecTool {
 
         // Explicit cleanup — log if removal fails rather than silently ignoring.
         if let Err(e) = named_tmp.close() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"path": tmp_str, "err": e.to_string()})), "failed to clean up temp file");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"path": tmp_str, "err": e.to_string()})),
+                "failed to clean up temp file"
+            );
         }
 
         match result {

@@ -342,7 +342,14 @@ impl OllamaModelProvider {
         if let Some(thinking) = thinking.map(str::trim).filter(|t| !t.is_empty()) {
             let stripped_thinking = Self::strip_think_tags(thinking);
             if !stripped_thinking.trim().is_empty() {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Ollama: using thinking field as effective content ({} chars)", stripped_thinking.len()));
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    &format!(
+                        "Ollama: using thinking field as effective content ({} chars)",
+                        stripped_thinking.len()
+                    )
+                );
                 return Some(stripped_thinking);
             }
         }
@@ -354,14 +361,30 @@ impl OllamaModelProvider {
         if let Some(thinking) = thinking.map(str::trim).filter(|value| !value.is_empty()) {
             let thinking_log_excerpt: String = thinking.chars().take(100).collect();
             let thinking_reply_excerpt: String = thinking.chars().take(200).collect();
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Ollama returned empty content with only thinking for model '{}': '{}'. Model may have stopped prematurely.", model, thinking_log_excerpt));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "Ollama returned empty content with only thinking for model '{}': '{}'. Model may have stopped prematurely.",
+                    model, thinking_log_excerpt
+                )
+            );
             return format!(
                 "I was thinking about this: {}... but I didn't complete my response. Could you try asking again?",
                 thinking_reply_excerpt
             );
         }
 
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Ollama returned empty or whitespace content with no tool calls for model '{}'", model));
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            &format!(
+                "Ollama returned empty or whitespace content with no tool calls for model '{}'",
+                model
+            )
+        );
         "I couldn't get a complete response from Ollama. Please try again or switch to a different model."
             .to_string()
     }
@@ -542,7 +565,19 @@ impl OllamaModelProvider {
 
         let url = format!("{}/api/chat", self.base_url);
 
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Ollama request: url={} model={} message_count={} temperature={} think={:?} tool_count={}", url, model, request.messages.len(), temperature, request.think, request.tools.as_ref().map_or(0, |t| t.len())));
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "Ollama request: url={} model={} message_count={} temperature={} think={:?} tool_count={}",
+                url,
+                model,
+                request.messages.len(),
+                temperature,
+                request.think,
+                request.tools.as_ref().map_or(0, |t| t.len())
+            )
+        );
 
         let mut request_builder = self.http_client().post(&url).json(&request);
 
@@ -552,15 +587,31 @@ impl OllamaModelProvider {
 
         let response = request_builder.send().await?;
         let status = response.status();
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("response status: {}", status));
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!("response status: {}", status)
+        );
 
         let body = response.bytes().await?;
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("response body length: {} bytes", body.len()));
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!("response body length: {} bytes", body.len())
+        );
 
         if !status.is_success() {
             let raw = String::from_utf8_lossy(&body);
             let sanitized = super::sanitize_api_error(&raw);
-            ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure), &format!("Ollama error response: status={} body_excerpt={}", status, sanitized));
+            ::zeroclaw_log::record!(
+                ERROR,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Failure),
+                &format!(
+                    "Ollama error response: status={} body_excerpt={}",
+                    status, sanitized
+                )
+            );
             anyhow::bail!(
                 "Ollama API error ({}): {}. Is Ollama running? (brew install ollama && ollama serve)",
                 status,
@@ -573,7 +624,15 @@ impl OllamaModelProvider {
             Err(e) => {
                 let raw = String::from_utf8_lossy(&body);
                 let sanitized = super::sanitize_api_error(&raw);
-                ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure), &format!("Ollama response deserialization failed: {e}. body_excerpt={}", sanitized));
+                ::zeroclaw_log::record!(
+                    ERROR,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Failure),
+                    &format!(
+                        "Ollama response deserialization failed: {e}. body_excerpt={}",
+                        sanitized
+                    )
+                );
                 anyhow::bail!("Failed to parse Ollama response: {e}");
             }
         };
@@ -610,8 +669,16 @@ impl OllamaModelProvider {
         match result {
             Ok(resp) => Ok(resp),
             Err(first_err) if self.reasoning_enabled == Some(true) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"model": model, "error": first_err.to_string()})), "Ollama request failed with think=true; retrying without reasoning \
-                     (model may not support it)");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(
+                            ::serde_json::json!({"model": model, "error": first_err.to_string()})
+                        ),
+                    "Ollama request failed with think=true; retrying without reasoning \
+                     (model may not support it)"
+                );
                 // Retry with think omitted from the request entirely.
                 self.send_request_inner(&messages, model, temperature, should_auth, tools, None)
                     .await
@@ -677,7 +744,14 @@ impl OllamaModelProvider {
                 .get("arguments")
                 .cloned()
                 .unwrap_or(serde_json::json!({}));
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Unwrapped nested tool call: {} -> {} with args {:?}", name, nested_name, nested_args));
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!(
+                    "Unwrapped nested tool call: {} -> {} with args {:?}",
+                    name, nested_name, nested_args
+                )
+            );
             return (nested_name.to_string(), nested_args);
         }
 
@@ -751,7 +825,14 @@ impl ModelProvider for OllamaModelProvider {
 
         // If model returned tool calls, format them for loop_.rs's parse_tool_calls
         if !response.message.tool_calls.is_empty() {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Ollama returned {} tool call(s), formatting for loop parser", response.message.tool_calls.len()));
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!(
+                    "Ollama returned {} tool call(s), formatting for loop parser",
+                    response.message.tool_calls.len()
+                )
+            );
             return Ok(self.format_tool_calls_for_loop(&response.message.tool_calls));
         }
 
@@ -792,7 +873,14 @@ impl ModelProvider for OllamaModelProvider {
 
         // If model returned tool calls, format them for loop_.rs's parse_tool_calls
         if !response.message.tool_calls.is_empty() {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Ollama returned {} tool call(s), formatting for loop parser", response.message.tool_calls.len()));
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!(
+                    "Ollama returned {} tool call(s), formatting for loop parser",
+                    response.message.tool_calls.len()
+                )
+            );
             return Ok(self.format_tool_calls_for_loop(&response.message.tool_calls));
         }
 
@@ -1075,7 +1163,8 @@ mod tests {
 
     #[test]
     fn remote_endpoint_with_api_suffix_still_allows_cloud_models() {
-        let p = OllamaModelProvider::new("test", Some("https://ollama.com/api"), Some("ollama-key"));
+        let p =
+            OllamaModelProvider::new("test", Some("https://ollama.com/api"), Some("ollama-key"));
         let (model, should_auth) = p.resolve_request_details("qwen3:cloud").unwrap();
         assert_eq!(model, "qwen3");
         assert!(should_auth);
@@ -1113,7 +1202,8 @@ mod tests {
 
     #[test]
     fn request_includes_think_when_reasoning_configured() {
-        let model_provider = OllamaModelProvider::new_with_reasoning("test", None, None, Some(false));
+        let model_provider =
+            OllamaModelProvider::new_with_reasoning("test", None, None, Some(false));
         let request = model_provider.build_chat_request(
             vec![Message {
                 role: "user".to_string(),
@@ -1279,13 +1369,12 @@ mod tests {
         // The think=true → retry-without-think path in `send_request` uses the
         // same `build_chat_request_with_think` builder for both attempts; verify
         // the builder produces identical option fields when only `think` differs.
-        let provider = OllamaModelProvider::new_with_reasoning("test", None, None, Some(true)).with_tuning(
-            OllamaTuning {
+        let provider = OllamaModelProvider::new_with_reasoning("test", None, None, Some(true))
+            .with_tuning(OllamaTuning {
                 num_ctx: 16384,
                 num_predict: 4096,
                 temperature_override: None,
-            },
-        );
+            });
 
         let messages = vec![Message {
             role: "user".to_string(),

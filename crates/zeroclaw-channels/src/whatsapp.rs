@@ -145,7 +145,18 @@ impl WhatsAppChannel {
                 {
                     Ok(re) => Some(re),
                     Err(e) => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"trimmed": trimmed, "e": e.to_string()})), "ignoring invalid mention_pattern");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(
+                                ::serde_json::json!({"trimmed": trimmed, "e": e.to_string()})
+                            ),
+                            "ignoring invalid mention_pattern"
+                        );
                         None
                     }
                 }
@@ -252,7 +263,16 @@ impl WhatsAppChannel {
                     };
 
                     if !self.is_number_allowed(&normalized_from) {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"normalized_from": normalized_from})), "ignoring message from unauthorized number: . Add to channels.whatsapp.allowed_numbers in config.toml, or run `zeroclaw onboard --channels-only` to configure interactively.");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"normalized_from": normalized_from})),
+                            "ignoring message from unauthorized number: . Add to channels.whatsapp.allowed_numbers in config.toml, or run `zeroclaw onboard --channels-only` to configure interactively."
+                        );
                         continue;
                     }
 
@@ -265,7 +285,15 @@ impl WhatsAppChannel {
                             .to_string()
                     } else {
                         // Could be image, audio, etc. — skip for now
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"from": from})), "skipping non-text message from");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"from": from})),
+                            "skipping non-text message from"
+                        );
                         continue;
                     };
 
@@ -286,7 +314,15 @@ impl WhatsAppChannel {
                     ) {
                         Some(c) => c,
                         None => {
-                            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"from": from})), "message from did not match mention patterns, dropping");
+                            ::zeroclaw_log::record!(
+                                DEBUG,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_attrs(::serde_json::json!({"from": from})),
+                                "message from did not match mention patterns, dropping"
+                            );
                             continue;
                         }
                     };
@@ -419,8 +455,12 @@ impl Channel for WhatsAppChannel {
         // WhatsApp uses webhooks (push-based), not polling.
         // Messages are received via the gateway's /whatsapp endpoint.
         // This method keeps the channel "alive" but doesn't actively poll.
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "WhatsApp channel active (webhook mode). \
-            Configure Meta webhook to POST to your gateway's /whatsapp endpoint.");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "WhatsApp channel active (webhook mode). \
+            Configure Meta webhook to POST to your gateway's /whatsapp endpoint."
+        );
 
         // Keep the task alive — it will be cancelled when the channel shuts down
         loop {

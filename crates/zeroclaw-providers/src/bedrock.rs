@@ -147,7 +147,11 @@ impl AwsCredentials {
             .or(config_region)
             .unwrap_or_else(|| DEFAULT_REGION.to_string());
 
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Loaded AWS credentials via credential_process");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "Loaded AWS credentials via credential_process"
+        );
 
         Ok(Self {
             access_key_id,
@@ -225,7 +229,14 @@ impl AwsCredentials {
             region.trim().to_string()
         };
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Loaded AWS credentials from EC2 instance metadata (role: {})", role));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "Loaded AWS credentials from EC2 instance metadata (role: {})",
+                role
+            )
+        );
 
         Ok(Self {
             access_key_id,
@@ -784,8 +795,19 @@ impl BedrockModelProvider {
                                 .or_else(|| Self::last_pending_tool_use_id(&converse_messages))
                                 .unwrap_or_else(|| "unknown".to_string());
 
-                            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Failed to parse tool result message, creating error \
-                                 toolResult for tool_use_id={}", tool_use_id));
+                            ::zeroclaw_log::record!(
+                                WARN,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                                &format!(
+                                    "Failed to parse tool result message, creating error \
+                                 toolResult for tool_use_id={}",
+                                    tool_use_id
+                                )
+                            );
 
                             ConverseMessage {
                                 role: "user".to_string(),
@@ -908,7 +930,15 @@ impl BedrockModelProvider {
         let mut blocks: Vec<ContentBlock> = Vec::new();
         let mut remaining = content;
         let has_image = content.contains("[IMAGE:");
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("parse_user_content_blocks called, len={}, has_image={}", content.len(), has_image));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "parse_user_content_blocks called, len={}, has_image={}",
+                content.len(),
+                has_image
+            )
+        );
 
         while let Some(start) = remaining.find("[IMAGE:") {
             // Add any text before the marker
@@ -1136,7 +1166,17 @@ impl BedrockModelProvider {
                             {
                                 *bytes = serde_json::json!(format!("<base64 {} chars>", s.len()));
                             }
-                            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Bedrock image block: {}", serde_json::to_string(&b).unwrap_or_default()));
+                            ::zeroclaw_log::record!(
+                                INFO,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                ),
+                                &format!(
+                                    "Bedrock image block: {}",
+                                    serde_json::to_string(&b).unwrap_or_default()
+                                )
+                            );
                         }
                     }
                 }

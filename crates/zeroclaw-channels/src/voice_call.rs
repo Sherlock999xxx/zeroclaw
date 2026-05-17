@@ -126,7 +126,12 @@ impl VoiceCallChannel {
     /// Place an outbound call via the configured model_provider.
     pub async fn place_call(&self, to_number: &str) -> Result<String> {
         if self.config.require_outbound_approval {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"to": to_number})), "outbound call requires approval");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"to": to_number})),
+                "outbound call requires approval"
+            );
             return Ok(format!("PENDING_APPROVAL:{to_number}"));
         }
         self.execute_outbound_call(to_number).await
@@ -162,7 +167,12 @@ impl VoiceCallChannel {
 
                 let json: serde_json::Value = serde_json::from_str(&resp.text().await?)?;
                 let call_sid = json["sid"].as_str().unwrap_or("unknown").to_string();
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"call_sid": call_sid, "to": to_number})), "outbound call placed via Twilio");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"call_sid": call_sid, "to": to_number})),
+                    "outbound call placed via Twilio"
+                );
                 Ok(call_sid)
             }
             VoiceProvider::Telnyx => {
@@ -191,7 +201,12 @@ impl VoiceCallChannel {
                     .as_str()
                     .unwrap_or("unknown")
                     .to_string();
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"call_id": call_id, "to": to_number})), "outbound call placed via Telnyx");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"call_id": call_id, "to": to_number})),
+                    "outbound call placed via Telnyx"
+                );
                 Ok(call_id)
             }
             VoiceProvider::Plivo => {
@@ -224,7 +239,12 @@ impl VoiceCallChannel {
                     .as_str()
                     .unwrap_or("unknown")
                     .to_string();
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"call_uuid": call_uuid, "to": to_number})), "outbound call placed via Plivo");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"call_uuid": call_uuid, "to": to_number})),
+                    "outbound call placed via Plivo"
+                );
                 Ok(call_uuid)
             }
         }
@@ -287,7 +307,12 @@ impl VoiceCallChannel {
             calls.insert(call_id.to_string(), record);
         }
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"call_id": call_id, "from": from_number})), "inbound call received");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"call_id": call_id, "from": from_number})),
+            "inbound call received"
+        );
 
         // Notify the agent about the incoming call
         let msg = ChannelMessage {
@@ -349,7 +374,13 @@ impl VoiceCallChannel {
         let json = serde_json::to_string_pretty(record)?;
         std::fs::write(&path, json)?;
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"call_id": call_id, "path": path.display().to_string()})), "call transcript saved");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(
+                ::serde_json::json!({"call_id": call_id, "path": path.display().to_string()})
+            ),
+            "call transcript saved"
+        );
         Ok(())
     }
 }
@@ -380,14 +411,23 @@ impl Channel for VoiceCallChannel {
             if let Some(record) = calls.get(thread_ts)
                 && record.state == CallState::InProgress
             {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"call_id": thread_ts})), &format!("would TTS message to active call: {}", message.content));
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"call_id": thread_ts})),
+                    &format!("would TTS message to active call: {}", message.content)
+                );
                 // TTS synthesis + streaming would be handled by the
                 // telephony model_provider's media stream API in production.
                 return Ok(());
             }
         }
 
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("voice_call send (no active call): {}", message.content));
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!("voice_call send (no active call): {}", message.content)
+        );
         Ok(())
     }
 
@@ -396,7 +436,13 @@ impl Channel for VoiceCallChannel {
         let active_calls = self.active_calls.clone();
         let _tx = tx.clone();
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"port": port, "model_provider": self.config.model_provider})), "voice call webhook server starting");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(
+                ::serde_json::json!({"port": port, "model_provider": self.config.model_provider})
+            ),
+            "voice call webhook server starting"
+        );
 
         // The webhook server runs as an axum HTTP server on the configured port.
         // In production, this handles:

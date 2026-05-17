@@ -94,7 +94,13 @@ impl Tool for SopExecuteTool {
             && let Some(ref run) = run_snapshot
             && let Err(e) = audit.log_run_start(run).await
         {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "SOP audit log_run_start failed");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "SOP audit log_run_start failed"
+            );
         }
 
         match action {

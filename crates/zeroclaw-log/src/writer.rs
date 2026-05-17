@@ -10,14 +10,14 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use anyhow::{Context, Result};
-use parking_lot::Mutex;
-use serde_json::Value;
 use crate::broadcast::current_broadcast_hook;
 use crate::config::{LogConfig, ResolvedPolicy, StoragePolicy};
 use crate::event::LogEvent;
 use crate::migrate;
 use crate::observer_bridge;
+use anyhow::{Context, Result};
+use parking_lot::Mutex;
+use serde_json::Value;
 
 struct WriterState {
     policy: ResolvedPolicy,

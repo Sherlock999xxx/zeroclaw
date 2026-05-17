@@ -503,7 +503,12 @@ impl DeviceRegistry {
             let probe_transport = if !is_known_vid {
                 let probe = HardwareSerialTransport::new(&info.port_path, DEFAULT_BAUD);
                 if !probe.ping_handshake().await {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"port": info.port_path})), "skipping unknown device: no ZeroClaw firmware response");
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(::serde_json::json!({"port": info.port_path})),
+                        "skipping unknown device: no ZeroClaw firmware response"
+                    );
                     continue;
                 }
                 Some(probe)
@@ -534,8 +539,19 @@ impl DeviceRegistry {
                 gpio: true, // assume GPIO; Phase 3 will populate via capabilities handshake
                 ..DeviceCapabilities::default()
             };
-            registry.attach_transport(&alias, transport, caps)
-                .unwrap_or_else(|e| ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"alias": alias, "err": e.to_string()})), "attach_transport: unexpected unknown alias"));
+            registry
+                .attach_transport(&alias, transport, caps)
+                .unwrap_or_else(|e| {
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(
+                                ::serde_json::json!({"alias": alias, "err": e.to_string()})
+                            ),
+                        "attach_transport: unexpected unknown alias"
+                    )
+                });
 
             ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"alias": alias, "port": info.port_path, "vid": info.vid})), "device registered");
         }
@@ -593,7 +609,12 @@ impl DeviceRegistry {
         entry.transport = Some(Arc::new(transport) as Arc<dyn super::transport::Transport>);
         entry.capabilities.gpio = true;
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"alias": alias, "port": port_path})), "device reconnected");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"alias": alias, "port": port_path})),
+            "device reconnected"
+        );
         Ok(())
     }
 }

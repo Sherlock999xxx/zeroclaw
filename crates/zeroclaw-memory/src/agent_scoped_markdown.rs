@@ -165,7 +165,15 @@ impl Memory for AgentScopedMarkdownMemory {
                 .await
             {
                 Ok(rows) => merged.extend(Self::attribute(&peer.alias, rows)),
-                Err(error) => ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"peer": peer.alias, "error": error.to_string()})), "AgentScopedMarkdownMemory peer recall failed; continuing with other peers"),
+                Err(error) => ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(
+                            ::serde_json::json!({"peer": peer.alias, "error": error.to_string()})
+                        ),
+                    "AgentScopedMarkdownMemory peer recall failed; continuing with other peers"
+                ),
             }
         }
         merged.truncate(limit);
@@ -210,7 +218,15 @@ impl Memory for AgentScopedMarkdownMemory {
                 .await
             {
                 Ok(rows) => merged.extend(Self::attribute(&peer.alias, rows)),
-                Err(error) => ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"peer": peer.alias, "error": error.to_string()})), "AgentScopedMarkdownMemory peer recall failed; continuing with other peers"),
+                Err(error) => ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(
+                            ::serde_json::json!({"peer": peer.alias, "error": error.to_string()})
+                        ),
+                    "AgentScopedMarkdownMemory peer recall failed; continuing with other peers"
+                ),
             }
         }
         merged.truncate(limit);
@@ -273,7 +289,7 @@ mod tests {
         let (_tmp_a, own) = make_md("alpha-ws");
         let (_tmp_b, peer_mem) = make_md("beta-ws");
         let scoped = AgentScopedMarkdownMemory::new(
-"alpha",
+            "alpha",
             own,
             vec![MarkdownPeer {
                 alias: "beta".into(),
@@ -312,7 +328,7 @@ mod tests {
             .unwrap();
 
         let scoped = AgentScopedMarkdownMemory::new(
-"alpha",
+            "alpha",
             own,
             vec![MarkdownPeer {
                 alias: "beta".into(),
@@ -350,7 +366,7 @@ mod tests {
             .unwrap();
 
         let scoped = AgentScopedMarkdownMemory::new(
-"alpha",
+            "alpha",
             own,
             vec![MarkdownPeer {
                 alias: "beta".into(),
@@ -390,8 +406,7 @@ mod tests {
     #[tokio::test]
     async fn list_and_get_stamp_agent_alias_for_dashboard_parity() {
         let (_tmp, own) = make_md("alpha-ws");
-        let scoped = AgentScopedMarkdownMemory::new(
-"alpha", own, vec![]);
+        let scoped = AgentScopedMarkdownMemory::new("alpha", own, vec![]);
 
         scoped
             .store("note", "preferences", MemoryCategory::Core, None)
@@ -435,7 +450,7 @@ mod tests {
             .await
             .unwrap();
         let scoped = AgentScopedMarkdownMemory::new(
-"alpha",
+            "alpha",
             own,
             vec![MarkdownPeer {
                 alias: "beta".into(),

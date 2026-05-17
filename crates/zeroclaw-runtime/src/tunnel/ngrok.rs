@@ -71,7 +71,12 @@ impl Tunnel for NgrokTunnel {
 
             match line {
                 Ok(Ok(Some(l))) => {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"l": l})), "ngrok: ");
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(::serde_json::json!({"l": l})),
+                        "ngrok: "
+                    );
                     // ngrok logfmt: url=https://xxxx.ngrok-free.app
                     if let Some(idx) = l.find("url=https://") {
                         let url_start = idx + 4; // skip "url="

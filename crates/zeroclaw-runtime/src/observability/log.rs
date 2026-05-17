@@ -23,7 +23,14 @@ impl Observer for LogObserver {
                 model_provider,
                 model,
             } => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"model_provider": model_provider, "model": model})), "agent.start");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(
+                            ::serde_json::json!({"model_provider": model_provider, "model": model})
+                        ),
+                    "agent.start"
+                );
             }
             ObserverEvent::AgentEnd {
                 model_provider,
@@ -36,7 +43,12 @@ impl Observer for LogObserver {
                 ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"model_provider": model_provider, "model": model, "duration_ms": ms, "tokens": tokens_used, "cost_usd": cost_usd})), "agent.end");
             }
             ObserverEvent::ToolCallStart { tool, .. } => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"tool": tool})), "tool.start");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"tool": tool})),
+                    "tool.start"
+                );
             }
             ObserverEvent::ToolCall {
                 tool,
@@ -47,13 +59,28 @@ impl Observer for LogObserver {
                 ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"tool": tool, "duration_ms": ms, "success": success})), "tool.call");
             }
             ObserverEvent::TurnComplete => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "turn.complete");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "turn.complete"
+                );
             }
             ObserverEvent::ChannelMessage { channel, direction } => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"channel": channel, "direction": direction})), "channel.message");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(
+                            ::serde_json::json!({"channel": channel, "direction": direction})
+                        ),
+                    "channel.message"
+                );
             }
             ObserverEvent::HeartbeatTick => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "heartbeat.tick");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "heartbeat.tick"
+                );
             }
             ObserverEvent::CacheHit {
                 cache_type,
@@ -62,10 +89,22 @@ impl Observer for LogObserver {
                 ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"cache_type": cache_type, "tokens_saved": tokens_saved})), "cache.hit");
             }
             ObserverEvent::CacheMiss { cache_type } => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"cache_type": cache_type})), "cache.miss");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"cache_type": cache_type})),
+                    "cache.miss"
+                );
             }
             ObserverEvent::Error { component, message } => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"component": component, "error": message})), "error");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(
+                            ::serde_json::json!({"component": component, "error": message})
+                        ),
+                    "error"
+                );
             }
             ObserverEvent::LlmRequest {
                 model_provider,
@@ -87,19 +126,36 @@ impl Observer for LogObserver {
                 ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"model_provider": model_provider, "model": model, "duration_ms": ms, "success": success, "error": error_message, "input_tokens": input_tokens, "output_tokens": output_tokens})), "llm.response");
             }
             ObserverEvent::DeploymentStarted { deploy_id } => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"deploy_id": deploy_id})), "deployment.started");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"deploy_id": deploy_id})),
+                    "deployment.started"
+                );
             }
             ObserverEvent::DeploymentCompleted {
                 deploy_id,
                 commit_sha,
             } => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"deploy_id": deploy_id, "commit_sha": commit_sha})), "deployment.completed");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(
+                            ::serde_json::json!({"deploy_id": deploy_id, "commit_sha": commit_sha})
+                        ),
+                    "deployment.completed"
+                );
             }
             ObserverEvent::DeploymentFailed { deploy_id, reason } => {
                 ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"deploy_id": deploy_id, "reason": reason.to_string()})), "deployment.failed");
             }
             ObserverEvent::RecoveryCompleted { deploy_id } => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"deploy_id": deploy_id})), "recovery.completed");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"deploy_id": deploy_id})),
+                    "recovery.completed"
+                );
             }
         }
     }
@@ -108,24 +164,54 @@ impl Observer for LogObserver {
         match metric {
             ObserverMetric::RequestLatency(d) => {
                 let ms = u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"latency_ms": ms})), "metric.request_latency");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"latency_ms": ms})),
+                    "metric.request_latency"
+                );
             }
             ObserverMetric::TokensUsed(t) => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"tokens": t})), "metric.tokens_used");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"tokens": t})),
+                    "metric.tokens_used"
+                );
             }
             ObserverMetric::ActiveSessions(s) => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"sessions": s})), "metric.active_sessions");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"sessions": s})),
+                    "metric.active_sessions"
+                );
             }
             ObserverMetric::QueueDepth(d) => {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"depth": d})), "metric.queue_depth");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"depth": d})),
+                    "metric.queue_depth"
+                );
             }
             ObserverMetric::DeploymentLeadTime(d) => {
                 let ms = u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"lead_time_ms": ms})), "metric.deployment_lead_time");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"lead_time_ms": ms})),
+                    "metric.deployment_lead_time"
+                );
             }
             ObserverMetric::RecoveryTime(d) => {
                 let ms = u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"recovery_time_ms": ms})), "metric.recovery_time");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"recovery_time_ms": ms})),
+                    "metric.recovery_time"
+                );
             }
         }
     }

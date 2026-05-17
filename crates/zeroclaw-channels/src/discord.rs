@@ -138,7 +138,13 @@ impl DiscordChannel {
                 self.transcription = Some(config);
             }
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"e": e.to_string()})), "transcription manager init failed, voice transcription disabled");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"e": e.to_string()})),
+                    "transcription manager init failed, voice transcription disabled"
+                );
             }
         }
         self
@@ -240,7 +246,14 @@ impl DiscordChannel {
         let is_thread = match tokio::time::timeout(THREAD_LOOKUP_TIMEOUT, lookup).await {
             Ok(Ok(value)) => value,
             Ok(Err(e)) => {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"channel_id": channel_id, "error": e.to_string()})), "channel lookup failed");
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(
+                            ::serde_json::json!({"channel_id": channel_id, "error": e.to_string()})
+                        ),
+                    "channel lookup failed"
+                );
                 return false;
             }
             Err(_) => {
@@ -271,7 +284,12 @@ impl DiscordChannel {
         };
         for emoji in reactions {
             if let Err(e) = self.add_reaction(channel_id, message_id, emoji).await {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"emoji": emoji, "error": e.to_string()})), "failed to add failure reaction to outgoing message");
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"emoji": emoji, "error": e.to_string()})),
+                    "failed to add failure reaction to outgoing message"
+                );
             }
         }
     }
@@ -317,7 +335,13 @@ async fn process_attachments(
             .and_then(|v| v.as_str())
             .unwrap_or("file");
         let Some(url) = att.get("url").and_then(|v| v.as_str()) else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"name": name})), "attachment has no url, skipping");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"name": name})),
+                "attachment has no url, skipping"
+            );
             continue;
         };
 
@@ -332,7 +356,15 @@ async fn process_attachments(
                     ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"name": name, "status": resp.status().to_string()})), "attachment fetch failed");
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"name": name, "error": e.to_string()})), "attachment fetch error");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(
+                                ::serde_json::json!({"name": name, "error": e.to_string()})
+                            ),
+                        "attachment fetch error"
+                    );
                 }
             }
             continue;
@@ -352,12 +384,31 @@ async fn process_attachments(
                 Ok(text) => {
                     let trimmed = text.trim();
                     if !trimmed.is_empty() {
-                        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("transcribed audio attachment {} ({} chars)", name, trimmed.len()));
+                        ::zeroclaw_log::record!(
+                            INFO,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            ),
+                            &format!(
+                                "transcribed audio attachment {} ({} chars)",
+                                name,
+                                trimmed.len()
+                            )
+                        );
                         text_parts.push(format!("[Voice] {trimmed}"));
                     }
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"name": name, "error": e.to_string()})), "voice transcription failed");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(
+                                ::serde_json::json!({"name": name, "error": e.to_string()})
+                            ),
+                        "voice transcription failed"
+                    );
                 }
             }
             continue;
@@ -407,16 +458,36 @@ async fn download_attachment_bytes(
         Ok(resp) if resp.status().is_success() => match resp.bytes().await {
             Ok(b) => Some(b.to_vec()),
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"name": name, "error": e.to_string()})), "failed to read attachment bytes");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"name": name, "error": e.to_string()})),
+                    "failed to read attachment bytes"
+                );
                 None
             }
         },
         Ok(resp) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"name": name, "status": resp.status().to_string()})), "attachment download failed");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(
+                        ::serde_json::json!({"name": name, "status": resp.status().to_string()})
+                    ),
+                "attachment download failed"
+            );
             None
         }
         Err(e) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"name": name, "error": e.to_string()})), "attachment fetch error");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"name": name, "error": e.to_string()})),
+                "attachment fetch error"
+            );
             None
         }
     }
@@ -878,7 +949,11 @@ async fn edit_discord_message(
         .await?;
 
     if resp.status().as_u16() == 429 {
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "edit message rate-limited (429), skipping update");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "edit message rate-limited (429), skipping update"
+        );
         return Ok(());
     }
 
@@ -913,7 +988,11 @@ async fn delete_discord_message(
         .await?;
 
     if resp.status().as_u16() == 429 {
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "delete message rate-limited (429), skipping");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "delete message rate-limited (429), skipping"
+        );
         return Ok(());
     }
 
@@ -1186,7 +1265,9 @@ fn base64_decode(input: &str) -> Option<String> {
 
 impl ::zeroclaw_api::attribution::Attributable for DiscordChannel {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Channel(::zeroclaw_api::attribution::ChannelKind::Discord)
+        ::zeroclaw_api::attribution::Role::Channel(
+            ::zeroclaw_api::attribution::ChannelKind::Discord,
+        )
     }
     fn alias(&self) -> &str {
         &self.alias
@@ -1218,7 +1299,13 @@ impl Channel for DiscordChannel {
 
         // Discord accepts max 10 files per message.
         if local_files.len() > 10 {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"count": local_files.len()})), "truncating local attachment upload list to 10 files");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"count": local_files.len()})),
+                "truncating local attachment upload list to 10 files"
+            );
             local_files.truncate(10);
         }
 
@@ -1266,7 +1353,15 @@ impl Channel for DiscordChannel {
                     .as_ref()
                     .is_some_and(|t| t.is_cancelled())
                 {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Discord delivery interrupted after chunk {}/{}", i + 1, chunks.len()));
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        &format!(
+                            "Discord delivery interrupted after chunk {}/{}",
+                            i + 1,
+                            chunks.len()
+                        )
+                    );
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(inter_chunk_delay_ms)).await;
@@ -1299,7 +1394,11 @@ impl Channel for DiscordChannel {
             .unwrap_or("wss://gateway.discord.gg");
 
         let ws_url = format!("{gw_url}/?v=10&encoding=json");
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "connecting to gateway...");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "connecting to gateway..."
+        );
 
         let (ws_stream, _) = zeroclaw_config::schema::ws_connect_with_proxy(
             &ws_url,
@@ -1335,7 +1434,11 @@ impl Channel for DiscordChannel {
             .send(Message::Text(identify.to_string().into()))
             .await?;
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "connected and identified");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "connected and identified"
+        );
 
         // Track the last sequence number for heartbeats and resume.
         // Only accessed in the select! loop below, so a plain i64 suffices.
@@ -1372,7 +1475,12 @@ impl Channel for DiscordChannel {
         if let Some(ref wd) = watchdog {
             let stall_signal = stall_tx.clone();
             wd.start(move || {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "stall watchdog fired — no events for configured timeout, triggering reconnect");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "stall watchdog fired — no events for configured timeout, triggering reconnect"
+                );
                 let _ = stall_signal.try_send(());
             })
             .await;
@@ -1847,7 +1955,15 @@ impl Channel for DiscordChannel {
                             .insert(recipient.to_string(), std::time::Instant::now());
                     }
                     Err(e) => {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "draft update failed");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "draft update failed"
+                        );
                     }
                 }
 
@@ -1916,7 +2032,15 @@ impl Channel for DiscordChannel {
                 if let Some(paragraph) = paragraph {
                     let msg = SendMessage::new(&paragraph, recipient).in_thread(thread_ts.clone());
                     if let Err(e) = self.send(&msg).await {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "multi-message paragraph send failed");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "multi-message paragraph send failed"
+                        );
                     }
                     if self.multi_message_delay_ms > 0 {
                         tokio::time::sleep(std::time::Duration::from_millis(
@@ -1956,7 +2080,15 @@ impl Channel for DiscordChannel {
                 if !remaining.is_empty() {
                     let msg = SendMessage::new(&remaining, recipient).in_thread(thread_ts);
                     if let Err(e) = self.send(&msg).await {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "multi-message final flush failed");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "multi-message final flush failed"
+                        );
                     }
                 }
             }
@@ -2042,7 +2174,13 @@ impl Channel for DiscordChannel {
             {
                 Ok(()) => message_id.to_string(),
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"e": e.to_string()})), "Discord finalize_draft edit failed: ; falling back to delete+send");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"e": e.to_string()})),
+                        "Discord finalize_draft edit failed: ; falling back to delete+send"
+                    );
                     let _ = delete_discord_message(&client, &self.bot_token, recipient, message_id)
                         .await;
                     send_discord_message_json(&client, &self.bot_token, recipient, &content).await?
@@ -2068,7 +2206,12 @@ impl Channel for DiscordChannel {
         if let Err(e) =
             delete_discord_message(&client, &self.bot_token, recipient, message_id).await
         {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "cancel_draft delete failed");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "cancel_draft delete failed"
+            );
         }
 
         Ok(())

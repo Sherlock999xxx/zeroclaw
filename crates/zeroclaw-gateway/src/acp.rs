@@ -88,7 +88,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         break;
                     }
                 }
-                Err(e) => ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "ACP WebSocket received non-UTF-8 binary frame"),
+                Err(e) => ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "ACP WebSocket received non-UTF-8 binary frame"
+                ),
             },
             Ok(Message::Close(_)) => break,
             Ok(Message::Ping(_) | Message::Pong(_)) => {}
@@ -97,9 +103,19 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 if msg.contains("Connection reset without closing handshake")
                     || msg.contains("Connection closed normally")
                 {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "ACP WebSocket closed without handshake");
+                    ::zeroclaw_log::record!(
+                        DEBUG,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        "ACP WebSocket closed without handshake"
+                    );
                 } else {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "ACP WebSocket receive error");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "ACP WebSocket receive error"
+                    );
                 }
                 break;
             }
@@ -109,10 +125,20 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     drop(input_tx);
 
     if let Err(e) = server_task.await {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "ACP WebSocket server task panicked");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+            "ACP WebSocket server task panicked"
+        );
     }
     output_task.abort();
-    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "ACP WebSocket disconnected");
+    ::zeroclaw_log::record!(
+        DEBUG,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+        "ACP WebSocket disconnected"
+    );
 }
 
 fn extract_ws_token<'a>(headers: &'a HeaderMap, query_token: Option<&'a str>) -> Option<&'a str> {

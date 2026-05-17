@@ -1652,6 +1652,8 @@ mod tests {
     use super::*;
     use crate::security::{AutonomyLevel, SecurityPolicy};
     use anyhow::anyhow;
+    use std::path::Path;
+    use tokio::time::{Instant, sleep};
     use zeroclaw_config::schema::{
         DEFAULT_DELEGATE_AGENTIC_TIMEOUT_SECS, DEFAULT_DELEGATE_TIMEOUT_SECS,
     };
@@ -1678,6 +1680,35 @@ mod tests {
             },
         );
         agents
+    }
+
+    async fn wait_for_terminal_background_result(
+        workspace: &Path,
+        task_id: &str,
+    ) -> BackgroundDelegateResult {
+        let result_path = workspace
+            .join("delegate_results")
+            .join(format!("{task_id}.json"));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut last_result = None;
+
+        loop {
+            if let Ok(content) = std::fs::read_to_string(&result_path) {
+                let result: BackgroundDelegateResult = serde_json::from_str(&content).unwrap();
+                if result.status != BackgroundTaskStatus::Running {
+                    return result;
+                }
+                last_result = Some(result);
+            }
+
+            if Instant::now() >= deadline {
+                panic!(
+                    "Background task {task_id} did not finish before timeout; last result: {last_result:?}"
+                );
+            }
+
+            sleep(Duration::from_millis(50)).await;
+        }
     }
 
     #[derive(Default)]
@@ -1768,9 +1799,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "OneToolThenFinalModelProvider" }
+        fn alias(&self) -> &str {
+            "OneToolThenFinalModelProvider"
+        }
     }
-
 
     struct InfiniteToolCallModelProvider;
 
@@ -1813,9 +1845,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "InfiniteToolCallModelProvider" }
+        fn alias(&self) -> &str {
+            "InfiniteToolCallModelProvider"
+        }
     }
-
 
     struct FailingModelProvider;
 
@@ -1848,9 +1881,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "FailingModelProvider" }
+        fn alias(&self) -> &str {
+            "FailingModelProvider"
+        }
     }
-
 
     fn agentic_agent_config() -> AliasedAgentConfig {
         AliasedAgentConfig {
@@ -2554,9 +2588,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "McpToolThenFinalModelProvider" }
+        fn alias(&self) -> &str {
+            "McpToolThenFinalModelProvider"
+        }
     }
-
 
     #[tokio::test]
     async fn mcp_tools_included_in_subagent_tool_list() {
@@ -3092,9 +3127,6 @@ mod tests {
             .trim_start_matches("task_id: ")
             .trim();
 
-        // Wait for the background task to finish
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
         // Check that the result file exists
         let result_path = workspace
             .join("delegate_results")
@@ -3105,8 +3137,7 @@ mod tests {
         );
 
         // Read and parse the result
-        let content = std::fs::read_to_string(&result_path).unwrap();
-        let bg_result: BackgroundDelegateResult = serde_json::from_str(&content).unwrap();
+        let bg_result = wait_for_terminal_background_result(&workspace, task_id).await;
         assert_eq!(bg_result.task_id, task_id);
         assert_eq!(bg_result.agent, "researcher");
         // The task will have failed because ollama isn't running, but it should be persisted
@@ -3150,7 +3181,7 @@ mod tests {
             .to_string();
 
         // Wait for background task
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _ = wait_for_terminal_background_result(&workspace, &task_id).await;
 
         // Check result
         let check = tool
@@ -3189,9 +3220,16 @@ mod tests {
             .await
             .unwrap();
         assert!(result.success);
+        let task_id = result
+            .output
+            .lines()
+            .find(|l| l.starts_with("task_id:"))
+            .unwrap()
+            .trim_start_matches("task_id: ")
+            .trim();
 
         // Wait for task to complete
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _ = wait_for_terminal_background_result(&workspace, task_id).await;
 
         // List results
         let list = tool

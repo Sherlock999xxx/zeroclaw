@@ -445,9 +445,20 @@ impl ReliableModelProvider {
 impl ModelProvider for ReliableModelProvider {
     async fn warmup(&self) -> anyhow::Result<()> {
         for (name, model_provider) in &self.model_providers {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"model_provider": name})), "Warming up model_provider connection pool");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"model_provider": name})),
+                "Warming up model_provider connection pool"
+            );
             if model_provider.warmup().await.is_err() {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"model_provider": name})), "Warmup failed (non-fatal)");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"model_provider": name})),
+                    "Warmup failed (non-fatal)"
+                );
             }
         }
         Ok(())
@@ -1219,9 +1230,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "MockModelProvider" }
+        fn alias(&self) -> &str {
+            "MockModelProvider"
+        }
     }
-
 
     /// Mock that records which model was used for each call.
     struct ModelAwareMock {
@@ -1256,16 +1268,19 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "ModelAwareMock" }
+        fn alias(&self) -> &str {
+            "ModelAwareMock"
+        }
     }
-
 
     // ── Existing tests (preserved) ──
 
     #[tokio::test]
     async fn succeeds_without_retry() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "primary".into(),
                 Box::new(MockModelProvider {
                     calls: Arc::clone(&calls),
@@ -1289,7 +1304,9 @@ mod tests {
     #[tokio::test]
     async fn retries_then_recovers() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "primary".into(),
                 Box::new(MockModelProvider {
                     calls: Arc::clone(&calls),
@@ -1315,7 +1332,9 @@ mod tests {
         let primary_calls = Arc::new(AtomicUsize::new(0));
         let fallback_calls = Arc::new(AtomicUsize::new(0));
 
-        let model_provider = ReliableModelProvider::new("test", vec![
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![
                 (
                     "primary".into(),
                     Box::new(MockModelProvider {
@@ -1350,7 +1369,9 @@ mod tests {
 
     #[tokio::test]
     async fn returns_aggregated_error_when_all_providers_fail() {
-        let model_provider = ReliableModelProvider::new("test", vec![
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![
                 (
                     "p1".into(),
                     Box::new(MockModelProvider {
@@ -1470,7 +1491,9 @@ mod tests {
     #[tokio::test]
     async fn aggregated_error_marks_non_retryable_model_mismatch_with_details() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "custom".into(),
                 Box::new(MockModelProvider {
                     calls: Arc::clone(&calls),
@@ -1500,7 +1523,9 @@ mod tests {
         let primary_calls = Arc::new(AtomicUsize::new(0));
         let fallback_calls = Arc::new(AtomicUsize::new(0));
 
-        let model_provider = ReliableModelProvider::new("test", vec![
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![
                 (
                     "primary".into(),
                     Box::new(MockModelProvider {
@@ -1537,7 +1562,9 @@ mod tests {
     #[tokio::test]
     async fn chat_with_history_retries_then_recovers() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "primary".into(),
                 Box::new(MockModelProvider {
                     calls: Arc::clone(&calls),
@@ -1564,7 +1591,9 @@ mod tests {
         let primary_calls = Arc::new(AtomicUsize::new(0));
         let fallback_calls = Arc::new(AtomicUsize::new(0));
 
-        let model_provider = ReliableModelProvider::new("test", vec![
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![
                 (
                     "primary".into(),
                     Box::new(MockModelProvider {
@@ -1613,7 +1642,9 @@ mod tests {
         let mut fallbacks = HashMap::new();
         fallbacks.insert("claude-opus".to_string(), vec!["claude-sonnet".to_string()]);
 
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "anthropic".into(),
                 Box::new(mock.clone()) as Box<dyn ModelProvider>,
             )],
@@ -1650,7 +1681,9 @@ mod tests {
             vec!["model-b".to_string(), "model-c".to_string()],
         );
 
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "p1".into(),
                 Box::new(mock.clone()) as Box<dyn ModelProvider>,
             )],
@@ -1675,7 +1708,9 @@ mod tests {
     #[tokio::test]
     async fn no_model_fallbacks_behaves_like_before() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "primary".into(),
                 Box::new(MockModelProvider {
                     calls: Arc::clone(&calls),
@@ -1700,7 +1735,9 @@ mod tests {
 
     #[tokio::test]
     async fn auth_rotation_cycles_keys() {
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "p".into(),
                 Box::new(MockModelProvider {
                     calls: Arc::new(AtomicUsize::new(0)),
@@ -1924,7 +1961,9 @@ mod tests {
     #[tokio::test]
     async fn non_retryable_skips_retries_for_401() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "primary".into(),
                 Box::new(MockModelProvider {
                     calls: Arc::clone(&calls),
@@ -1949,7 +1988,9 @@ mod tests {
     #[tokio::test]
     async fn non_retryable_rate_limit_skips_retries_for_plan_errors() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "primary".into(),
                 Box::new(MockModelProvider {
                     calls: Arc::clone(&calls),
@@ -2027,9 +2068,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "NativeToolMock" }
+        fn alias(&self) -> &str {
+            "NativeToolMock"
+        }
     }
-
 
     #[tokio::test]
     async fn chat_delegates_to_inner_provider() {
@@ -2040,7 +2082,9 @@ mod tests {
             arguments: r#"{"command":"date"}"#.to_string(),
             extra_content: None,
         };
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "primary".into(),
                 Box::new(NativeToolMock {
                     calls: Arc::clone(&calls),
@@ -2079,7 +2123,9 @@ mod tests {
             arguments: r#"{"command":"date"}"#.to_string(),
             extra_content: None,
         };
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "primary".into(),
                 Box::new(NativeToolMock {
                     calls: Arc::clone(&calls),
@@ -2113,7 +2159,9 @@ mod tests {
     #[tokio::test]
     async fn chat_preserves_native_tools_support() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "primary".into(),
                 Box::new(NativeToolMock {
                     calls: Arc::clone(&calls),
@@ -2139,7 +2187,9 @@ mod tests {
     /// matching behavior of `returns_aggregated_error_when_all_providers_fail`.
     #[tokio::test]
     async fn chat_returns_aggregated_error_when_all_providers_fail() {
-        let model_provider = ReliableModelProvider::new("test", vec![
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![
                 (
                     "p1".into(),
                     Box::new(NativeToolMock {
@@ -2235,9 +2285,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "NativeModelAwareMock" }
+        fn alias(&self) -> &str {
+            "NativeModelAwareMock"
+        }
     }
-
 
     // Arc<NativeModelAwareMock> ModelProvider impl provided by blanket impl in zeroclaw-types.
 
@@ -2256,7 +2307,9 @@ mod tests {
         let mut fallbacks = HashMap::new();
         fallbacks.insert("claude-opus".to_string(), vec!["claude-sonnet".to_string()]);
 
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "anthropic".into(),
                 Box::new(mock.clone()) as Box<dyn ModelProvider>,
             )],
@@ -2289,7 +2342,9 @@ mod tests {
         let primary_calls = Arc::new(AtomicUsize::new(0));
         let fallback_calls = Arc::new(AtomicUsize::new(0));
 
-        let model_provider = ReliableModelProvider::new("test", vec![
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![
                 (
                     "primary".into(),
                     Box::new(NativeToolMock {
@@ -2436,9 +2491,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "ContextOverflowMock" }
+        fn alias(&self) -> &str {
+            "ContextOverflowMock"
+        }
     }
-
 
     #[tokio::test]
     async fn chat_with_history_truncates_on_context_overflow() {
@@ -2449,7 +2505,9 @@ mod tests {
             message_counts: parking_lot::Mutex::new(Vec::new()),
         };
 
-        let model_provider = ReliableModelProvider::new("test", vec![("local".into(), Box::new(mock) as Box<dyn ModelProvider>)],
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![("local".into(), Box::new(mock) as Box<dyn ModelProvider>)],
             3,
             1,
         );
@@ -2481,7 +2539,9 @@ mod tests {
             message_counts: parking_lot::Mutex::new(Vec::new()),
         };
 
-        let model_provider = ReliableModelProvider::new("test", vec![("local".into(), Box::new(mock) as Box<dyn ModelProvider>)],
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![("local".into(), Box::new(mock) as Box<dyn ModelProvider>)],
             3,
             1,
         );
@@ -2622,9 +2682,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "StreamingToolEventMock" }
+        fn alias(&self) -> &str {
+            "StreamingToolEventMock"
+        }
     }
-
 
     // Arc<StreamingToolEventMock> ModelProvider impl provided by blanket impl in zeroclaw-types.
 
@@ -2632,7 +2693,9 @@ mod tests {
     async fn stream_chat_prefers_provider_with_tool_event_support() {
         let primary = Arc::new(StreamingToolEventMock::new(false));
         let fallback = Arc::new(StreamingToolEventMock::new(true));
-        let model_provider = ReliableModelProvider::new("test", vec![
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![
                 (
                     "primary".into(),
                     Box::new(Arc::clone(&primary)) as Box<dyn ModelProvider>,
@@ -2683,7 +2746,9 @@ mod tests {
     #[tokio::test]
     async fn stream_chat_errors_when_no_provider_supports_tool_events() {
         let primary = Arc::new(StreamingToolEventMock::new(false));
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "primary".into(),
                 Box::new(Arc::clone(&primary)) as Box<dyn ModelProvider>,
             )],
@@ -2767,14 +2832,17 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "StreamingHistoryMock" }
+        fn alias(&self) -> &str {
+            "StreamingHistoryMock"
+        }
     }
-
 
     #[tokio::test]
     async fn stream_chat_with_history_delegates_to_streaming_provider() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "primary".into(),
                 Box::new(StreamingHistoryMock {
                     stream_calls: Arc::clone(&calls),
@@ -2814,7 +2882,9 @@ mod tests {
         let non_streaming_calls = Arc::new(AtomicUsize::new(0));
         let streaming_calls = Arc::new(AtomicUsize::new(0));
 
-        let model_provider = ReliableModelProvider::new("test", vec![
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![
                 (
                     "non-streaming".into(),
                     Box::new(StreamingHistoryMock {
@@ -2858,7 +2928,9 @@ mod tests {
 
     #[tokio::test]
     async fn stream_chat_with_history_errors_when_no_provider_supports_streaming() {
-        let model_provider = ReliableModelProvider::new("test", vec![(
+        let model_provider = ReliableModelProvider::new(
+            "test",
+            vec![(
                 "non-streaming".into(),
                 Box::new(StreamingHistoryMock {
                     stream_calls: Arc::new(AtomicUsize::new(0)),
@@ -2890,7 +2962,9 @@ mod tests {
     #[tokio::test]
     async fn fallback_records_provider_fallback_info() {
         scope_provider_fallback(async {
-            let model_provider = ReliableModelProvider::new("test", vec![
+            let model_provider = ReliableModelProvider::new(
+                "test",
+                vec![
                     (
                         "broken".into(),
                         Box::new(MockModelProvider {
@@ -2964,11 +3038,14 @@ mod tests {
                     ),
                 )
             }
-            fn alias(&self) -> &str { "VisionMock" }
+            fn alias(&self) -> &str {
+                "VisionMock"
+            }
         }
 
-
-        let provider = ReliableModelProvider::new("test", vec![
+        let provider = ReliableModelProvider::new(
+            "test",
+            vec![
                 (
                     "primary".into(),
                     Box::new(VisionMock(false)) as Box<dyn ModelProvider>,
@@ -2987,7 +3064,9 @@ mod tests {
             "ReliableModelProvider with non-vision primary must report supports_vision()=false even when a fallback supports vision"
         );
 
-        let provider = ReliableModelProvider::new("test", vec![
+        let provider = ReliableModelProvider::new(
+            "test",
+            vec![
                 (
                     "primary".into(),
                     Box::new(VisionMock(true)) as Box<dyn ModelProvider>,

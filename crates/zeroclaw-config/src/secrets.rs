@@ -106,9 +106,14 @@ impl SecretStore {
             Ok((plaintext, None))
         } else if let Some(hex_str) = value.strip_prefix("enc:") {
             // Legacy XOR cipher — decrypt and re-encrypt with ChaCha20-Poly1305
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Decrypting legacy XOR-encrypted secret (enc: prefix). \
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "Decrypting legacy XOR-encrypted secret (enc: prefix). \
                  This format is insecure and will be removed in a future release. \
-                 The secret will be automatically migrated to enc2: (ChaCha20-Poly1305).");
+                 The secret will be automatically migrated to enc2: (ChaCha20-Poly1305)."
+            );
             let plaintext = self.decrypt_legacy_xor(hex_str)?;
             let migrated = self.encrypt(&plaintext)?;
             Ok((plaintext, Some(migrated)))
@@ -204,8 +209,13 @@ impl SecretStore {
                     .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                     .unwrap_or_else(|| std::env::var("USERNAME").unwrap_or_default());
                 let Some(grant_arg) = build_windows_icacls_grant_arg(&username) else {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "USERNAME environment variable is empty; \
-                         cannot restrict key file permissions via icacls");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        "USERNAME environment variable is empty; \
+                         cannot restrict key file permissions via icacls"
+                    );
                     return Ok(key);
                 };
 
@@ -218,13 +228,40 @@ impl SecretStore {
                     .output()
                 {
                     Ok(o) if !o.status.success() => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Failed to take ownership of key file via takeown (exit code {:?})", o.status.code()));
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            &format!(
+                                "Failed to take ownership of key file via takeown (exit code {:?})",
+                                o.status.code()
+                            )
+                        );
                     }
                     Err(e) => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Could not take ownership of key file");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "Could not take ownership of key file"
+                        );
                     }
                     _ => {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Key file ownership set to current user via takeown");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            ),
+                            "Key file ownership set to current user via takeown"
+                        );
                     }
                 }
 
@@ -235,13 +272,40 @@ impl SecretStore {
                     .output()
                 {
                     Ok(o) if !o.status.success() => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Failed to set key file permissions via icacls (exit code {:?})", o.status.code()));
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            &format!(
+                                "Failed to set key file permissions via icacls (exit code {:?})",
+                                o.status.code()
+                            )
+                        );
                     }
                     Err(e) => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Could not set key file permissions");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                            "Could not set key file permissions"
+                        );
                     }
                     _ => {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Key file permissions restricted via icacls");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            ),
+                            "Key file permissions restricted via icacls"
+                        );
                     }
                 }
             }

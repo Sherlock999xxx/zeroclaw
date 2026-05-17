@@ -809,7 +809,10 @@ impl AuthProviderFlow for OpenaiCodexFlow {
                 import_path,
             )
             .await?;
-            println!("Imported auth profile from {}", import_path.display().to_string());
+            println!(
+                "Imported auth profile from {}",
+                import_path.display().to_string()
+            );
             println!("Active profile for openai-codex: {profile}");
             return Ok(());
         }

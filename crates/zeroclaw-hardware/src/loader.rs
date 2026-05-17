@@ -44,7 +44,13 @@ pub fn scan_plugin_dir() -> Vec<LoadedPlugin> {
     let tools_dir = match plugin_tools_dir() {
         Ok(p) => p,
         Err(e) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "cannot resolve plugin tools dir");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "cannot resolve plugin tools dir"
+            );
             return Vec::new();
         }
     };
@@ -52,10 +58,26 @@ pub fn scan_plugin_dir() -> Vec<LoadedPlugin> {
     // Create the directory tree if it is missing.
     if !tools_dir.exists() {
         if let Err(e) = fs::create_dir_all(&tools_dir) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("[registry] could not create {:?}: {}", tools_dir.display().to_string(), e));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "[registry] could not create {:?}: {}",
+                    tools_dir.display().to_string(),
+                    e
+                )
+            );
             return Vec::new();
         }
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("[registry] created plugin directory: {}", tools_dir.display().to_string()));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "[registry] created plugin directory: {}",
+                tools_dir.display().to_string()
+            )
+        );
     }
 
     println!(
@@ -77,7 +99,13 @@ pub fn scan_plugin_dir() -> Vec<LoadedPlugin> {
     let entries = match fs::read_dir(&tools_dir) {
         Ok(e) => e,
         Err(e) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "cannot read tools dir");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "cannot read tools dir"
+            );
             return Vec::new();
         }
     };
@@ -86,7 +114,13 @@ pub fn scan_plugin_dir() -> Vec<LoadedPlugin> {
         let entry = match entry {
             Ok(e) => e,
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "skipping unreadable dir entry");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "skipping unreadable dir entry"
+                );
                 continue;
             }
         };
@@ -101,14 +135,30 @@ pub fn scan_plugin_dir() -> Vec<LoadedPlugin> {
         let manifest_path = plugin_dir.join("tool.toml");
 
         if !manifest_path.exists() {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("[registry] no tool.toml in {:?} — skipping", plugin_dir.file_name().unwrap_or_default()));
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!(
+                    "[registry] no tool.toml in {:?} — skipping",
+                    plugin_dir.file_name().unwrap_or_default()
+                )
+            );
             continue;
         }
 
         match load_one_plugin(&plugin_dir, &manifest_path) {
             Ok(plugin) => plugins.push(plugin),
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("[registry] skipping plugin in {:?}: {}", plugin_dir.file_name().unwrap_or_default(), e));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "[registry] skipping plugin in {:?}: {}",
+                        plugin_dir.file_name().unwrap_or_default(),
+                        e
+                    )
+                );
             }
         }
     }

@@ -741,7 +741,11 @@ impl GeminiModelProvider {
                     guard.client_secret.as_deref(),
                 )
                 .await?;
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Gemini CLI OAuth token refreshed successfully (runtime)");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "Gemini CLI OAuth token refreshed successfully (runtime)"
+                );
                 guard.access_token = refreshed.access_token;
                 guard.expiry_millis = refreshed.expiry_millis;
             } else {
@@ -786,7 +790,15 @@ impl GeminiModelProvider {
                     let mut cached_project = self.oauth_project.lock().await;
                     *cached_project = None;
                 }
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Gemini OAuth: rotated credential to {}", self.oauth_cred_paths[next].display().to_string()));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!(
+                        "Gemini OAuth: rotated credential to {}",
+                        self.oauth_cred_paths[next].display().to_string()
+                    )
+                );
                 return true;
             }
         }
@@ -877,7 +889,13 @@ impl GeminiModelProvider {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             if let Some(seed) = project_seed {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"status": status.to_string()})), "loadCodeAssist failed (HTTP ); using oauth_project seed fallback");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"status": status.to_string()})),
+                    "loadCodeAssist failed (HTTP ); using oauth_project seed fallback"
+                );
                 return Ok(seed);
             }
             anyhow::bail!("loadCodeAssist failed (HTTP {status}): {body}");
@@ -1166,7 +1184,12 @@ impl GeminiModelProvider {
             } else if auth.is_oauth()
                 && Self::should_retry_oauth_without_generation_config(status, &error_text)
             {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Gemini OAuth internal endpoint rejected generationConfig; retrying without generationConfig");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "Gemini OAuth internal endpoint rejected generationConfig; retrying without generationConfig"
+                );
                 response = self
                     .build_generate_content_request(
                         auth,
@@ -1190,7 +1213,12 @@ impl GeminiModelProvider {
             if auth.is_oauth()
                 && Self::should_retry_oauth_without_generation_config(status, &error_text)
             {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Gemini OAuth internal endpoint rejected generationConfig; retrying without generationConfig");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "Gemini OAuth internal endpoint rejected generationConfig; retrying without generationConfig"
+                );
                 response = self
                     .build_generate_content_request(
                         auth,

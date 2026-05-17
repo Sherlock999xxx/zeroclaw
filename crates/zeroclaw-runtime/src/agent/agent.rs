@@ -680,7 +680,14 @@ impl Agent {
         // path also has access to MCP tools.
         let mut activated_tools: Option<Arc<std::sync::Mutex<tools::ActivatedToolSet>>> = None;
         if initialize_mcp && config.mcp.enabled && !config.mcp.servers.is_empty() {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Initializing MCP client — {} server(s) configured", config.mcp.servers.len()));
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!(
+                    "Initializing MCP client — {} server(s) configured",
+                    config.mcp.servers.len()
+                )
+            );
             match tools::McpRegistry::connect_all(&config.mcp.servers).await {
                 Ok(registry) => {
                     let registry = std::sync::Arc::new(registry);
@@ -689,7 +696,18 @@ impl Agent {
                             std::sync::Arc::clone(&registry),
                         )
                         .await;
-                        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("MCP deferred: {} tool stub(s) from {} server(s)", deferred_set.len(), registry.server_count()));
+                        ::zeroclaw_log::record!(
+                            INFO,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            ),
+                            &format!(
+                                "MCP deferred: {} tool stub(s) from {} server(s)",
+                                deferred_set.len(),
+                                registry.server_count()
+                            )
+                        );
                         let activated =
                             Arc::new(std::sync::Mutex::new(tools::ActivatedToolSet::new()));
                         activated_tools = Some(Arc::clone(&activated));
@@ -715,11 +733,28 @@ impl Agent {
                                 registered += 1;
                             }
                         }
-                        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("MCP: {} tool(s) registered from {} server(s)", registered, registry.server_count()));
+                        ::zeroclaw_log::record!(
+                            INFO,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            ),
+                            &format!(
+                                "MCP: {} tool(s) registered from {} server(s)",
+                                registered,
+                                registry.server_count()
+                            )
+                        );
                     }
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"error": e.to_string()})), "MCP registry failed to initialize");
+                    ::zeroclaw_log::record!(
+                        ERROR,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "MCP registry failed to initialize"
+                    );
                 }
             }
         }
@@ -1031,9 +1066,18 @@ impl Agent {
                         ApprovalResponse::No
                     }
                     None => {
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"tool": tool_name})), "no approval channel handled this request — denying. \
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"tool": tool_name})),
+                            "no approval channel handled this request — denying. \
                              Configure a back-channel (ACP or WS) that implements \
-                             request_approval to enable interactive approval.");
+                             request_approval to enable interactive approval."
+                        );
                         ApprovalResponse::No
                     }
                 };
@@ -1900,9 +1944,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "MockModelProvider" }
+        fn alias(&self) -> &str {
+            "MockModelProvider"
+        }
     }
-
 
     struct ModelCaptureModelProvider {
         responses: Mutex<Vec<zeroclaw_providers::ChatResponse>>,
@@ -1948,9 +1993,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "ModelCaptureModelProvider" }
+        fn alias(&self) -> &str {
+            "ModelCaptureModelProvider"
+        }
     }
-
 
     struct MultimodalCaptureProvider {
         seen_user_messages: Arc<Mutex<Vec<String>>>,
@@ -2033,9 +2079,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "MultimodalCaptureProvider" }
+        fn alias(&self) -> &str {
+            "MultimodalCaptureProvider"
+        }
     }
-
 
     struct MockTool;
 
@@ -3101,9 +3148,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "StreamToolCaptureModelProvider" }
+        fn alias(&self) -> &str {
+            "StreamToolCaptureModelProvider"
+        }
     }
-
 
     #[tokio::test]
     async fn turn_streamed_passes_tool_specs_to_provider() {
@@ -3290,9 +3338,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "PreExecutedToolModelProvider" }
+        fn alias(&self) -> &str {
+            "PreExecutedToolModelProvider"
+        }
     }
-
 
     #[tokio::test]
     async fn pre_executed_tool_results_keep_ids_when_calls_overlap() {
@@ -3386,7 +3435,10 @@ mod tests {
             .expect("agent builder should succeed with valid config");
 
         agent
-            .turn(&format!("inspect [IMAGE:{}]", image_path.display().to_string()))
+            .turn(&format!(
+                "inspect [IMAGE:{}]",
+                image_path.display().to_string()
+            ))
             .await
             .expect("turn should succeed");
 
@@ -3713,9 +3765,10 @@ mod tests {
                 ),
             )
         }
-        fn alias(&self) -> &str { "NarrationStreamModelProvider" }
+        fn alias(&self) -> &str {
+            "NarrationStreamModelProvider"
+        }
     }
-
 
     #[tokio::test]
     async fn streaming_narration_with_tool_calls_produces_no_consecutive_assistant_entries() {

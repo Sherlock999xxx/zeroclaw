@@ -148,7 +148,12 @@ impl ClawdTalkChannel {
 
         if !response.status().is_success() {
             let error = response.text().await?;
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Failed to hangup call: {}", error));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!("Failed to hangup call: {}", error)
+            );
         }
 
         Ok(())
@@ -290,7 +295,11 @@ impl Channel for ClawdTalkChannel {
         // ClawdTalk listens for incoming calls via webhooks
         // This would typically be handled by the gateway module
         // For now, we signal that this channel is ready and wait indefinitely
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "channel listening for incoming calls");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "channel listening for incoming calls"
+        );
 
         // Keep the listener alive
         loop {
@@ -317,7 +326,13 @@ impl Channel for ClawdTalkChannel {
         match response {
             Ok(resp) => resp.status().is_success(),
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "health check failed");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "health check failed"
+                );
                 false
             }
         }

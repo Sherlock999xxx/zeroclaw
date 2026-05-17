@@ -113,7 +113,11 @@ impl Tool for PdfReadTool {
             });
         }
 
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Reading PDF: {}", resolved_path.display()));
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!("Reading PDF: {}", resolved_path.display())
+        );
 
         match tokio::fs::metadata(&resolved_path).await {
             Ok(meta) => {

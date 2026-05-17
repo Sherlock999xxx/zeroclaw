@@ -27,8 +27,9 @@ impl Integrator {
     pub fn integrate(&self, candidate: &ScoutResult) -> Result<PathBuf> {
         let safe_name = sanitize_path_component(&candidate.name)?;
         let skill_dir = self.output_dir.join(&safe_name);
-        fs::create_dir_all(&skill_dir)
-            .with_context(|| format!("Failed to create dir: {}", skill_dir.display().to_string()))?;
+        fs::create_dir_all(&skill_dir).with_context(|| {
+            format!("Failed to create dir: {}", skill_dir.display().to_string())
+        })?;
 
         let toml_path = skill_dir.join("SKILL.toml");
         let md_path = skill_dir.join("SKILL.md");

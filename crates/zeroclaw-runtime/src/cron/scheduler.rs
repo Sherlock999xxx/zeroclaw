@@ -1,4 +1,3 @@
-use zeroclaw_log::Instrument;
 use crate::cron::store::{RunCompletionAction, persist_run_completion_state, persist_run_result};
 use crate::cron::{
     CronJob, DeliveryConfig, JobType, Schedule, SessionTarget, all_overdue_jobs, due_jobs,
@@ -14,6 +13,7 @@ use tokio::process::Command;
 use tokio::time::{self, Duration};
 use zeroclaw_config::schema::Config;
 use zeroclaw_config::schema::{CronJobDecl, CronScheduleDecl};
+use zeroclaw_log::Instrument;
 use zeroclaw_memory::{MEMORY_CONTEXT_CLOSE, MEMORY_CONTEXT_OPEN};
 
 const MIN_POLL_SECONDS: u64 = 5;
@@ -50,17 +50,33 @@ pub async fn run(config: Config, event_tx: EventBroadcast) -> Result<()> {
             session_target: None,
             delivery: None,
         };
-        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"schedule": schedule_cron})), "Synthesizing builtin backup cron job from config.backup.schedule_cron");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({"schedule": schedule_cron})),
+            "Synthesizing builtin backup cron job from config.backup.schedule_cron"
+        );
         jobs_with_builtin.insert("__builtin_backup".to_string(), backup_job);
     }
 
     match sync_declarative_jobs(&config, &jobs_with_builtin) {
         Ok(()) => {
             if !jobs_with_builtin.is_empty() {
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"count": jobs_with_builtin.len()})), "Synced declarative cron jobs from config");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"count": jobs_with_builtin.len()})),
+                    "Synced declarative cron jobs from config"
+                );
             }
         }
-        Err(e) => ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Failed to sync declarative cron jobs"),
+        Err(e) => ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+            "Failed to sync declarative cron jobs"
+        ),
     }
 
     // ── Startup catch-up: run ALL overdue jobs before entering the
@@ -72,7 +88,11 @@ pub async fn run(config: Config, event_tx: EventBroadcast) -> Result<()> {
     if config.scheduler.catch_up_on_startup {
         catch_up_overdue_jobs(&config, &event_tx).await;
     } else {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Scheduler startup: catch-up disabled by config");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "Scheduler startup: catch-up disabled by config"
+        );
     }
 
     loop {
@@ -84,7 +104,13 @@ pub async fn run(config: Config, event_tx: EventBroadcast) -> Result<()> {
             Ok(jobs) => jobs,
             Err(e) => {
                 crate::health::mark_component_error(SCHEDULER_COMPONENT, e.to_string());
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Scheduler query failed");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "Scheduler query failed"
+                );
                 continue;
             }
         };
@@ -124,21 +150,40 @@ async fn catch_up_overdue_jobs(config: &Config, event_tx: &EventBroadcast) {
     let jobs = match all_overdue_jobs(config, now) {
         Ok(jobs) => jobs,
         Err(e) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Startup catch-up query failed");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "Startup catch-up query failed"
+            );
             return;
         }
     };
 
     if jobs.is_empty() {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Scheduler startup: no overdue jobs to catch up");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "Scheduler startup: no overdue jobs to catch up"
+        );
         return;
     }
 
-    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"count": jobs.len()})), "Scheduler startup: catching up overdue jobs");
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+            .with_attrs(::serde_json::json!({"count": jobs.len()})),
+        "Scheduler startup: catching up overdue jobs"
+    );
 
     process_due_jobs(config, jobs, SCHEDULER_COMPONENT, event_tx).await;
 
-    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Scheduler startup: catch-up complete");
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+        "Scheduler startup: catch-up complete"
+    );
 }
 
 pub async fn execute_job_now(config: &Config, job: &CronJob) -> (bool, String) {
@@ -241,7 +286,13 @@ async fn process_due_jobs(
 
     while let Some((job_id, success, output)) = in_flight.next().await {
         if !success {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"job_id": job_id, "output": output})), "Scheduler job '' failed: ");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"job_id": job_id, "output": output})),
+                "Scheduler job '' failed: "
+            );
         }
         // Broadcast cron result to dashboard/SSE clients.
         if let Some(tx) = event_tx {
@@ -519,7 +570,13 @@ async fn persist_job_result(
         duration_ms,
         action,
     ) {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"e": e.to_string()})), "Failed to persist scheduler run result: ");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"e": e.to_string()})),
+            "Failed to persist scheduler run result: "
+        );
 
         if action == RunCompletionAction::Delete {
             // Best-effort fallback for the legacy behavior: a successful
@@ -534,7 +591,13 @@ async fn persist_job_result(
                 Some(&persisted_output),
                 RunCompletionAction::Disable,
             ) {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"disable_err": disable_err.to_string()})), "Failed to disable one-shot cron job after history persistence failure: ");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"disable_err": disable_err.to_string()})),
+                    "Failed to disable one-shot cron job after history persistence failure: "
+                );
             }
         } else {
             // For recurring jobs and non-delete one-shots, keep the scheduler
@@ -547,7 +610,13 @@ async fn persist_job_result(
                 Some(&persisted_output),
                 action,
             ) {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"state_err": state_err.to_string()})), "Failed to update cron job state after history persistence failure: ");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"state_err": state_err.to_string()})),
+                    "Failed to update cron job state after history persistence failure: "
+                );
             }
         }
     }
@@ -578,7 +647,15 @@ fn is_high_frequency_agent_job(job: &CronJob) -> bool {
 
 fn warn_if_high_frequency_agent_job(job: &CronJob) {
     if is_high_frequency_agent_job(job) {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Cron agent job '{}' is scheduled more frequently than every 5 minutes", job.id));
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            &format!(
+                "Cron agent job '{}' is scheduled more frequently than every 5 minutes",
+                job.id
+            )
+        );
     }
 }
 
@@ -659,8 +736,14 @@ pub async fn deliver_announcement(
         // records the job execution itself as successful. Operators that
         // actively rely on delivery wire a handler at startup; absence is a
         // configuration signal, not a delivery error.
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"channel": channel, "target": target})), "Cron delivery skipped: no delivery handler registered \
-             (register_delivery_fn was not called by the binary)");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"channel": channel, "target": target})),
+            "Cron delivery skipped: no delivery handler registered \
+             (register_delivery_fn was not called by the binary)"
+        );
         Ok(())
     }
 }

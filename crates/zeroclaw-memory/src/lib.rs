@@ -245,7 +245,13 @@ fn resolve_embedding_config(
         .iter()
         .find(|route| route.hint.trim() == hint)
     else {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"hint": hint})), "Unknown embedding route hint; falling back to [memory] embedding settings");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"hint": hint})),
+            "Unknown embedding route hint; falling back to [memory] embedding settings"
+        );
         return fallback;
     };
 
@@ -253,7 +259,13 @@ fn resolve_embedding_config(
     let model = route.model.trim();
     let dimensions = route.dimensions.unwrap_or(config.embedding_dimensions);
     if model_provider.is_empty() || model.is_empty() || dimensions == 0 {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"hint": hint})), "Invalid embedding route configuration; falling back to [memory] embedding settings");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"hint": hint})),
+            "Invalid embedding route configuration; falling back to [memory] embedding settings"
+        );
         return fallback;
     }
 
@@ -300,7 +312,13 @@ pub fn create_memory_with_storage_and_routes(
 
     // Best-effort memory hygiene/retention pass (throttled by state file).
     if let Err(e) = hygiene::run_if_due(config, workspace_dir) {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "memory hygiene skipped");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+            "memory hygiene skipped"
+        );
     }
 
     // If snapshot_on_hygiene is enabled, export core memories during hygiene.
@@ -312,7 +330,13 @@ pub fn create_memory_with_storage_and_routes(
         )
         && let Err(e) = snapshot::export_snapshot(workspace_dir)
     {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "memory snapshot skipped");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+            "memory snapshot skipped"
+        );
     }
 
     // Auto-hydration: if brain.db is missing but MEMORY_SNAPSHOT.md exists,
@@ -324,15 +348,30 @@ pub fn create_memory_with_storage_and_routes(
         )
         && snapshot::should_hydrate(workspace_dir)
     {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "cold boot detected; hydrating from MEMORY_SNAPSHOT.md");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "cold boot detected; hydrating from MEMORY_SNAPSHOT.md"
+        );
         match snapshot::hydrate_from_snapshot(workspace_dir) {
             Ok(count) => {
                 if count > 0 {
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"count": count})), "hydrated core memories from snapshot");
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(::serde_json::json!({"count": count})),
+                        "hydrated core memories from snapshot"
+                    );
                 }
             }
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "memory hydration failed");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "memory hydration failed"
+                );
             }
         }
     }
@@ -394,7 +433,14 @@ pub fn create_memory_with_storage_and_routes(
                 &resolved_embedding.model,
                 resolved_embedding.dimensions,
             ));
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("📦 Qdrant memory backend configured (url: {}, collection: {})", url, collection));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "📦 Qdrant memory backend configured (url: {}, collection: {})",
+                url, collection
+            )
+        );
         return Ok(Box::new(QdrantMemory::new_lazy(
             "qdrant",
             &url,
@@ -541,11 +587,24 @@ pub fn create_response_cache(config: &MemoryConfig, workspace_dir: &Path) -> Opt
         config.response_cache_max_entries,
     ) {
         Ok(cache) => {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("💾 Response cache enabled (TTL: {}min, max: {} entries)", config.response_cache_ttl_minutes, config.response_cache_max_entries));
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!(
+                    "💾 Response cache enabled (TTL: {}min, max: {} entries)",
+                    config.response_cache_ttl_minutes, config.response_cache_max_entries
+                )
+            );
             Some(cache)
         }
         Err(e) => {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "Response cache disabled due to error");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "Response cache disabled due to error"
+            );
             None
         }
     }

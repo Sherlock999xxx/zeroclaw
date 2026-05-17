@@ -938,7 +938,8 @@ mod tests {
 
     #[test]
     fn capabilities_report_vision_support() {
-        let model_provider = OpenRouterModelProvider::new("test", Some("openrouter-test-credential"), None);
+        let model_provider =
+            OpenRouterModelProvider::new("test", Some("openrouter-test-credential"), None);
         let caps = <OpenRouterModelProvider as ModelProvider>::capabilities(&model_provider);
         assert!(caps.native_tool_calling);
         assert!(caps.vision);
@@ -946,13 +947,15 @@ mod tests {
 
     #[test]
     fn supports_streaming_returns_true() {
-        let model_provider = OpenRouterModelProvider::new("test", Some("openrouter-test-credential"), None);
+        let model_provider =
+            OpenRouterModelProvider::new("test", Some("openrouter-test-credential"), None);
         assert!(model_provider.supports_streaming());
     }
 
     #[test]
     fn supports_streaming_tool_events_returns_true() {
-        let model_provider = OpenRouterModelProvider::new("test", Some("openrouter-test-credential"), None);
+        let model_provider =
+            OpenRouterModelProvider::new("test", Some("openrouter-test-credential"), None);
         assert!(model_provider.supports_streaming_tool_events());
     }
 
@@ -1058,7 +1061,8 @@ mod tests {
 
     #[test]
     fn creates_with_key() {
-        let model_provider = OpenRouterModelProvider::new("test", Some("openrouter-test-credential"), None);
+        let model_provider =
+            OpenRouterModelProvider::new("test", Some("openrouter-test-credential"), None);
         assert_eq!(
             model_provider.credential.as_deref(),
             Some("openrouter-test-credential")
@@ -1743,7 +1747,8 @@ mod tests {
 
     #[test]
     fn with_timeout_secs_overrides_default() {
-        let model_provider = OpenRouterModelProvider::new("test", Some("key"), None).with_timeout_secs(300);
+        let model_provider =
+            OpenRouterModelProvider::new("test", Some("key"), None).with_timeout_secs(300);
         assert_eq!(model_provider.timeout_secs, 300);
     }
 
@@ -1837,8 +1842,8 @@ mod tests {
 
     #[test]
     fn extra_body_empty_object_produces_unchanged_request() {
-        let model_provider =
-            OpenRouterModelProvider::new("test", Some("key"), None).with_extra_body(serde_json::json!({}));
+        let model_provider = OpenRouterModelProvider::new("test", Some("key"), None)
+            .with_extra_body(serde_json::json!({}));
         let request = ChatRequest {
             model: "test-model".into(),
             messages: vec![],

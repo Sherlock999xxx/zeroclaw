@@ -109,9 +109,10 @@ impl ::zeroclaw_api::attribution::Attributable for ScriptedModelProvider {
             ),
         )
     }
-    fn alias(&self) -> &str { "ScriptedModelProvider" }
+    fn alias(&self) -> &str {
+        "ScriptedModelProvider"
+    }
 }
-
 
 /// A mock model_provider that always returns an error.
 struct FailingModelProvider;
@@ -145,9 +146,10 @@ impl ::zeroclaw_api::attribution::Attributable for FailingModelProvider {
             ),
         )
     }
-    fn alias(&self) -> &str { "FailingModelProvider" }
+    fn alias(&self) -> &str {
+        "FailingModelProvider"
+    }
 }
-
 
 /// A simple echo tool that returns its arguments as output.
 struct EchoTool;
@@ -334,9 +336,10 @@ impl ::zeroclaw_api::attribution::Attributable for ToolSpecCaptureModelProvider 
             ),
         )
     }
-    fn alias(&self) -> &str { "ToolSpecCaptureModelProvider" }
+    fn alias(&self) -> &str {
+        "ToolSpecCaptureModelProvider"
+    }
 }
-
 
 fn make_memory() -> Arc<dyn Memory> {
     let cfg = MemoryConfig {

@@ -193,7 +193,12 @@ impl QdrantMemory {
         let dims = self.embedder.dimensions();
         if dims == 0 {
             // Noop embedder — skip vector collection setup
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Qdrant memory using noop embedder (0 dimensions); vector search disabled");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "Qdrant memory using noop embedder (0 dimensions); vector search disabled"
+            );
             return Ok(());
         }
 
@@ -248,7 +253,14 @@ impl QdrantMemory {
             anyhow::bail!("Qdrant collection creation failed ({status}): {text}");
         }
 
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Created Qdrant collection '{}' with {} dimensions", self.collection, dims));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "Created Qdrant collection '{}' with {} dimensions",
+                self.collection, dims
+            )
+        );
 
         Ok(())
     }
@@ -344,7 +356,14 @@ impl QdrantMemory {
         }
 
         if rewritten > 0 {
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"rewritten": rewritten, "collection": self.collection})), "Normalized session_id payload values in Qdrant collection to sanitized form");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(
+                        ::serde_json::json!({"rewritten": rewritten, "collection": self.collection})
+                    ),
+                "Normalized session_id payload values in Qdrant collection to sanitized form"
+            );
         }
 
         Ok(())
@@ -943,9 +962,7 @@ impl Memory for QdrantMemory {
 
 impl ::zeroclaw_api::attribution::Attributable for QdrantMemory {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Memory(
-            ::zeroclaw_api::attribution::MemoryKind::Qdrant,
-        )
+        ::zeroclaw_api::attribution::Role::Memory(::zeroclaw_api::attribution::MemoryKind::Qdrant)
     }
     fn alias(&self) -> &str {
         &self.alias

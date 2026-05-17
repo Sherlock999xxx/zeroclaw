@@ -25,7 +25,13 @@ impl std::str::FromStr for ScoutSource {
             "clawhub" => Self::ClawHub,
             "huggingface" | "hf" => Self::HuggingFace,
             _ => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"source": s})), "Unknown scout source, defaulting to GitHub");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"source": s})),
+                    "Unknown scout source, defaulting to GitHub"
+                );
                 Self::GitHub
             }
         })
@@ -165,7 +171,12 @@ impl Scout for GitHubScout {
                 "https://api.github.com/search/repositories?q={}&sort=stars&order=desc&per_page=30",
                 urlencoding(query)
             );
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"query": query.as_str()})), "Searching GitHub");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"query": query.as_str()})),
+                "Searching GitHub"
+            );
 
             let resp = match self.client.get(&url).send().await {
                 Ok(r) => r,
@@ -189,7 +200,14 @@ impl Scout for GitHubScout {
             };
 
             let mut items = Self::parse_items(&body);
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"count": items.len(), "query": query.as_str()})), "Parsed items");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(
+                        ::serde_json::json!({"count": items.len(), "query": query.as_str()})
+                    ),
+                "Parsed items"
+            );
             all.append(&mut items);
         }
 

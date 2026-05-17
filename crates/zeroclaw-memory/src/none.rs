@@ -20,9 +20,7 @@ impl NoneMemory {
 
 impl ::zeroclaw_api::attribution::Attributable for NoneMemory {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Memory(
-            ::zeroclaw_api::attribution::MemoryKind::None,
-        )
+        ::zeroclaw_api::attribution::Role::Memory(::zeroclaw_api::attribution::MemoryKind::None)
     }
     fn alias(&self) -> &str {
         &self.alias

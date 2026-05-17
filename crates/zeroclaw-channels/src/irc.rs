@@ -409,7 +409,14 @@ impl Channel for IrcChannel {
 
     async fn listen(&self, tx: mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
         let mut current_nick = self.nickname.clone();
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("IRC channel connecting to {}:{} as {}...", self.server, self.port, current_nick));
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            &format!(
+                "IRC channel connecting to {}:{} as {}...",
+                self.server, self.port, current_nick
+            )
+        );
 
         let tls = self.connect().await?;
         let (reader, mut writer) = tokio::io::split(tls);
@@ -477,7 +484,15 @@ impl Channel for IrcChannel {
                         }
                     } else if msg.params.iter().any(|p| p.contains("NAK")) {
                         // CAP * NAK :sasl — server rejected SASL, proceed without it
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "server does not support SASL, continuing without it");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            "server does not support SASL, continuing without it"
+                        );
                         sasl_pending = false;
                         let mut guard = self.writer.lock().await;
                         if let Some(ref mut w) = *guard {
@@ -497,7 +512,15 @@ impl Channel for IrcChannel {
                         }
                     } else {
                         // SASL was requested but no password is configured; abort SASL
-                        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "SASL authentication requested but no SASL password is configured; aborting SASL");
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            "SASL authentication requested but no SASL password is configured; aborting SASL"
+                        );
                         sasl_pending = false;
                         let mut guard = self.writer.lock().await;
                         if let Some(ref mut w) = *guard {
@@ -517,7 +540,12 @@ impl Channel for IrcChannel {
 
                 // SASL failure (904, 905, 906, 907)
                 "904" | "905" | "906" | "907" => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("SASL authentication failed ({})", msg.command));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!("SASL authentication failed ({})", msg.command)
+                    );
                     sasl_pending = false;
                     let mut guard = self.writer.lock().await;
                     if let Some(ref mut w) = *guard {
@@ -528,7 +556,11 @@ impl Channel for IrcChannel {
                 // RPL_WELCOME — registration complete
                 "001" => {
                     registered = true;
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("registered as {}", current_nick));
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        &format!("registered as {}", current_nick)
+                    );
 
                     // NickServ authentication
                     if let Some(ref pass) = self.nickserv_password {
@@ -551,7 +583,15 @@ impl Channel for IrcChannel {
                 // ERR_NICKNAMEINUSE (433)
                 "433" => {
                     let alt = format!("{current_nick}_");
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"current_nick": current_nick, "alt": alt})), "nickname is in use, trying");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(
+                                ::serde_json::json!({"current_nick": current_nick, "alt": alt})
+                            ),
+                        "nickname is in use, trying"
+                    );
                     let mut guard = self.writer.lock().await;
                     if let Some(ref mut w) = *guard {
                         Self::send_raw(w, &format!("NICK {alt}")).await?;

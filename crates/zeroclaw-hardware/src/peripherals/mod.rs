@@ -58,7 +58,12 @@ pub async fn create_peripheral_tools(config: &PeripheralsConfig) -> Result<Vec<B
         {
             tools.push(Box::new(uno_q_bridge::UnoQGpioReadTool));
             tools.push(Box::new(uno_q_bridge::UnoQGpioWriteTool));
-            ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"board": board.board})), "Uno Q Bridge GPIO tools added");
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"board": board.board})),
+                "Uno Q Bridge GPIO tools added"
+            );
             continue;
         }
 
@@ -70,10 +75,20 @@ pub async fn create_peripheral_tools(config: &PeripheralsConfig) -> Result<Vec<B
             match rpi::RpiGpioPeripheral::connect_from_config(board).await {
                 Ok(peripheral) => {
                     tools.extend(peripheral.tools());
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"board": board.board})), "RPi GPIO peripheral connected");
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_attrs(::serde_json::json!({"board": board.board})),
+                        "RPi GPIO peripheral connected"
+                    );
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Failed to connect RPi GPIO {}: {}", board.board, e));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!("Failed to connect RPi GPIO {}: {}", board.board, e)
+                    );
                 }
             }
             continue;
@@ -84,7 +99,12 @@ pub async fn create_peripheral_tools(config: &PeripheralsConfig) -> Result<Vec<B
             continue;
         }
         if board.path.is_none() {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Skipping serial board {}: no path", board.board));
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!("Skipping serial board {}: no path", board.board)
+            );
             continue;
         }
 
@@ -92,7 +112,12 @@ pub async fn create_peripheral_tools(config: &PeripheralsConfig) -> Result<Vec<B
             Ok(peripheral) => {
                 let mut p = peripheral;
                 if p.connect().await.is_err() {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Peripheral {} connect warning (continuing)", p.name()));
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                        &format!("Peripheral {} connect warning (continuing)", p.name())
+                    );
                 }
                 serial_transports.push((board.board.clone(), p.transport()));
                 tools.extend(p.tools());
@@ -102,12 +127,26 @@ pub async fn create_peripheral_tools(config: &PeripheralsConfig) -> Result<Vec<B
                     tools.push(Box::new(arduino_upload::ArduinoUploadTool::new(
                         path.clone(),
                     )));
-                    ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("Arduino upload tool added (port: {})", path));
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                        &format!("Arduino upload tool added (port: {})", path)
+                    );
                 }
-                ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"board": board.board})), "Serial peripheral connected");
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"board": board.board})),
+                    "Serial peripheral connected"
+                );
             }
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), &format!("Failed to connect {}: {}", board.board, e));
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    &format!("Failed to connect {}: {}", board.board, e)
+                );
             }
         }
     }

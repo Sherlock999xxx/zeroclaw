@@ -253,9 +253,10 @@ mod tests {
                 ::zeroclaw_api::attribution::MemoryKind::InMemory,
             )
         }
-        fn alias(&self) -> &str { "QueryEchoMemory" }
+        fn alias(&self) -> &str {
+            "QueryEchoMemory"
+        }
     }
-
 
     #[tokio::test]
     async fn recall_empty() {

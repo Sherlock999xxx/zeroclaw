@@ -211,7 +211,10 @@ impl EstopManager {
     fn persist_state(&mut self) -> Result<()> {
         if let Some(parent) = self.state_path.parent() {
             fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create estop state dir {}", parent.display().to_string())
+                format!(
+                    "Failed to create estop state dir {}",
+                    parent.display().to_string()
+                )
             })?;
         }
 

@@ -86,9 +86,7 @@ impl MochatChannel {
 
 impl ::zeroclaw_api::attribution::Attributable for MochatChannel {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Channel(
-            ::zeroclaw_api::attribution::ChannelKind::MoChat,
-        )
+        ::zeroclaw_api::attribution::Role::Channel(::zeroclaw_api::attribution::ChannelKind::MoChat)
     }
     fn alias(&self) -> &str {
         &self.alias
@@ -139,7 +137,11 @@ impl Channel for MochatChannel {
     }
 
     async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "starting message poller");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "starting message poller"
+        );
 
         let poll_interval = std::time::Duration::from_secs(self.poll_interval_secs);
         let mut last_message_id: Option<String> = None;
@@ -162,7 +164,16 @@ impl Channel for MochatChannel {
                     let data: serde_json::Value = match resp.json().await {
                         Ok(d) => d,
                         Err(e) => {
-                            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "failed to parse response");
+                            ::zeroclaw_log::record!(
+                                WARN,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                                .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                                "failed to parse response"
+                            );
                             tokio::time::sleep(poll_interval).await;
                             continue;
                         }
@@ -192,7 +203,15 @@ impl Channel for MochatChannel {
                                 .unwrap_or("unknown");
 
                             if !self.is_user_allowed(sender) {
-                                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"sender": sender})), "ignoring message from unauthorized user");
+                                ::zeroclaw_log::record!(
+                                    DEBUG,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_attrs(::serde_json::json!({"sender": sender})),
+                                    "ignoring message from unauthorized user"
+                                );
                                 continue;
                             }
 
@@ -227,7 +246,15 @@ impl Channel for MochatChannel {
                             };
 
                             if tx.send(channel_msg).await.is_err() {
-                                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "message channel closed");
+                                ::zeroclaw_log::record!(
+                                    WARN,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note
+                                    )
+                                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                                    "message channel closed"
+                                );
                                 return Ok(());
                             }
 
@@ -243,7 +270,13 @@ impl Channel for MochatChannel {
                     ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": err.to_string(), "status": status.to_string()})), "poll request failed");
                 }
                 Err(e) => {
-                    ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"error": e.to_string()})), "poll request error");
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                            .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                        "poll request error"
+                    );
                 }
             }
 

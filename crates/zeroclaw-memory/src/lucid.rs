@@ -249,7 +249,14 @@ impl LucidMemory {
     async fn sync_to_lucid_async(&self, key: &str, content: &str, category: &MemoryCategory) {
         let args = self.build_store_args(key, content, category);
         if let Err(error) = self.run_lucid_command(&args, self.store_timeout).await {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"command": self.lucid_cmd, "error": error.to_string()})), "Lucid store sync failed; sqlite remains authoritative");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(
+                        ::serde_json::json!({"command": self.lucid_cmd, "error": error.to_string()})
+                    ),
+                "Lucid store sync failed; sqlite remains authoritative"
+            );
         }
     }
 
@@ -540,7 +547,9 @@ exit 1
 
     fn test_memory(workspace: &Path, cmd: String) -> LucidMemory {
         let sqlite = SqliteMemory::new("sqlite", workspace).unwrap();
-        LucidMemory::with_options("test", workspace,
+        LucidMemory::with_options(
+            "test",
+            workspace,
             sqlite,
             cmd,
             200,
@@ -636,7 +645,9 @@ exit 1
         let probe_cmd = write_probe_lucid_script(tmp.path(), &marker);
 
         let sqlite = SqliteMemory::new("test", tmp.path()).unwrap();
-        let memory = LucidMemory::with_options("test", tmp.path(),
+        let memory = LucidMemory::with_options(
+            "test",
+            tmp.path(),
             sqlite,
             probe_cmd,
             200,
@@ -707,7 +718,9 @@ exit 1
         let failing_cmd = write_failing_lucid_script(tmp.path(), &marker);
 
         let sqlite = SqliteMemory::new("test", tmp.path()).unwrap();
-        let memory = LucidMemory::with_options("test", tmp.path(),
+        let memory = LucidMemory::with_options(
+            "test",
+            tmp.path(),
             sqlite,
             failing_cmd,
             200,
@@ -730,9 +743,7 @@ exit 1
 
 impl ::zeroclaw_api::attribution::Attributable for LucidMemory {
     fn role(&self) -> ::zeroclaw_api::attribution::Role {
-        ::zeroclaw_api::attribution::Role::Memory(
-            ::zeroclaw_api::attribution::MemoryKind::Lucid,
-        )
+        ::zeroclaw_api::attribution::Role::Memory(::zeroclaw_api::attribution::MemoryKind::Lucid)
     }
     fn alias(&self) -> &str {
         &self.alias

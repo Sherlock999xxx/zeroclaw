@@ -1117,7 +1117,12 @@ pub fn parse_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) {
             }
 
             if !parsed_any {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Malformed <tool_call>: expected tool-call object in tag body (JSON/XML/GLM)");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "Malformed <tool_call>: expected tool-call object in tag body (JSON/XML/GLM)"
+                );
             }
 
             remaining = &after_open[close_idx + close_tag.len()..];

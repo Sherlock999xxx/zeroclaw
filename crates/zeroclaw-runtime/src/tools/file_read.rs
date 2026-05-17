@@ -776,9 +776,10 @@ mod tests {
                     ),
                 )
             }
-            fn alias(&self) -> &str { "RecordingModelProvider" }
+            fn alias(&self) -> &str {
+                "RecordingModelProvider"
+            }
         }
-
 
         pub fn make_memory() -> Arc<dyn Memory> {
             let cfg = MemoryConfig {

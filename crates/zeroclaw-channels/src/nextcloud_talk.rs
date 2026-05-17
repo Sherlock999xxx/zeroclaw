@@ -172,7 +172,12 @@ impl NextcloudTalkChannel {
 
         // Legacy/custom format.
         if !event_type.eq_ignore_ascii_case("message") {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"event_type": event_type})), "Talk: skipping non-message event");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"event_type": event_type})),
+                "Talk: skipping non-message event"
+            );
             return messages;
         }
 
@@ -191,7 +196,12 @@ impl NextcloudTalkChannel {
         // Only handle Note objects (= chat messages). Ignore reactions, etc.
         let object_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
         if !object_type.eq_ignore_ascii_case("note") {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"object_type": object_type})), "Talk: skipping AS2 Create with object.type=");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"object_type": object_type})),
+                "Talk: skipping AS2 Create with object.type="
+            );
             return messages;
         }
 
@@ -204,7 +214,12 @@ impl NextcloudTalkChannel {
             .filter(|t| !t.is_empty());
 
         let Some(room_token) = room_token else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Talk: missing target.id (room token) in AS2 payload");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "Talk: missing target.id (room token) in AS2 payload"
+            );
             return messages;
         };
 
@@ -212,7 +227,11 @@ impl NextcloudTalkChannel {
         let actor = payload.get("actor").cloned().unwrap_or_default();
         let actor_type = actor.get("type").and_then(|v| v.as_str()).unwrap_or("");
         if actor_type.eq_ignore_ascii_case("application") {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Talk: skipping bot-originated AS2 message (type=Application)");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "Talk: skipping bot-originated AS2 message (type=Application)"
+            );
             return messages;
         }
 
@@ -228,7 +247,12 @@ impl NextcloudTalkChannel {
             .filter(|id| !id.is_empty());
 
         let Some(actor_id) = actor_id else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Talk: missing actor.id in AS2 payload");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "Talk: missing actor.id in AS2 payload"
+            );
             return messages;
         };
 
@@ -236,7 +260,11 @@ impl NextcloudTalkChannel {
         // set actor.type="Application" reliably for bot-sent messages.
         let raw_actor_id = actor.get("id").and_then(|v| v.as_str()).unwrap_or("");
         if raw_actor_id.starts_with("bots/") {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Talk: skipping bot-originated AS2 message (id prefix=bots/)");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "Talk: skipping bot-originated AS2 message (id prefix=bots/)"
+            );
             return messages;
         }
         let actor_name = actor
@@ -245,12 +273,23 @@ impl NextcloudTalkChannel {
             .unwrap_or("")
             .to_ascii_lowercase();
         if self.is_bot_name(&actor_name) {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"actor_name": actor_name})), "Talk: skipping bot-originated AS2 message (name=)");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"actor_name": actor_name})),
+                "Talk: skipping bot-originated AS2 message (name=)"
+            );
             return messages;
         }
 
         if !self.is_user_allowed(actor_id) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"actor_id": actor_id})), "Talk: ignoring message from unauthorized actor: . Add to channels.nextcloud_talk.allowed_users in config.toml, or run `zeroclaw onboard --channels-only` to configure interactively.");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"actor_id": actor_id})),
+                "Talk: ignoring message from unauthorized actor: . Add to channels.nextcloud_talk.allowed_users in config.toml, or run `zeroclaw onboard --channels-only` to configure interactively."
+            );
             return messages;
         }
 
@@ -269,7 +308,11 @@ impl NextcloudTalkChannel {
             .filter(|s| !s.is_empty());
 
         let Some(content) = content else {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Talk: empty or unparseable AS2 message content");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "Talk: empty or unparseable AS2 message content"
+            );
             return messages;
         };
 
@@ -309,7 +352,12 @@ impl NextcloudTalkChannel {
             .filter(|token| !token.is_empty());
 
         let Some(room_token) = room_token else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Talk: missing room token in webhook payload");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "Talk: missing room token in webhook payload"
+            );
             return messages;
         };
 
@@ -323,7 +371,12 @@ impl NextcloudTalkChannel {
         // Nextcloud Talk uses "bots" or "application" depending on version/context.
         if actor_type.eq_ignore_ascii_case("bots") || actor_type.eq_ignore_ascii_case("application")
         {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"actor_type": actor_type})), "Talk: skipping bot-originated message (actorType=)");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"actor_type": actor_type})),
+                "Talk: skipping bot-originated message (actorType=)"
+            );
             return messages;
         }
 
@@ -335,18 +388,34 @@ impl NextcloudTalkChannel {
             .filter(|id| !id.is_empty());
 
         let Some(actor_id) = actor_id else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Talk: missing actorId in webhook payload");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "Talk: missing actorId in webhook payload"
+            );
             return messages;
         };
 
         // Also skip by known bot names in case actorType is not set reliably.
         if self.is_bot_name(actor_id) {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"actor_id": actor_id})), "Talk: skipping bot-originated message (actorId=)");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"actor_id": actor_id})),
+                "Talk: skipping bot-originated message (actorId=)"
+            );
             return messages;
         }
 
         if !self.is_user_allowed(actor_id) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"actor_id": actor_id})), "Talk: ignoring message from unauthorized actor: . Add to channels.nextcloud_talk.allowed_users in config.toml, or run `zeroclaw onboard --channels-only` to configure interactively.");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"actor_id": actor_id})),
+                "Talk: ignoring message from unauthorized actor: . Add to channels.nextcloud_talk.allowed_users in config.toml, or run `zeroclaw onboard --channels-only` to configure interactively."
+            );
             return messages;
         }
 
@@ -355,7 +424,12 @@ impl NextcloudTalkChannel {
             .and_then(|v| v.as_str())
             .unwrap_or("comment");
         if !message_type.eq_ignore_ascii_case("comment") {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"message_type": message_type})), "Talk: skipping non-comment messageType");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"message_type": message_type})),
+                "Talk: skipping non-comment messageType"
+            );
             return messages;
         }
 
@@ -366,7 +440,11 @@ impl NextcloudTalkChannel {
             .map(str::trim)
             .is_some_and(|value| !value.is_empty());
         if has_system_message {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Talk: skipping system message event");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "Talk: skipping system message event"
+            );
             return messages;
         }
 
@@ -423,7 +501,13 @@ impl NextcloudTalkChannel {
 
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"status": status.to_string(), "body": body})), "Talk send failed:");
+        ::zeroclaw_log::record!(
+            ERROR,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                .with_attrs(::serde_json::json!({"status": status.to_string(), "body": body})),
+            "Talk send failed:"
+        );
         anyhow::bail!("Talk API error: {status}");
     }
 
@@ -452,7 +536,13 @@ impl NextcloudTalkChannel {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"status": status.to_string(), "body": body})), "Talk send_to_room_with_id failed:");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"status": status.to_string(), "body": body})),
+                "Talk send_to_room_with_id failed:"
+            );
             anyhow::bail!("Talk API error: {status}");
         }
 
@@ -498,7 +588,13 @@ impl NextcloudTalkChannel {
 
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"status": status.to_string(), "body": body})), "Talk edit_message failed");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"status": status.to_string(), "body": body})),
+            "Talk edit_message failed"
+        );
         anyhow::bail!("Talk edit API error: {status}");
     }
 
@@ -527,7 +623,13 @@ impl NextcloudTalkChannel {
 
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"status": status.to_string(), "body": body})), "Talk delete_message failed");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"status": status.to_string(), "body": body})),
+            "Talk delete_message failed"
+        );
         anyhow::bail!("Talk delete API error: {status}");
     }
 
@@ -586,14 +688,27 @@ impl Channel for NextcloudTalkChannel {
         let initial = Self::truncate_to_nc_limit(initial);
         match self.send_to_room_with_id(&message.recipient, initial).await {
             Ok(id) => {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"room": message.recipient, "message_id": id})), "Talk: draft message sent");
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(
+                            ::serde_json::json!({"room": message.recipient, "message_id": id})
+                        ),
+                    "Talk: draft message sent"
+                );
                 self.last_draft_edit
                     .lock()
                     .insert(message.recipient.clone(), std::time::Instant::now());
                 Ok(Some(id))
             }
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"e": e.to_string()})), "Talk: send_draft failed, falling back to final send");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"e": e.to_string()})),
+                    "Talk: send_draft failed, falling back to final send"
+                );
                 Err(e)
             }
         }
@@ -627,7 +742,12 @@ impl Channel for NextcloudTalkChannel {
             Err(e) => {
                 // Non-fatal: log and continue. The final send will still deliver the
                 // complete response even if mid-stream edits fail.
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "Talk update_draft skipped");
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                    "Talk update_draft skipped"
+                );
             }
         }
 
@@ -644,12 +764,25 @@ impl Channel for NextcloudTalkChannel {
 
         match self.edit_message(recipient, message_id, display_text).await {
             Ok(()) => {
-                ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"room": recipient, "message_id": message_id})), "Talk: draft finalized");
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_attrs(
+                            ::serde_json::json!({"room": recipient, "message_id": message_id})
+                        ),
+                    "Talk: draft finalized"
+                );
                 Ok(())
             }
             Err(e) => {
                 // Edit failed (e.g. message too old, permissions) — delete and re-send.
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"e": e.to_string()})), "Talk finalize_draft edit failed ; attempting delete+resend");
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"e": e.to_string()})),
+                    "Talk finalize_draft edit failed ; attempting delete+resend"
+                );
                 let _ = self.delete_message(recipient, message_id).await;
                 self.send_to_room(recipient, display_text).await
             }
@@ -658,15 +791,24 @@ impl Channel for NextcloudTalkChannel {
 
     async fn cancel_draft(&self, recipient: &str, message_id: &str) -> anyhow::Result<()> {
         if let Err(e) = self.delete_message(recipient, message_id).await {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"error": e.to_string()})), "Talk cancel_draft delete failed (non-fatal)");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"error": e.to_string()})),
+                "Talk cancel_draft delete failed (non-fatal)"
+            );
         }
         self.last_draft_edit.lock().remove(recipient);
         Ok(())
     }
 
     async fn listen(&self, _tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "Talk channel active (webhook mode). \
-            Configure Nextcloud Talk bot webhook to POST to your gateway's /nextcloud-talk endpoint.");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "Talk channel active (webhook mode). \
+            Configure Nextcloud Talk bot webhook to POST to your gateway's /nextcloud-talk endpoint."
+        );
 
         // Keep task alive; incoming events are handled by the gateway webhook handler.
         loop {
@@ -698,7 +840,12 @@ pub fn verify_nextcloud_talk_signature(
 ) -> bool {
     let random = random.trim();
     if random.is_empty() {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Talk: missing X-Nextcloud-Talk-Random header");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "Talk: missing X-Nextcloud-Talk-Random header"
+        );
         return false;
     }
 
@@ -709,7 +856,12 @@ pub fn verify_nextcloud_talk_signature(
         .trim();
 
     let Ok(provided) = hex::decode(signature_hex) else {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "Talk: invalid signature format");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "Talk: invalid signature format"
+        );
         return false;
     };
 

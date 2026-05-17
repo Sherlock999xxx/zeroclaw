@@ -91,20 +91,22 @@ export function AgentProvider({ agentAlias, children }: AgentProviderProps) {
   const pendingModelSwitchRef = useRef<string | null>(null);
   const switchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wsVersionRef = useRef(0);
+  const localMessageMutationVersionRef = useRef(0);
 
   // Hydrate chat from server (preferred) or localStorage fallback
   useEffect(() => {
     const sid = sessionIdRef.current;
+    const hydrationStartedAtMutationVersion = localMessageMutationVersionRef.current;
     let cancelled = false;
 
     (async () => {
       try {
         const res = await getSessionMessages(sid);
         if (cancelled) return;
-        if (res.session_persistence && res.messages.length > 0) {
-          setMessages((prev) =>
-            prev.length > 0 ? prev : persistedToUiMessages(mapServerMessagesToPersisted(res.messages)),
-          );
+        if (res.session_persistence) {
+          if (localMessageMutationVersionRef.current === hydrationStartedAtMutationVersion) {
+            setMessages(persistedToUiMessages(mapServerMessagesToPersisted(res.messages)));
+          }
         } else if (!res.session_persistence) {
           setMessages((prev) => {
             if (prev.length > 0) return prev;
@@ -190,6 +192,7 @@ export function AgentProvider({ agentAlias, children }: AgentProviderProps) {
         const content = msg.full_response ?? msg.content ?? pendingContentRef.current;
         const thinking = capturedThinkingRef.current || pendingThinkingRef.current || undefined;
         if (content) {
+          localMessageMutationVersionRef.current += 1;
           setMessages((prev) => [
             ...prev,
             {
@@ -214,6 +217,7 @@ export function AgentProvider({ agentAlias, children }: AgentProviderProps) {
       case 'tool_call': {
         const toolName = msg.name ?? 'unknown';
         const toolArgs = msg.args;
+        localMessageMutationVersionRef.current += 1;
         setMessages((prev) => {
           const argsKey = JSON.stringify(toolArgs ?? {});
           if (pendingContentRef.current) {
@@ -241,6 +245,7 @@ export function AgentProvider({ agentAlias, children }: AgentProviderProps) {
       }
 
       case 'tool_result': {
+        localMessageMutationVersionRef.current += 1;
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.toolCall && m.toolCall.output === undefined);
           if (idx !== -1) {
@@ -269,6 +274,7 @@ export function AgentProvider({ agentAlias, children }: AgentProviderProps) {
       case 'cron_result': {
         const cronOutput = msg.output ?? '';
         if (cronOutput) {
+          localMessageMutationVersionRef.current += 1;
           setMessages((prev) => [
             ...prev,
             {
@@ -313,6 +319,7 @@ export function AgentProvider({ agentAlias, children }: AgentProviderProps) {
       }
 
       case 'error':
+        localMessageMutationVersionRef.current += 1;
         setMessages((prev) => [
           ...prev,
           {
@@ -474,6 +481,7 @@ export function AgentProvider({ agentAlias, children }: AgentProviderProps) {
       setTyping(true);
       pendingContentRef.current = '';
       pendingThinkingRef.current = '';
+      localMessageMutationVersionRef.current += 1;
       setMessages((prev) => [
         ...prev,
         {
@@ -567,10 +575,12 @@ export function AgentProvider({ agentAlias, children }: AgentProviderProps) {
   }, [attachSocketCallbacks, modelLoading, typing, agentAlias]);
 
   const deleteMessage = useCallback((id: string) => {
+    localMessageMutationVersionRef.current += 1;
     setMessages((prev) => prev.filter((m) => m.id !== id));
   }, []);
 
   const clearAllMessages = useCallback(() => {
+    localMessageMutationVersionRef.current += 1;
     setMessages([]);
   }, []);
 

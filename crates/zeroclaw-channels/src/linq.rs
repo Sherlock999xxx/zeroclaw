@@ -176,7 +176,12 @@ impl LinqChannel {
             .and_then(|e| e.as_str())
             .unwrap_or("");
         if event_type != "message.received" {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"event_type": event_type})), "skipping non-message event");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"event_type": event_type})),
+                "skipping non-message event"
+            );
             return messages;
         }
 
@@ -186,7 +191,11 @@ impl LinqChannel {
 
         // Skip messages sent by the bot itself
         if Self::sender_is_from_me(data) {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "skipping is_from_me message");
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                "skipping is_from_me message"
+            );
             return messages;
         }
 
@@ -204,7 +213,13 @@ impl LinqChannel {
 
         // Check allowlist
         if !self.is_sender_allowed(&normalized_from) {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"normalized_from": normalized_from})), "ignoring message from unauthorized sender: . Add to channels.linq.allowed_senders in config.toml, or run `zeroclaw onboard --channels-only` to configure interactively.");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"normalized_from": normalized_from})),
+                "ignoring message from unauthorized sender: . Add to channels.linq.allowed_senders in config.toml, or run `zeroclaw onboard --channels-only` to configure interactively."
+            );
             return messages;
         }
 
@@ -229,12 +244,28 @@ impl LinqChannel {
                         if let Some(marker) = Self::media_part_to_image_marker(part) {
                             Some(marker)
                         } else {
-                            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"part_type": part_type})), "skipping unsupported part");
+                            ::zeroclaw_log::record!(
+                                DEBUG,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note
+                                )
+                                .with_attrs(::serde_json::json!({"part_type": part_type})),
+                                "skipping unsupported part"
+                            );
                             None
                         }
                     }
                     _ => {
-                        ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"part_type": part_type})), "skipping part");
+                        ::zeroclaw_log::record!(
+                            DEBUG,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note
+                            )
+                            .with_attrs(::serde_json::json!({"part_type": part_type})),
+                            "skipping part"
+                        );
                         None
                     }
                 }
@@ -370,15 +401,27 @@ impl Channel for LinqChannel {
 
         let status = resp.status();
         let error_body = resp.text().await.unwrap_or_default();
-        ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"status": status.to_string(), "error_body": error_body})), "send failed:");
+        ::zeroclaw_log::record!(
+            ERROR,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                .with_attrs(
+                    ::serde_json::json!({"status": status.to_string(), "error_body": error_body})
+                ),
+            "send failed:"
+        );
         anyhow::bail!("API error: {status}");
     }
 
     async fn listen(&self, _tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
         // Linq uses webhooks (push-based), not polling.
         // Messages are received via the gateway's /linq endpoint.
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), "channel active (webhook mode). \
-            Configure Linq webhook to POST to your gateway's /linq endpoint.");
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "channel active (webhook mode). \
+            Configure Linq webhook to POST to your gateway's /linq endpoint."
+        );
 
         // Keep the task alive — it will be cancelled when the channel shuts down
         loop {
@@ -410,7 +453,11 @@ impl Channel for LinqChannel {
             .await?;
 
         if !resp.status().is_success() {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("start_typing failed: {}", resp.status()));
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!("start_typing failed: {}", resp.status())
+            );
         }
 
         Ok(())
@@ -427,7 +474,11 @@ impl Channel for LinqChannel {
             .await?;
 
         if !resp.status().is_success() {
-            ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note), &format!("stop_typing failed: {}", resp.status()));
+            ::zeroclaw_log::record!(
+                DEBUG,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                &format!("stop_typing failed: {}", resp.status())
+            );
         }
 
         Ok(())
@@ -447,11 +498,23 @@ pub fn verify_linq_signature(secret: &str, body: &str, timestamp: &str, signatur
     if let Ok(ts) = timestamp.parse::<i64>() {
         let now = chrono::Utc::now().timestamp();
         if (now - ts).unsigned_abs() > 300 {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"ts": ts, "now": now})), "rejecting stale webhook timestamp (, now=)");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"ts": ts, "now": now})),
+                "rejecting stale webhook timestamp (, now=)"
+            );
             return false;
         }
     } else {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"timestamp": timestamp})), "invalid webhook timestamp");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"timestamp": timestamp})),
+            "invalid webhook timestamp"
+        );
         return false;
     }
 
@@ -466,7 +529,12 @@ pub fn verify_linq_signature(secret: &str, body: &str, timestamp: &str, signatur
         .strip_prefix("sha256=")
         .unwrap_or(signature);
     let Ok(provided) = hex::decode(signature_hex.trim()) else {
-        ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown), "invalid webhook signature format");
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "invalid webhook signature format"
+        );
         return false;
     };
 

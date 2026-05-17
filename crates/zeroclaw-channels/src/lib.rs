@@ -3,7 +3,7 @@
 #![allow(
     clippy::to_string_in_format_args,
     clippy::useless_format,
-    clippy::explicit_auto_deref,
+    clippy::explicit_auto_deref
 )]
 #![cfg_attr(feature = "channel-matrix", recursion_limit = "256")]
 
