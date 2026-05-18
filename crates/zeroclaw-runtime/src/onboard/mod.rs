@@ -14,6 +14,9 @@ use serde::Deserialize;
 use zeroclaw_config::schema::Config;
 use zeroclaw_config::traits::{Answer, OnboardUi, PropKind, SelectItem};
 
+use crate::agent::personality::EDITABLE_PERSONALITY_FILES;
+use crate::agent::personality_templates::{TemplateContext, render as render_personality};
+
 const CUSTOM_OPENAI_COMPAT_LABEL: &str = "Custom OpenAI-compatible endpoint";
 const OPENAI_COMPAT_MODELS_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -1732,48 +1735,68 @@ async fn prompt_agent_fields(cfg: &mut Config, ui: &mut dyn OnboardUi, alias: &s
     }
 }
 
-/// Multi-line system-prompt editor backed by `$EDITOR`. Writes to
-/// `agents/<alias>/workspace/AGENTS.md` — the per-agent markdown
-/// surface the docstring has always pointed at. There is no
-/// `agents.<alias>.system_prompt` config field; trying to write one
-/// (the previous behavior) errored out with "Unknown property".
+/// Per-agent personality picker — same UX as the upstream top-level
+/// `personality` section, scoped to `agents/<alias>/workspace/`. Lists
+/// every editable personality file with a saved / not-saved badge,
+/// seeds missing files from the bundled starter templates, and loops
+/// until the user picks `Done`. Back from the picker rewinds the
+/// outer agent-field walk; Back from the editor returns to the picker.
 async fn prompt_agent_system_prompt(
     cfg: &Config,
     ui: &mut dyn OnboardUi,
     alias: &str,
 ) -> Result<Nav> {
     let workspace = cfg.agent_workspace_dir(alias);
-    let agents_md = workspace.join("AGENTS.md");
-    let initial = tokio::fs::read_to_string(&agents_md)
-        .await
-        .unwrap_or_default();
-    ui.note(
-        "Optional system prompt for this agent. Stored at \
-         agents/<alias>/workspace/AGENTS.md and loaded into the system \
-         prompt at agent start. Leave empty to skip.",
-    );
-    match ui.editor("AGENTS.md", &initial).await? {
-        Answer::Back => Ok(Nav::Back),
-        Answer::Value(new) => {
-            if new != initial {
-                tokio::fs::create_dir_all(&workspace)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Failed to create per-agent workspace at {}",
-                            workspace.display()
-                        )
-                    })?;
-                tokio::fs::write(&agents_md, &new).await.with_context(|| {
-                    format!(
-                        "Failed to write AGENTS.md at {}",
-                        agents_md.display().to_string()
-                    )
-                })?;
+    let template_ctx = TemplateContext {
+        agent: alias.to_string(),
+        include_memory: cfg.memory.backend.as_str() != "none",
+        ..TemplateContext::default()
+    };
+
+    loop {
+        let mut items: Vec<SelectItem> = EDITABLE_PERSONALITY_FILES
+            .iter()
+            .map(|filename| {
+                let exists = workspace.join(filename).is_file();
+                SelectItem::with_badge(
+                    (*filename).to_string(),
+                    if exists { "saved" } else { "not saved" },
+                )
+            })
+            .collect();
+        items.push(SelectItem::new("Done"));
+
+        match ui.select("Personality file to edit", &items, None).await? {
+            Answer::Back => return Ok(Nav::Back),
+            Answer::Value(idx) if idx == EDITABLE_PERSONALITY_FILES.len() => break,
+            Answer::Value(idx) => {
+                let filename = EDITABLE_PERSONALITY_FILES[idx];
+                let path = workspace.join(filename);
+                let initial = if path.is_file() {
+                    tokio::fs::read_to_string(&path).await.unwrap_or_default()
+                } else {
+                    render_personality(filename, &template_ctx).unwrap_or_default()
+                };
+                match ui.editor(&format!("Editing {filename}"), &initial).await? {
+                    Answer::Back => continue,
+                    Answer::Value(content) => {
+                        tokio::fs::create_dir_all(&workspace)
+                            .await
+                            .with_context(|| {
+                                format!(
+                                    "Failed to create per-agent workspace at {}",
+                                    workspace.display()
+                                )
+                            })?;
+                        tokio::fs::write(&path, content).await.with_context(|| {
+                            format!("Failed to write {} at {}", filename, path.display())
+                        })?;
+                    }
+                }
             }
-            Ok(Nav::Done)
         }
     }
+    Ok(Nav::Done)
 }
 
 /// Single-select alias picker. Always offers a `(none)` choice so the
@@ -2875,5 +2898,86 @@ mod tests {
             .expect("anthropic has two aliases — get_map_keys must return Some");
         keys.sort();
         assert_eq!(keys, vec!["default", "work"]);
+    }
+
+    // Regression: the alias-ref picker must pre-position the cursor on
+    // whichever entry in `available` matches the field's currently-stored
+    // value, regardless of `available`'s ordering. Probe via a recorder
+    // that captures the `current: Option<usize>` the picker passes to
+    // `ui.select`, and uses Answer::Back to bail without persisting.
+    #[tokio::test]
+    async fn agent_alias_picker_preselects_stored_value() {
+        use zeroclaw_config::schema::AliasedAgentConfig;
+
+        struct Capture {
+            current: Option<usize>,
+            items: Vec<String>,
+        }
+        #[async_trait::async_trait]
+        impl OnboardUi for Capture {
+            async fn confirm(&mut self, _: &str, _: bool) -> anyhow::Result<Answer<bool>> {
+                Ok(Answer::Back)
+            }
+            async fn string(
+                &mut self,
+                _: &str,
+                _: Option<&str>,
+                _: Option<&str>,
+            ) -> anyhow::Result<Answer<String>> {
+                Ok(Answer::Back)
+            }
+            async fn secret(&mut self, _: &str, _: bool) -> anyhow::Result<Answer<Option<String>>> {
+                Ok(Answer::Back)
+            }
+            async fn select(
+                &mut self,
+                _: &str,
+                items: &[SelectItem],
+                current: Option<usize>,
+            ) -> anyhow::Result<Answer<usize>> {
+                self.current = current;
+                self.items = items.iter().map(|i| i.label.clone()).collect();
+                Ok(Answer::Back)
+            }
+            async fn editor(&mut self, _: &str, _: &str) -> anyhow::Result<Answer<String>> {
+                Ok(Answer::Back)
+            }
+            fn heading(&mut self, _: u8, _: &str) {}
+            fn note(&mut self, _: &str) {}
+            fn status(&mut self, _: &str) {}
+            fn warn(&mut self, _: &str) {}
+        }
+
+        for available in [
+            vec!["clamps".to_string(), "glados".to_string()],
+            vec!["glados".to_string(), "clamps".to_string()],
+        ] {
+            let temp = TempDir::new().unwrap();
+            let mut cfg = test_cfg(&temp);
+            cfg.agents.insert(
+                "clamps".into(),
+                AliasedAgentConfig {
+                    risk_profile: "clamps".into(),
+                    ..AliasedAgentConfig::default()
+                },
+            );
+
+            let mut ui = Capture {
+                current: None,
+                items: Vec::new(),
+            };
+            prompt_agent_alias_single(&mut cfg, &mut ui, "clamps", "risk_profile", &available)
+                .await
+                .unwrap();
+
+            let cursor = ui.current.expect("ui.select must receive a current index");
+            let highlighted = ui.items.get(cursor).cloned().unwrap_or_default();
+            assert_eq!(
+                highlighted, "clamps",
+                "available={available:?}, items={:?}, cursor={cursor} — \
+                 expected cursor on \"clamps\"",
+                ui.items,
+            );
+        }
     }
 }
