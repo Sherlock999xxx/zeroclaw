@@ -499,6 +499,18 @@ impl SkillManageTool {
             .and_then(|v| v.as_str())
             .unwrap_or("Skill review");
 
+        // Check the kill switch before the cooldown so the agent gets a
+        // distinct, actionable error when improvement is disabled — otherwise
+        // both reasons collapse onto the cooldown message and the agent
+        // wastes turns waiting for a cooldown that will never clear.
+        if !self.improvement_config.enabled {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("Skill improvement is disabled (enabled: false)".to_string()),
+            });
+        }
+
         // Construct the improver with the *real* cooldown from runtime config,
         // not the cooldown_secs=0 we used to pass. The `should_improve_skill`
         // check reads the skill's SKILL.md `updated_at:` front-matter field
@@ -829,6 +841,9 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
+    /// Tests that aren't specifically exercising the cooldown gate use
+    /// `cooldown_secs: 0` so `should_improve_skill` always lets the patch
+    /// through and the assertion under test fires.
     fn cfg_no_cooldown() -> zeroclaw_config::schema::SkillImprovementConfig {
         zeroclaw_config::schema::SkillImprovementConfig {
             enabled: true,
@@ -841,17 +856,6 @@ mod tests {
         let dir = workspace.join("skills").join(slug);
         tokio::fs::create_dir_all(&dir).await.unwrap();
         tokio::fs::write(dir.join("SKILL.md"), md).await.unwrap();
-    }
-
-    /// Tests that aren't specifically exercising the cooldown gate use
-    /// `cooldown_secs: 0` so `should_improve_skill` always lets the patch
-    /// through and the assertion under test fires.
-    fn cfg_no_cooldown() -> zeroclaw_config::schema::SkillImprovementConfig {
-        zeroclaw_config::schema::SkillImprovementConfig {
-            enabled: true,
-            cooldown_secs: 0,
-            ..Default::default()
-        }
     }
 
     const VALID_SKILL: &str = "---\nname: deploy\ndescription: Run a production deploy\nversion: \"0.1.0\"\n---\n\n# Deploy\nDoes a production deploy.\n";
@@ -1445,11 +1449,10 @@ mod tests {
         );
 
         // Original file must be untouched.
-        let on_disk = tokio::fs::read_to_string(
-            dir.path().join("skills").join("deploy").join("SKILL.md"),
-        )
-        .await
-        .unwrap();
+        let on_disk =
+            tokio::fs::read_to_string(dir.path().join("skills").join("deploy").join("SKILL.md"))
+                .await
+                .unwrap();
         assert!(on_disk.contains("Recent"));
         assert!(!on_disk.contains("v2 tweak"));
     }
@@ -1475,13 +1478,16 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(result.success, "patch should have proceeded: {:?}", result.error);
+        assert!(
+            result.success,
+            "patch should have proceeded: {:?}",
+            result.error
+        );
 
-        let on_disk = tokio::fs::read_to_string(
-            dir.path().join("skills").join("deploy").join("SKILL.md"),
-        )
-        .await
-        .unwrap();
+        let on_disk =
+            tokio::fs::read_to_string(dir.path().join("skills").join("deploy").join("SKILL.md"))
+                .await
+                .unwrap();
         assert!(on_disk.contains("v2 tweak"));
     }
 
@@ -1502,13 +1508,19 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(result.success, "first patch should proceed: {:?}", result.error);
+        assert!(
+            result.success,
+            "first patch should proceed: {:?}",
+            result.error
+        );
     }
 
     #[tokio::test]
     async fn skill_manage_patch_blocked_when_improvement_disabled() {
-        // `enabled = false` short-circuits `should_improve_skill` regardless
-        // of timestamps. This is the per-tool kill switch.
+        // `enabled = false` is the per-tool kill switch. The error message
+        // must name the disabled state — not the cooldown — so the operator
+        // (or the agent reading the tool history) knows the gate is the
+        // feature flag, not a timer that will eventually clear.
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
         let cfg = zeroclaw_config::schema::SkillImprovementConfig {
@@ -1528,7 +1540,7 @@ mod tests {
             .unwrap();
         assert!(!result.success);
         let err = result.error.unwrap_or_default();
-        assert!(err.to_lowercase().contains("cooldown"));
+        assert_eq!(err, "Skill improvement is disabled (enabled: false)");
     }
 
     #[tokio::test]
@@ -1537,9 +1549,7 @@ mod tests {
         // references/) and should NOT be gated by the SKILL.md cooldown.
         let dir = tempdir();
         let recent = chrono::Utc::now().to_rfc3339();
-        let md = format!(
-            "---\nname: deploy\nupdated_at: \"{recent}\"\n---\n\nBody.\n"
-        );
+        let md = format!("---\nname: deploy\nupdated_at: \"{recent}\"\n---\n\nBody.\n");
         write_skill(dir.path(), "deploy", &md).await;
 
         let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_with_cooldown(3600), true);
