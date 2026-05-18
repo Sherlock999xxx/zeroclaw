@@ -2801,6 +2801,7 @@ pub async fn run(
             crate::skills::review::maybe_run_skill_review(
                 workspace_dir,
                 review_config,
+                config.skills.allow_scripts,
                 history_snapshot,
                 failed_slugs,
                 provider.as_ref(),

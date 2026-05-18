@@ -15,7 +15,7 @@
 //! fork builds them on demand so the main agent can't accidentally invoke
 //! them.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -40,6 +40,42 @@ fn resolve_skill_dir(workspace_dir: &Path, slug: &str) -> Result<PathBuf> {
         bail!("Invalid skill slug: {slug}");
     }
     Ok(skills_root(workspace_dir).join(slug))
+}
+
+/// Resolve `workspace/skills/<slug>` and verify the canonical resolved path is
+/// a non-symlinked directory inside the canonical skills root.
+///
+/// This is the OS-level boundary check that prevents a symlinked
+/// `workspace/skills/<slug>` from redirecting mutating operations outside the
+/// intended skills tree. The audit module already rejects symlinks *within* a
+/// skill at load time; this helper rejects them at the *root* before mutation.
+///
+/// Returns `(canonical_skills_root, canonical_skill_dir)`.
+fn safe_skill_dir(workspace_dir: &Path, slug: &str) -> Result<(PathBuf, PathBuf)> {
+    let skill_dir = resolve_skill_dir(workspace_dir, slug)?;
+    if !skill_dir.exists() {
+        bail!("Skill '{slug}' not found");
+    }
+    // Reject the slug directory itself if it is a symlink. Without this check,
+    // `canonicalize` below would resolve through the symlink and the
+    // `starts_with` check would still pass (both sides resolve to the target).
+    if skill_dir
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        bail!("Skill '{slug}' directory is a symlink — refusing");
+    }
+    let skills_root_path = skills_root(workspace_dir);
+    let canonical_skills_root = skills_root_path
+        .canonicalize()
+        .with_context(|| format!("failed to canonicalize {}", skills_root_path.display()))?;
+    let canonical_skill_dir = skill_dir
+        .canonicalize()
+        .with_context(|| format!("failed to canonicalize skill '{slug}'"))?;
+    if !canonical_skill_dir.starts_with(&canonical_skills_root) {
+        bail!("Skill '{slug}' escapes canonical skills root");
+    }
+    Ok((canonical_skills_root, canonical_skill_dir))
 }
 
 /// Read-only: list installed skills.
@@ -186,8 +222,8 @@ impl Tool for SkillViewTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("missing `slug` argument"))?;
 
-        let skill_dir = match resolve_skill_dir(&self.workspace_dir, slug) {
-            Ok(p) => p,
+        let canonical_skill_dir = match safe_skill_dir(&self.workspace_dir, slug) {
+            Ok((_, dir)) => dir,
             Err(e) => {
                 return Ok(ToolResult {
                     success: false,
@@ -197,7 +233,7 @@ impl Tool for SkillViewTool {
             }
         };
 
-        let md_path = skill_dir.join("SKILL.md");
+        let md_path = canonical_skill_dir.join("SKILL.md");
         let md = match tokio::fs::read_to_string(&md_path).await {
             Ok(s) => s,
             Err(e) => {
@@ -210,7 +246,7 @@ impl Tool for SkillViewTool {
         };
 
         let (front, body) = split_front_matter(&md).unwrap_or((String::new(), md.clone()));
-        let support_files = collect_support_files(&skill_dir).await;
+        let support_files = collect_support_files(&canonical_skill_dir).await;
 
         let mut output = format!("# Skill '{slug}'\n\n## Front-matter\n\n```yaml\n{front}\n```\n");
         if !body.trim().is_empty() {
@@ -262,16 +298,21 @@ async fn collect_support_files(skill_dir: &Path) -> Vec<String> {
 pub struct SkillManageTool {
     workspace_dir: PathBuf,
     config: zeroclaw_config::schema::SkillImprovementConfig,
+    /// Mirrors `config.skills.allow_scripts` so post-mutation audit applies
+    /// the same script policy that the loader/installer enforces.
+    allow_scripts: bool,
 }
 
 impl SkillManageTool {
     pub fn new(
         workspace_dir: PathBuf,
         config: zeroclaw_config::schema::SkillImprovementConfig,
+        allow_scripts: bool,
     ) -> Self {
         Self {
             workspace_dir,
             config,
+            allow_scripts,
         }
     }
 }
@@ -348,9 +389,59 @@ impl Tool for SkillManageTool {
 }
 
 impl SkillManageTool {
+    /// Run the install/load audit on a skill directory and roll back on
+    /// failure. Returns `Ok(())` on clean audit and an error message string
+    /// on failure (the caller decides how to surface it).
+    ///
+    /// `pre_snapshot` is the original SKILL.md content captured before the
+    /// mutation; if `Some`, audit failure restores it. For non-`patch` callers,
+    /// the `_unused` parameter exists so this helper has one signature.
+    async fn post_mutation_audit(
+        &self,
+        slug: &str,
+        canonical_skill_dir: &Path,
+        md_path: &Path,
+        pre_snapshot: Option<String>,
+        _unused: Option<()>,
+    ) -> std::result::Result<(), String> {
+        // Lightweight YAML-front-matter validation first (cheap, narrow). The
+        // full audit below catches the broader issues (symlinks introduced into
+        // the dir, oversized files, script files when scripts are disabled).
+        if let Ok(written) = tokio::fs::read_to_string(md_path).await
+            && let Err(e) = crate::skills::improver::validate_skill_content(&written)
+        {
+            restore_snapshot(md_path, pre_snapshot.as_deref()).await;
+            return Err(format!(
+                "Patch wrote but front-matter is invalid (rolled back): {e}"
+            ));
+        }
+
+        let report = match crate::skills::audit::audit_skill_directory_with_options(
+            canonical_skill_dir,
+            crate::skills::audit::SkillAuditOptions {
+                allow_scripts: self.allow_scripts,
+            },
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                restore_snapshot(md_path, pre_snapshot.as_deref()).await;
+                tracing::warn!("Post-patch audit errored for '{slug}': {e}");
+                return Err(format!("Patch wrote but audit errored (rolled back): {e}"));
+            }
+        };
+        if !report.is_clean() {
+            restore_snapshot(md_path, pre_snapshot.as_deref()).await;
+            return Err(format!(
+                "Patch wrote but skill failed audit (rolled back): {}",
+                report.summary()
+            ));
+        }
+        Ok(())
+    }
+
     async fn patch(&self, slug: &str, args: &Value) -> Result<ToolResult> {
-        let skill_dir = match resolve_skill_dir(&self.workspace_dir, slug) {
-            Ok(p) => p,
+        let canonical_skill_dir = match safe_skill_dir(&self.workspace_dir, slug) {
+            Ok((_, dir)) => dir,
             Err(e) => {
                 return Ok(ToolResult {
                     success: false,
@@ -359,7 +450,7 @@ impl SkillManageTool {
                 });
             }
         };
-        let md_path = skill_dir.join("SKILL.md");
+        let md_path = canonical_skill_dir.join("SKILL.md");
         if !md_path.exists() {
             return Ok(ToolResult {
                 success: false,
@@ -407,19 +498,24 @@ impl SkillManageTool {
                 error: Some(format!("Skill '{slug}' is on cooldown — try again later")),
             });
         }
+
+        // Snapshot the original SKILL.md so we can roll back if the
+        // post-mutation install/load audit rejects the resulting skill tree.
+        let pre_snapshot = tokio::fs::read_to_string(&md_path).await.ok();
+
         match improver.improve_skill(slug, content, reason).await {
             Ok(_) => {
-                // Post-mutation audit: re-validate the on-disk content to catch
-                // any corruption introduced by the atomic write pipeline.
-                let written = tokio::fs::read_to_string(&md_path).await;
-                if let Ok(ref s) = written
-                    && let Err(e) = crate::skills::improver::validate_skill_content(s)
+                // Run the same audit the loader/installer enforces. Mutation
+                // success must mean the resulting skill tree would still pass
+                // install/load audit under the active `allow_scripts` policy.
+                if let Err(err) = self
+                    .post_mutation_audit(slug, &canonical_skill_dir, &md_path, pre_snapshot, None)
+                    .await
                 {
-                    tracing::warn!("Post-patch validation failed for '{slug}': {e}");
                     return Ok(ToolResult {
                         success: false,
                         output: String::new(),
-                        error: Some(format!("Patch wrote but post-mutation audit failed: {e}")),
+                        error: Some(err),
                     });
                 }
                 Ok(ToolResult {
@@ -437,8 +533,8 @@ impl SkillManageTool {
     }
 
     async fn write_file(&self, slug: &str, args: &Value) -> Result<ToolResult> {
-        let skill_dir = match resolve_skill_dir(&self.workspace_dir, slug) {
-            Ok(p) => p,
+        let canonical_skill_dir = match safe_skill_dir(&self.workspace_dir, slug) {
+            Ok((_, dir)) => dir,
             Err(e) => {
                 return Ok(ToolResult {
                     success: false,
@@ -447,13 +543,6 @@ impl SkillManageTool {
                 });
             }
         };
-        if !skill_dir.exists() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Skill '{slug}' not found")),
-            });
-        }
         let file_path = args
             .get("file_path")
             .and_then(|v| v.as_str())
@@ -494,18 +583,16 @@ impl SkillManageTool {
             });
         }
 
-        let target = skill_dir.join(file_path);
+        let target = canonical_skill_dir.join(file_path);
         if let Some(parent) = target.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        // Reject anything that escapes the skill directory after canonicalisation.
-        let canonical_skill_dir = skill_dir
-            .canonicalize()
-            .unwrap_or_else(|_| skill_dir.clone());
+        // Verify target parent stays under canonical skill dir. The skill dir
+        // itself is already canonical (and non-symlinked) from `safe_skill_dir`.
         let canonical_target_parent = target
             .parent()
             .and_then(|p| p.canonicalize().ok())
-            .unwrap_or_else(|| skill_dir.clone());
+            .unwrap_or_else(|| canonical_skill_dir.clone());
         if !canonical_target_parent.starts_with(&canonical_skill_dir) {
             return Ok(ToolResult {
                 success: false,
@@ -524,7 +611,45 @@ impl SkillManageTool {
             });
         }
 
+        // Snapshot for rollback: capture pre-existing content if file existed,
+        // otherwise remember that it didn't so we can delete on audit failure.
+        let pre_snapshot = if target.exists() {
+            tokio::fs::read(&target).await.ok()
+        } else {
+            None
+        };
+        let target_existed = target.exists();
+
         tokio::fs::write(&target, content.as_bytes()).await?;
+
+        // Post-mutation install/load audit under the active script policy.
+        let report = match crate::skills::audit::audit_skill_directory_with_options(
+            &canonical_skill_dir,
+            crate::skills::audit::SkillAuditOptions {
+                allow_scripts: self.allow_scripts,
+            },
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                rollback_write(&target, pre_snapshot.as_deref(), target_existed).await;
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Post-write audit errored: {e}")),
+                });
+            }
+        };
+        if !report.is_clean() {
+            rollback_write(&target, pre_snapshot.as_deref(), target_existed).await;
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!(
+                    "Wrote {file_path} but skill failed audit (rolled back): {}",
+                    report.summary()
+                )),
+            });
+        }
         Ok(ToolResult {
             success: true,
             output: format!("Wrote {file_path} for skill '{slug}'."),
@@ -533,38 +658,97 @@ impl SkillManageTool {
     }
 
     async fn archive(&self, slug: &str) -> Result<ToolResult> {
-        let skill_dir = match resolve_skill_dir(&self.workspace_dir, slug) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e.to_string()),
-                });
-            }
-        };
-        if !skill_dir.exists() {
+        let (canonical_skills_root, canonical_skill_dir) =
+            match safe_skill_dir(&self.workspace_dir, slug) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    return Ok(ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(e.to_string()),
+                    });
+                }
+            };
+        // Anchor the archive dir under the canonical skills root. Create then
+        // canonicalize to defend against `.archive` being introduced as a
+        // symlink after `safe_skill_dir` resolved the slug dir.
+        let archive_dir_path = canonical_skills_root.join(ARCHIVE_DIRNAME);
+        tokio::fs::create_dir_all(&archive_dir_path).await?;
+        if archive_dir_path
+            .symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_symlink())
+        {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("Skill '{slug}' not found")),
+                error: Some(format!(
+                    "Archive directory {ARCHIVE_DIRNAME} is a symlink — refusing archive"
+                )),
             });
         }
-        let archive_dir = skills_root(&self.workspace_dir).join(ARCHIVE_DIRNAME);
-        tokio::fs::create_dir_all(&archive_dir).await?;
-        let target = archive_dir.join(slug);
+        let canonical_archive_dir = archive_dir_path
+            .canonicalize()
+            .with_context(|| format!("failed to canonicalize {}", archive_dir_path.display()))?;
+        if !canonical_archive_dir.starts_with(&canonical_skills_root) {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("archive directory escapes canonical skills root".to_string()),
+            });
+        }
+        let target = canonical_archive_dir.join(slug);
         let final_target = if target.exists() {
             let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
-            archive_dir.join(format!("{slug}-{stamp}"))
+            canonical_archive_dir.join(format!("{slug}-{stamp}"))
         } else {
             target
         };
-        tokio::fs::rename(&skill_dir, &final_target).await?;
+        // Belt and suspenders: `final_target`'s parent must be the canonical
+        // archive dir, not somewhere else due to a weird slug-name path quirk.
+        if final_target.parent() != Some(canonical_archive_dir.as_path()) {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("archive target escapes archive directory".to_string()),
+            });
+        }
+        tokio::fs::rename(&canonical_skill_dir, &final_target).await?;
         Ok(ToolResult {
             success: true,
             output: format!("Archived skill '{slug}' to {}", final_target.display()),
             error: None,
         })
+    }
+}
+
+// ─── Rollback helpers (used by `patch` and `write_file` audit failure paths) ─
+
+async fn restore_snapshot(target: &Path, snapshot: Option<&str>) {
+    if let Some(s) = snapshot
+        && let Err(e) = tokio::fs::write(target, s).await
+    {
+        tracing::warn!(
+            "Failed to restore snapshot for {} after audit rollback: {e}",
+            target.display()
+        );
+    }
+}
+
+async fn rollback_write(target: &Path, snapshot: Option<&[u8]>, target_existed: bool) {
+    if target_existed {
+        if let Some(bytes) = snapshot
+            && let Err(e) = tokio::fs::write(target, bytes).await
+        {
+            tracing::warn!(
+                "Failed to restore {} after audit rollback: {e}",
+                target.display()
+            );
+        }
+    } else if let Err(e) = tokio::fs::remove_file(target).await {
+        tracing::warn!(
+            "Failed to remove {} after audit rollback: {e}",
+            target.display()
+        );
     }
 }
 
@@ -733,7 +917,7 @@ mod tests {
     async fn skill_manage_patch_atomically_updates_md() {
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
 
         let result = tool
             .execute(json!({
@@ -769,7 +953,7 @@ mod tests {
     async fn skill_manage_patch_rejects_invalid_content() {
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
 
         // No front-matter → validation rejects.
         let result = tool
@@ -792,7 +976,7 @@ mod tests {
     #[tokio::test]
     async fn skill_manage_patch_rejects_missing_skill() {
         let dir = tempdir();
-        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
         let result = tool
             .execute(json!({
                 "action": "patch",
@@ -811,7 +995,7 @@ mod tests {
     async fn skill_manage_write_file_creates_references_md() {
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
 
         let result = tool
             .execute(json!({
@@ -840,7 +1024,7 @@ mod tests {
     async fn skill_manage_write_file_rejects_bad_prefix() {
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
 
         for bad in [
             "SKILL.md",
@@ -871,7 +1055,7 @@ mod tests {
     async fn skill_manage_write_file_enforces_size_cap() {
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
 
         let oversized = "x".repeat(MAX_FILE_BYTES + 1);
         let result = tool
@@ -892,7 +1076,7 @@ mod tests {
     async fn skill_manage_archive_moves_skill() {
         let dir = tempdir();
         write_skill(dir.path(), "obsolete", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
 
         let result = tool
             .execute(json!({ "action": "archive", "slug": "obsolete" }))
@@ -921,7 +1105,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
         let result = tool
             .execute(json!({ "action": "archive", "slug": "obsolete" }))
             .await
@@ -941,11 +1125,229 @@ mod tests {
     async fn skill_manage_rejects_unknown_action() {
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
-        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
         let result = tool
             .execute(json!({ "action": "nuke", "slug": "deploy" }))
             .await
             .unwrap();
         assert!(!result.success);
+    }
+
+    // ─── Symlink rejection (safe_skill_dir boundary) ────────
+    //
+    // These tests verify that a symlinked `workspace/skills/<slug>` cannot be
+    // used to redirect mutating operations outside the canonical skills root.
+
+    #[cfg(unix)]
+    fn symlink_skill_dir(workspace: &Path, slug: &str, real_target: &Path) {
+        let link_path = workspace.join("skills").join(slug);
+        std::fs::create_dir_all(workspace.join("skills")).unwrap();
+        std::os::unix::fs::symlink(real_target, &link_path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn skill_manage_patch_rejects_symlinked_skill_dir() {
+        let dir = tempdir();
+        // Real skill directory lives elsewhere; the slug entry in workspace
+        // skills is a symlink that points at it. A naive resolver would
+        // happily patch through the symlink.
+        let real_dir = dir.path().join("elsewhere");
+        tokio::fs::create_dir_all(&real_dir).await.unwrap();
+        tokio::fs::write(real_dir.join("SKILL.md"), VALID_SKILL)
+            .await
+            .unwrap();
+        symlink_skill_dir(dir.path(), "deploy", &real_dir);
+
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
+        let result = tool
+            .execute(json!({
+                "action": "patch",
+                "slug": "deploy",
+                "content": VALID_SKILL,
+                "reason": "should be refused",
+            }))
+            .await
+            .unwrap();
+        assert!(
+            !result.success,
+            "patch through symlinked skill dir must be refused"
+        );
+        assert!(result.error.unwrap_or_default().contains("symlink"));
+        // Original SKILL.md untouched.
+        let on_disk = tokio::fs::read_to_string(real_dir.join("SKILL.md"))
+            .await
+            .unwrap();
+        assert_eq!(on_disk, VALID_SKILL);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn skill_manage_write_file_rejects_symlinked_skill_dir() {
+        let dir = tempdir();
+        let real_dir = dir.path().join("elsewhere");
+        tokio::fs::create_dir_all(&real_dir).await.unwrap();
+        tokio::fs::write(real_dir.join("SKILL.md"), VALID_SKILL)
+            .await
+            .unwrap();
+        symlink_skill_dir(dir.path(), "deploy", &real_dir);
+
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
+        let result = tool
+            .execute(json!({
+                "action": "write_file",
+                "slug": "deploy",
+                "file_path": "references/note.md",
+                "content": "should not land",
+            }))
+            .await
+            .unwrap();
+        assert!(
+            !result.success,
+            "write_file through symlinked skill dir must be refused"
+        );
+        assert!(result.error.unwrap_or_default().contains("symlink"));
+        assert!(!real_dir.join("references").join("note.md").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn skill_manage_archive_rejects_symlinked_skill_dir() {
+        let dir = tempdir();
+        let real_dir = dir.path().join("elsewhere");
+        tokio::fs::create_dir_all(&real_dir).await.unwrap();
+        tokio::fs::write(real_dir.join("SKILL.md"), VALID_SKILL)
+            .await
+            .unwrap();
+        symlink_skill_dir(dir.path(), "deploy", &real_dir);
+
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
+        let result = tool
+            .execute(json!({ "action": "archive", "slug": "deploy" }))
+            .await
+            .unwrap();
+        assert!(
+            !result.success,
+            "archive of symlinked skill dir must be refused"
+        );
+        assert!(result.error.unwrap_or_default().contains("symlink"));
+        // Symlink still in place, real dir untouched.
+        assert!(dir.path().join("skills").join("deploy").exists());
+        assert!(real_dir.join("SKILL.md").exists());
+    }
+
+    // ─── Post-mutation audit with rollback ──────────────────
+
+    #[tokio::test]
+    async fn skill_manage_patch_rolls_back_on_audit_failure() {
+        // Skill dir contains a `scripts/foo.sh`. With `allow_scripts: false`,
+        // post-mutation audit fails — the SKILL.md must be rolled back to its
+        // pre-patch content so the user is not left with a half-applied edit
+        // on a skill the loader would reject.
+        let dir = tempdir();
+        write_skill(dir.path(), "deploy", VALID_SKILL).await;
+        let scripts_dir = dir.path().join("skills").join("deploy").join("scripts");
+        tokio::fs::create_dir_all(&scripts_dir).await.unwrap();
+        tokio::fs::write(scripts_dir.join("foo.sh"), "#!/bin/sh\necho hi\n")
+            .await
+            .unwrap();
+
+        let tool = SkillManageTool::new(
+            dir.path().to_path_buf(),
+            cfg_no_cooldown(),
+            false, // allow_scripts: false → audit will reject scripts/foo.sh
+        );
+
+        let new_content = "---\nname: deploy\ndescription: rewritten\n---\n\n# Deploy v2\n";
+        let result = tool
+            .execute(json!({
+                "action": "patch",
+                "slug": "deploy",
+                "content": new_content,
+                "reason": "rewrite",
+            }))
+            .await
+            .unwrap();
+        assert!(!result.success, "patch on audit-failing skill must fail");
+        let err = result.error.unwrap_or_default();
+        assert!(
+            err.contains("rolled back"),
+            "expected rollback note, got: {err}"
+        );
+        // SKILL.md restored to original.
+        let on_disk =
+            tokio::fs::read_to_string(dir.path().join("skills").join("deploy").join("SKILL.md"))
+                .await
+                .unwrap();
+        assert_eq!(on_disk, VALID_SKILL);
+    }
+
+    #[tokio::test]
+    async fn skill_manage_write_file_audit_failure_removes_file() {
+        // Write a `scripts/foo.sh` with `allow_scripts: false`. Audit rejects
+        // it → the newly written file must be removed (target did not exist
+        // before the write).
+        let dir = tempdir();
+        write_skill(dir.path(), "deploy", VALID_SKILL).await;
+
+        let tool = SkillManageTool::new(
+            dir.path().to_path_buf(),
+            cfg_no_cooldown(),
+            false, // allow_scripts: false
+        );
+
+        let result = tool
+            .execute(json!({
+                "action": "write_file",
+                "slug": "deploy",
+                "file_path": "scripts/foo.sh",
+                "content": "#!/bin/sh\necho hi\n",
+            }))
+            .await
+            .unwrap();
+        assert!(
+            !result.success,
+            "write of script under allow_scripts=false must fail"
+        );
+        let err = result.error.unwrap_or_default();
+        assert!(
+            err.contains("rolled back"),
+            "expected rollback note, got: {err}"
+        );
+        // File removed (didn't exist before, so rollback = delete).
+        assert!(
+            !dir.path()
+                .join("skills")
+                .join("deploy")
+                .join("scripts")
+                .join("foo.sh")
+                .exists(),
+            "rollback should have removed the new script file"
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_manage_archive_pins_target_under_canonical_skills_root() {
+        // Sanity check that `archive` builds the target inside the canonical
+        // `.archive` directory under skills, not anywhere else.
+        let dir = tempdir();
+        write_skill(dir.path(), "obsolete", VALID_SKILL).await;
+        let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown(), true);
+        let result = tool
+            .execute(json!({ "action": "archive", "slug": "obsolete" }))
+            .await
+            .unwrap();
+        assert!(result.success, "{:?}", result.error);
+        let archived = dir
+            .path()
+            .join("skills")
+            .join(".archive")
+            .join("obsolete")
+            .join("SKILL.md");
+        assert!(archived.exists());
+        // Archived path is under canonical skills root.
+        let canonical_skills = dir.path().join("skills").canonicalize().unwrap();
+        let canonical_archived = archived.canonicalize().unwrap();
+        assert!(canonical_archived.starts_with(&canonical_skills));
     }
 }
