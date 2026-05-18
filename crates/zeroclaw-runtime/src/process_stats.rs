@@ -10,9 +10,12 @@
 //! there's no baseline yet; the first refresh after gateway boot fills
 //! it in.
 
+#[cfg(target_os = "linux")]
 use parking_lot::Mutex;
 use serde::Serialize;
+#[cfg(target_os = "linux")]
 use std::sync::OnceLock;
+#[cfg(target_os = "linux")]
 use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize)]
@@ -43,13 +46,16 @@ impl ProcessStats {
     }
 }
 
+#[cfg(target_os = "linux")]
 struct LastSample {
     wall: Instant,
     process_ticks: u64,
 }
 
+#[cfg(target_os = "linux")]
 static LAST: OnceLock<Mutex<Option<LastSample>>> = OnceLock::new();
 
+#[cfg(target_os = "linux")]
 fn last() -> &'static Mutex<Option<LastSample>> {
     LAST.get_or_init(|| Mutex::new(None))
 }
