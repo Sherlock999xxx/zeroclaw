@@ -848,9 +848,9 @@ pub fn all_tools_with_runtime(
         // zeroclaw_tools::sessions but NOT registered by default. They are
         // destructive operations (clear/delete conversation history) and
         // should only be enabled by callers that explicitly need them
-        // (e.g., orchestration dashboards). To enable:
-        //   tool_arcs.push(Arc::new(SessionResetTool::new(backend.clone(), security.clone())));
-        //   tool_arcs.push(Arc::new(SessionDeleteTool::new(backend, security.clone())));
+        // (e.g., orchestration dashboards). Agent-callable registrations must
+        // use SessionOwnershipScope so one agent cannot reset/delete another
+        // agent's sessions. The unscoped constructors are operator/admin only.
     }
 
     // LinkedIn integration (config-gated)
