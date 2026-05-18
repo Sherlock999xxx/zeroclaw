@@ -410,11 +410,6 @@ async fn handle_socket(
                 return;
             }
         };
-    // Inject the gateway's BroadcastObserver so that lifecycle events emitted
-    // inside Agent::turn_streamed (AgentStart, LlmRequest, LlmResponse,
-    // TurnComplete, AgentEnd) are broadcast to the SSE /api/events stream.
-    // Without this injection the WS path is dark to SSE dashboard clients.
-    agent.set_observer(state.observer.clone());
     agent.set_memory_session_id(Some(memory_session_id));
     if !stored_messages.is_empty() {
         agent.seed_history(&stored_messages);
@@ -715,6 +710,13 @@ async fn process_chat_message(
         "model": state.model,
     }));
 
+    // Broadcast agent_start event
+    let _ = state.event_tx.send(serde_json::json!({
+        "type": "agent_start",
+        "provider": provider_label,
+        "model": state.model,
+    }));
+
     // Set session state to running
     let turn_id = uuid::Uuid::new_v4().to_string();
     if let Some(ref backend) = state.session_backend {
@@ -973,7 +975,7 @@ async fn process_chat_message(
         // Broadcast agent_end event
         let _ = state.event_tx.send(serde_json::json!({
             "type": "agent_end",
-            "model_provider": provider_label,
+            "provider": provider_label,
             "model": state.model,
         }));
 
@@ -1086,7 +1088,7 @@ async fn process_chat_message(
             // Broadcast agent_end event
             let _ = state.event_tx.send(serde_json::json!({
                 "type": "agent_end",
-                "model_provider": provider_label,
+                "provider": provider_label,
                 "model": state.model,
             }));
 

@@ -84,9 +84,9 @@ pub async fn run(config: Config, event_tx: EventBroadcast) -> Result<()> {
     //    which could leave some overdue jobs waiting across many cycles
     //    if the machine was off for a while. The catch-up phase fetches
     //    without the `max_tasks` limit so every missed job fires once.
-    //    Controlled by `[scheduler] catch_up_on_startup` (default: true).
-    if config.scheduler.catch_up_on_startup {
-        catch_up_overdue_jobs(&config, &event_tx).await;
+    //    Controlled by `[cron] catch_up_on_startup` (default: true).
+    if config.cron.catch_up_on_startup {
+        catch_up_overdue_jobs(&config, &security, &event_tx).await;
     } else {
         ::zeroclaw_log::record!(
             INFO,
@@ -115,7 +115,7 @@ pub async fn run(config: Config, event_tx: EventBroadcast) -> Result<()> {
             }
         };
 
-        process_due_jobs(&config, jobs, SCHEDULER_COMPONENT, &event_tx).await;
+        process_due_jobs(&config, &security, jobs, SCHEDULER_COMPONENT, &event_tx).await;
     }
 }
 
@@ -145,7 +145,11 @@ fn resolve_owning_agent<'a>(config: &'a Config, job: &CronJob) -> Option<&'a str
 ///
 /// Called once at scheduler startup so that jobs missed during downtime
 /// (e.g. late boot, daemon restart) are caught up immediately.
-async fn catch_up_overdue_jobs(config: &Config, event_tx: &EventBroadcast) {
+async fn catch_up_overdue_jobs(
+    config: &Config,
+    security: &Arc<SecurityPolicy>,
+    event_tx: &EventBroadcast,
+) {
     let now = Utc::now();
     let jobs = match all_overdue_jobs(config, now) {
         Ok(jobs) => jobs,
@@ -177,7 +181,7 @@ async fn catch_up_overdue_jobs(config: &Config, event_tx: &EventBroadcast) {
         "Scheduler startup: catching up overdue jobs"
     );
 
-    process_due_jobs(config, jobs, SCHEDULER_COMPONENT, event_tx).await;
+    process_due_jobs(config, security, jobs, SCHEDULER_COMPONENT, event_tx).await;
 
     ::zeroclaw_log::record!(
         INFO,
@@ -187,25 +191,8 @@ async fn catch_up_overdue_jobs(config: &Config, event_tx: &EventBroadcast) {
 }
 
 pub async fn execute_job_now(config: &Config, job: &CronJob) -> (bool, String) {
-    use zeroclaw_log::Instrument;
-    let Some(agent_alias) = resolve_owning_agent(config, job) else {
-        return (
-            false,
-            format!(
-                "cron job {id:?} has no owning agent; add the alias to an [agents.<x>].cron_jobs list",
-                id = job.id
-            ),
-        );
-    };
-    let agent_alias = agent_alias.to_string();
-    let security = match SecurityPolicy::for_agent(config, &agent_alias) {
-        Ok(s) => s,
-        Err(e) => return (false, format!("agent {agent_alias} risk profile: {e}")),
-    };
-    let span = zeroclaw_log::attribution_span!(job);
-    Box::pin(execute_job_with_retry(config, &security, &agent_alias, job))
-        .instrument(span)
-        .await
+    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    Box::pin(execute_job_with_retry(config, &security, job)).await
 }
 
 async fn execute_job_with_retry(
@@ -213,7 +200,6 @@ async fn execute_job_with_retry(
     security: &SecurityPolicy,
     agent_alias: &str,
     job: &CronJob,
-    observer: Option<Arc<dyn crate::observability::Observer>>,
 ) -> (bool, String) {
     let mut last_output = String::new();
     let retries = config.reliability.scheduler_retries;
@@ -222,7 +208,7 @@ async fn execute_job_with_retry(
     for attempt in 0..=retries {
         let (success, output) = match job.job_type {
             JobType::Shell => run_job_command(config, security, job).await,
-            JobType::Agent => Box::pin(run_agent_job(config, security, agent_alias, job)).await,
+            JobType::Agent => Box::pin(run_agent_job(config, security, job)).await,
         };
         last_output = output;
 
@@ -250,7 +236,6 @@ async fn process_due_jobs(
     jobs: Vec<CronJob>,
     component: &str,
     event_tx: &EventBroadcast,
-    observer: Option<Arc<dyn crate::observability::Observer>>,
 ) {
     // Refresh scheduler health on every successful poll cycle, including idle cycles.
     crate::health::mark_component_ok(component);
@@ -273,14 +258,13 @@ async fn process_due_jobs(
         };
         let config = config.clone();
         let component = component.to_owned();
-        Some(async move {
+        async move {
             Box::pin(execute_and_persist_job(
                 &config,
                 security.as_ref(),
                 &agent_alias,
                 &job,
                 &component,
-                observer,
             ))
             .await
         })
@@ -316,16 +300,12 @@ async fn execute_and_persist_job(
     agent_alias: &str,
     job: &CronJob,
     component: &str,
-    observer: Option<Arc<dyn crate::observability::Observer>>,
 ) -> (String, bool, String) {
     crate::health::mark_component_ok(component);
     warn_if_high_frequency_agent_job(job);
 
     let started_at = Utc::now();
-    let span = zeroclaw_log::attribution_span!(job);
-    let (success, output) = Box::pin(execute_job_with_retry(config, security, agent_alias, job))
-        .instrument(span)
-        .await;
+    let (success, output) = Box::pin(execute_job_with_retry(config, security, job)).await;
     let finished_at = Utc::now();
     let success = Box::pin(persist_job_result(
         config,
@@ -345,7 +325,6 @@ async fn run_agent_job(
     security: &SecurityPolicy,
     agent_alias: &str,
     job: &CronJob,
-    observer: Option<Arc<dyn crate::observability::Observer>>,
 ) -> (bool, String) {
     // Cron is one of two SubAgent spawn sites; the other is the
     // agent-loop `spawn_subagent` tool. Both funnel through
@@ -458,24 +437,21 @@ async fn run_agent_job(
     };
     let run_result = match job.session_target {
         SessionTarget::Main | SessionTarget::Isolated => {
-            Box::pin(
-                crate::agent::run(
-                    cron_config,
-                    agent_alias,
-                    Some(prefixed_prompt),
-                    None,
-                    model_override,
-                    config
-                        .model_provider_for_agent(agent_alias)
-                        .and_then(|e| e.temperature),
-                    vec![],
-                    false,
-                    Some(session_path.clone()),
-                    job.allowed_tools.clone(),
-                    run_overrides,
-                )
-                .instrument(subagent_span),
-            )
+            Box::pin(crate::agent::run(
+                cron_config,
+                Some(prefixed_prompt),
+                None,
+                model_override,
+                config
+                    .providers
+                    .fallback_provider()
+                    .and_then(|e| e.temperature)
+                    .unwrap_or(0.7),
+                vec![],
+                false,
+                Some(session_path.clone()),
+                job.allowed_tools.clone(),
+            ))
             .await
         }
     };
@@ -1237,13 +1213,7 @@ mod tests {
         .unwrap();
         let job = test_job("sh ./retry-once.sh");
 
-        let (success, output) = Box::pin(execute_job_with_retry(
-            &config,
-            &security,
-            "test-agent",
-            &job,
-        ))
-        .await;
+        let (success, output) = Box::pin(execute_job_with_retry(&config, &security, &job)).await;
         assert!(success);
         assert!(output.contains("recovered"));
     }
@@ -1258,13 +1228,7 @@ mod tests {
 
         let job = test_job("ls always_missing_for_retry_test");
 
-        let (success, output) = Box::pin(execute_job_with_retry(
-            &config,
-            &security,
-            "test-agent",
-            &job,
-        ))
-        .await;
+        let (success, output) = Box::pin(execute_job_with_retry(&config, &security, &job)).await;
         assert!(!success);
         assert!(output.contains("always_missing_for_retry_test"));
     }
@@ -1278,8 +1242,7 @@ mod tests {
         job.prompt = Some("Say hello".into());
         let security = test_security(&config);
 
-        let (success, output) =
-            Box::pin(run_agent_job(&config, &security, "test-agent", &job)).await;
+        let (success, output) = Box::pin(run_agent_job(&config, &security, &job)).await;
         assert!(!success);
         assert!(output.contains("agent job failed:"));
     }
@@ -1298,8 +1261,7 @@ mod tests {
         job.prompt = Some("Say hello".into());
         let security = test_security(&config);
 
-        let (success, output) =
-            Box::pin(run_agent_job(&config, &security, "test-agent", &job)).await;
+        let (success, output) = Box::pin(run_agent_job(&config, &security, &job)).await;
         assert!(!success);
         assert!(output.contains("blocked by security policy"));
         assert!(output.contains("read-only"));
@@ -1319,8 +1281,7 @@ mod tests {
         job.prompt = Some("Say hello".into());
         let security = test_security(&config);
 
-        let (success, output) =
-            Box::pin(run_agent_job(&config, &security, "test-agent", &job)).await;
+        let (success, output) = Box::pin(run_agent_job(&config, &security, &job)).await;
         assert!(!success);
         assert!(output.contains("blocked by security policy"));
         assert!(output.contains("rate limit exceeded"));
@@ -1333,7 +1294,7 @@ mod tests {
         let component = unique_component("scheduler-idle");
 
         crate::health::mark_component_error(&component, "pre-existing error");
-        process_due_jobs(&config, Vec::new(), &component, &None).await;
+        process_due_jobs(&config, &security, Vec::new(), &component, &None).await;
 
         let snapshot = crate::health::snapshot_json();
         let entry = &snapshot["components"][component.as_str()];
@@ -1350,7 +1311,7 @@ mod tests {
         let component = unique_component("scheduler-fail");
 
         crate::health::mark_component_ok(&component);
-        process_due_jobs(&config, vec![job], &component, &None).await;
+        process_due_jobs(&config, &security, vec![job], &component, &None).await;
 
         let snapshot = crate::health::snapshot_json();
         let entry = &snapshot["components"][component.as_str()];
@@ -1874,7 +1835,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<serde_json::Value>(16);
         let event_tx: EventBroadcast = Some(tx);
 
-        process_due_jobs(&config, vec![job], &component, &event_tx).await;
+        process_due_jobs(&config, &security, vec![job], &component, &event_tx).await;
 
         let event = rx.try_recv().expect("should receive a broadcast event");
         assert_eq!(event["type"], "cron_result");
@@ -1900,7 +1861,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<serde_json::Value>(16);
         let event_tx: EventBroadcast = Some(tx);
 
-        process_due_jobs(&config, vec![job], &component, &event_tx).await;
+        process_due_jobs(&config, &security, vec![job], &component, &event_tx).await;
 
         let event = rx.try_recv().expect("should receive a broadcast event");
         assert_eq!(event["type"], "cron_result");
@@ -1917,7 +1878,7 @@ mod tests {
         let component = unique_component("broadcast-none");
 
         // event_tx = None — should complete without panic.
-        process_due_jobs(&config, vec![job], &component, &None).await;
+        process_due_jobs(&config, &security, vec![job], &component, &None).await;
     }
 
     #[tokio::test]
@@ -1932,7 +1893,7 @@ mod tests {
         // process_due_jobs must not panic when there are no subscribers.
         let event_tx: EventBroadcast = Some(tx);
 
-        process_due_jobs(&config, vec![job], &component, &event_tx).await;
+        process_due_jobs(&config, &security, vec![job], &component, &event_tx).await;
         // If we got here without panic, the test passes.
     }
 }

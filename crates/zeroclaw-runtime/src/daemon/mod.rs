@@ -178,7 +178,6 @@ pub async fn run(
             "gateway",
             initial_backoff,
             max_backoff,
-            Some(event_tx.clone()),
             move || {
                 let cfg = gateway_cfg.clone();
                 let host = gateway_host.clone();
@@ -201,7 +200,6 @@ pub async fn run(
                 "channels",
                 initial_backoff,
                 max_backoff,
-                Some(event_tx.clone()),
                 move || {
                     let cfg = channels_cfg.clone();
                     let start = channels_start.clone();
@@ -228,16 +226,23 @@ pub async fn run(
 
     // Wire up MQTT SOP listener if configured and referenced by an enabled agent
     if let Some(mqtt_start) = subsystems.mqtt_start {
-        let active_mqtt: std::collections::HashSet<String> = config
-            .agents
-            .values()
-            .filter(|a| a.enabled)
-            .flat_map(|a| a.channels.iter().map(|c| c.as_str().to_string()))
-            .collect();
-        let mut mqtt_started = false;
-        for (alias, mqtt_config) in &config.channels.mqtt {
-            if !active_mqtt.contains(&format!("mqtt.{alias}")) {
-                continue;
+        if let Some(ref mqtt_config) = config.channels.mqtt {
+            if mqtt_config.enabled {
+                let mqtt_cfg = mqtt_config.clone();
+                let mqtt_start = std::sync::Arc::new(mqtt_start);
+                handles.push(spawn_component_supervisor(
+                    "mqtt",
+                    initial_backoff,
+                    max_backoff,
+                    move || {
+                        let cfg = mqtt_cfg.clone();
+                        let start = mqtt_start.clone();
+                        async move { start(cfg).await }
+                    },
+                ));
+            } else {
+                tracing::info!("MQTT channel configured but disabled (enabled = false)");
+                crate::health::mark_component_ok("mqtt");
             }
             let mqtt_cfg = mqtt_config.clone();
             let mqtt_start = std::sync::Arc::new(mqtt_start);
@@ -267,7 +272,6 @@ pub async fn run(
             "heartbeat",
             initial_backoff,
             max_backoff,
-            Some(event_tx.clone()),
             move || {
                 let cfg = heartbeat_cfg.clone();
                 async move { Box::pin(run_heartbeat_worker(cfg)).await }
@@ -282,7 +286,6 @@ pub async fn run(
             "scheduler",
             initial_backoff,
             max_backoff,
-            Some(event_tx.clone()),
             move || {
                 let cfg = scheduler_cfg.clone();
                 let tx = scheduler_event_tx.clone();
@@ -308,21 +311,6 @@ pub async fn run(
 
     // Wait for shutdown (SIGINT/SIGTERM/Ctrl+C) or reload (in-process channel).
     let exit = wait_for_exit_signal(reload_rx).await?;
-    // Broadcast daemon lifecycle event so SSE clients know without checking tracing output.
-    match exit {
-        DaemonExit::Reload => {
-            let _ = event_tx.send(serde_json::json!({
-                "type": "daemon_reload",
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-            }));
-        }
-        DaemonExit::Shutdown => {
-            let _ = event_tx.send(serde_json::json!({
-                "type": "daemon_shutdown",
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-            }));
-        }
-    }
     crate::health::mark_component_error(
         "daemon",
         match exit {
@@ -385,7 +373,6 @@ fn spawn_component_supervisor<F, Fut>(
     name: &'static str,
     initial_backoff_secs: u64,
     max_backoff_secs: u64,
-    event_tx: Option<tokio::sync::broadcast::Sender<serde_json::Value>>,
     mut run_component: F,
 ) -> JoinHandle<()>
 where
@@ -401,13 +388,7 @@ where
             match run_component().await {
                 Ok(()) => {
                     crate::health::mark_component_error(name, "component exited unexpectedly");
-                    ::zeroclaw_log::record!(
-                        WARN,
-                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
-                            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
-                            .with_attrs(::serde_json::json!({"name": name})),
-                        "Daemon component '' exited unexpectedly"
-                    );
+                    tracing::warn!("Daemon component '{name}' exited unexpectedly");
                     // Clean exit — reset backoff since the component ran successfully
                     backoff = initial_backoff_secs.max(1);
                 }
@@ -426,15 +407,8 @@ where
             }
 
             crate::health::bump_component_restart(name);
-            // Broadcast component restart so SSE clients know without checking tracing output.
-            if let Some(ref tx) = event_tx {
-                let _ = tx.send(serde_json::json!({
-                    "type": "component_restart",
-                    "component": name,
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
-                }));
-            }
             tokio::time::sleep(Duration::from_secs(backoff)).await;
+            // Double backoff AFTER sleeping so first error uses initial_backoff
             backoff = backoff.saturating_mul(2).min(max_backoff);
         }
     })
@@ -446,21 +420,13 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
     };
     use std::sync::Arc;
 
-    let agent_alias = config.heartbeat.agent.trim().to_string();
-    if agent_alias.is_empty() {
-        anyhow::bail!(
-            "heartbeat worker requires `[heartbeat] agent = \"<alias>\"` naming a configured agent"
-        );
-    }
-    if config.agent(&agent_alias).is_none() {
-        anyhow::bail!(
-            "[heartbeat] agent = {agent_alias:?} is not configured ([agents.{agent_alias}] missing)"
-        );
-    }
-
     let observer: std::sync::Arc<dyn crate::observability::Observer> =
         std::sync::Arc::from(crate::observability::create_observer(&config.observability));
-    let engine = HeartbeatEngine::new(config.heartbeat.clone(), config.data_dir.clone(), observer);
+    let engine = HeartbeatEngine::new(
+        config.heartbeat.clone(),
+        config.workspace_dir.clone(),
+        observer,
+    );
     let metrics = engine.metrics();
     let delivery = resolve_heartbeat_delivery(&config)?;
     let two_phase = config.heartbeat.two_phase;
@@ -588,7 +554,6 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                 false,
                 None,
                 None,
-                crate::agent::loop_::AgentRunOverrides::default(),
             ));
             let phase1_result = if config.heartbeat.task_timeout_secs > 0 {
                 match tokio::time::timeout(
@@ -721,7 +686,6 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                 false,
                 None,
                 None,
-                crate::agent::loop_::AgentRunOverrides::default(),
             ));
             let phase2_result = if config.heartbeat.task_timeout_secs > 0 {
                 match tokio::time::timeout(
@@ -1215,7 +1179,7 @@ mod tests {
 
     #[tokio::test]
     async fn supervisor_marks_error_and_restart_on_failure() {
-        let handle = spawn_component_supervisor("daemon-test-fail", 1, 1, None, || async {
+        let handle = spawn_component_supervisor("daemon-test-fail", 1, 1, || async {
             anyhow::bail!("boom")
         });
 
@@ -1237,8 +1201,7 @@ mod tests {
 
     #[tokio::test]
     async fn supervisor_marks_unexpected_exit_as_error() {
-        let handle =
-            spawn_component_supervisor("daemon-test-exit", 1, 1, None, || async { Ok(()) });
+        let handle = spawn_component_supervisor("daemon-test-exit", 1, 1, || async { Ok(()) });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle.abort();
