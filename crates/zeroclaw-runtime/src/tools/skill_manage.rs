@@ -215,7 +215,11 @@ impl Tool for SkillViewTool {
         let mut output = format!("# Skill '{slug}'\n\n## Front-matter\n\n```yaml\n{front}\n```\n");
         if !body.trim().is_empty() {
             let truncated = if body.len() > BODY_PREVIEW_CHARS {
-                format!("{}…\n[truncated; full body is {} bytes]", &body[..BODY_PREVIEW_CHARS], body.len())
+                format!(
+                    "{}…\n[truncated; full body is {} bytes]",
+                    &body[..BODY_PREVIEW_CHARS],
+                    body.len()
+                )
             } else {
                 body
             };
@@ -375,6 +379,18 @@ impl SkillManageTool {
             .and_then(|v| v.as_str())
             .unwrap_or("Skill review");
 
+        // Check the kill switch before the cooldown so the agent gets a
+        // distinct, actionable error when improvement is disabled — otherwise
+        // both reasons collapse onto the cooldown message and the agent
+        // wastes turns waiting for a cooldown that will never clear.
+        if !self.improvement_config.enabled {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("Skill improvement is disabled (enabled: false)".to_string()),
+            });
+        }
+
         // Construct the improver with the *real* cooldown from runtime config,
         // not the cooldown_secs=0 we used to pass. The `should_improve_skill`
         // check reads the skill's SKILL.md `updated_at:` front-matter field
@@ -525,10 +541,7 @@ impl SkillManageTool {
         tokio::fs::rename(&skill_dir, &final_target).await?;
         Ok(ToolResult {
             success: true,
-            output: format!(
-                "Archived skill '{slug}' to {}",
-                final_target.display()
-            ),
+            output: format!("Archived skill '{slug}' to {}", final_target.display()),
             error: None,
         })
     }
@@ -671,11 +684,21 @@ mod tests {
     async fn skill_view_lists_support_files() {
         let dir = tempdir();
         let skill_dir = dir.path().join("skills").join("deploy");
-        tokio::fs::create_dir_all(skill_dir.join("references")).await.unwrap();
-        tokio::fs::create_dir_all(skill_dir.join("scripts")).await.unwrap();
-        tokio::fs::write(skill_dir.join("SKILL.md"), VALID_SKILL).await.unwrap();
-        tokio::fs::write(skill_dir.join("references").join("api.md"), "...").await.unwrap();
-        tokio::fs::write(skill_dir.join("scripts").join("verify.sh"), "...").await.unwrap();
+        tokio::fs::create_dir_all(skill_dir.join("references"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(skill_dir.join("scripts"))
+            .await
+            .unwrap();
+        tokio::fs::write(skill_dir.join("SKILL.md"), VALID_SKILL)
+            .await
+            .unwrap();
+        tokio::fs::write(skill_dir.join("references").join("api.md"), "...")
+            .await
+            .unwrap();
+        tokio::fs::write(skill_dir.join("scripts").join("verify.sh"), "...")
+            .await
+            .unwrap();
 
         let tool = SkillViewTool::new(dir.path().to_path_buf());
         let result = tool.execute(json!({ "slug": "deploy" })).await.unwrap();
@@ -705,11 +728,10 @@ mod tests {
             .unwrap();
         assert!(result.success, "patch failed: {:?}", result.error);
 
-        let on_disk = tokio::fs::read_to_string(
-            dir.path().join("skills").join("deploy").join("SKILL.md"),
-        )
-        .await
-        .unwrap();
+        let on_disk =
+            tokio::fs::read_to_string(dir.path().join("skills").join("deploy").join("SKILL.md"))
+                .await
+                .unwrap();
         assert!(on_disk.contains("pre-flight check"));
         assert!(on_disk.contains("0.1.1"));
         assert!(on_disk.contains("updated_at:"));
@@ -742,11 +764,10 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.success);
-        let on_disk = tokio::fs::read_to_string(
-            dir.path().join("skills").join("deploy").join("SKILL.md"),
-        )
-        .await
-        .unwrap();
+        let on_disk =
+            tokio::fs::read_to_string(dir.path().join("skills").join("deploy").join("SKILL.md"))
+                .await
+                .unwrap();
         assert_eq!(on_disk, VALID_SKILL);
     }
 
@@ -821,11 +842,10 @@ mod tests {
                 .unwrap();
             assert!(!result.success, "expected rejection for {bad:?}");
         }
-        let md = tokio::fs::read_to_string(
-            dir.path().join("skills").join("deploy").join("SKILL.md"),
-        )
-        .await
-        .unwrap();
+        let md =
+            tokio::fs::read_to_string(dir.path().join("skills").join("deploy").join("SKILL.md"))
+                .await
+                .unwrap();
         assert_eq!(md, VALID_SKILL);
     }
 
@@ -879,7 +899,9 @@ mod tests {
         write_skill(dir.path(), "obsolete", VALID_SKILL).await;
         let archive_dir = dir.path().join("skills").join(".archive").join("obsolete");
         tokio::fs::create_dir_all(&archive_dir).await.unwrap();
-        tokio::fs::write(archive_dir.join("SKILL.md"), VALID_SKILL).await.unwrap();
+        tokio::fs::write(archive_dir.join("SKILL.md"), VALID_SKILL)
+            .await
+            .unwrap();
 
         let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_no_cooldown());
         let result = tool
@@ -953,11 +975,10 @@ mod tests {
         );
 
         // Original file must be untouched.
-        let on_disk = tokio::fs::read_to_string(
-            dir.path().join("skills").join("deploy").join("SKILL.md"),
-        )
-        .await
-        .unwrap();
+        let on_disk =
+            tokio::fs::read_to_string(dir.path().join("skills").join("deploy").join("SKILL.md"))
+                .await
+                .unwrap();
         assert!(on_disk.contains("Recent"));
         assert!(!on_disk.contains("v2 tweak"));
     }
@@ -983,13 +1004,16 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(result.success, "patch should have proceeded: {:?}", result.error);
+        assert!(
+            result.success,
+            "patch should have proceeded: {:?}",
+            result.error
+        );
 
-        let on_disk = tokio::fs::read_to_string(
-            dir.path().join("skills").join("deploy").join("SKILL.md"),
-        )
-        .await
-        .unwrap();
+        let on_disk =
+            tokio::fs::read_to_string(dir.path().join("skills").join("deploy").join("SKILL.md"))
+                .await
+                .unwrap();
         assert!(on_disk.contains("v2 tweak"));
     }
 
@@ -1010,13 +1034,19 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(result.success, "first patch should proceed: {:?}", result.error);
+        assert!(
+            result.success,
+            "first patch should proceed: {:?}",
+            result.error
+        );
     }
 
     #[tokio::test]
     async fn skill_manage_patch_blocked_when_improvement_disabled() {
-        // `enabled = false` short-circuits `should_improve_skill` regardless
-        // of timestamps. This is the per-tool kill switch.
+        // `enabled = false` is the per-tool kill switch. The error message
+        // must name the disabled state — not the cooldown — so the operator
+        // (or the agent reading the tool history) knows the gate is the
+        // feature flag, not a timer that will eventually clear.
         let dir = tempdir();
         write_skill(dir.path(), "deploy", VALID_SKILL).await;
         let cfg = zeroclaw_config::schema::SkillImprovementConfig {
@@ -1036,7 +1066,7 @@ mod tests {
             .unwrap();
         assert!(!result.success);
         let err = result.error.unwrap_or_default();
-        assert!(err.to_lowercase().contains("cooldown"));
+        assert_eq!(err, "Skill improvement is disabled (enabled: false)");
     }
 
     #[tokio::test]
@@ -1045,9 +1075,7 @@ mod tests {
         // references/) and should NOT be gated by the SKILL.md cooldown.
         let dir = tempdir();
         let recent = chrono::Utc::now().to_rfc3339();
-        let md = format!(
-            "---\nname: deploy\nupdated_at: \"{recent}\"\n---\n\nBody.\n"
-        );
+        let md = format!("---\nname: deploy\nupdated_at: \"{recent}\"\n---\n\nBody.\n");
         write_skill(dir.path(), "deploy", &md).await;
 
         let tool = SkillManageTool::new(dir.path().to_path_buf(), cfg_with_cooldown(3600));
