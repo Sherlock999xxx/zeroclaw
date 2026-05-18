@@ -15,7 +15,7 @@ use tokio::task_local;
 use tokio_util::sync::CancellationToken;
 use zeroclaw_api::tool::Tool;
 use zeroclaw_config::schema::{MultimodalConfig, PacingConfig, SkillImprovementConfig};
-use zeroclaw_providers::{ChatMessage, Provider};
+use zeroclaw_providers::{ChatMessage, ModelProvider};
 
 use crate::observability::Observer;
 use crate::tools::skill_manage::{SkillManageTool, SkillViewTool, SkillsListTool};
@@ -44,9 +44,10 @@ task_local! {
 pub async fn maybe_run_skill_review(
     workspace_dir: PathBuf,
     config: SkillImprovementConfig,
+    allow_scripts: bool,
     history: Vec<ChatMessage>,
     failed_slugs: Vec<String>,
-    provider: &dyn Provider,
+    provider: &dyn ModelProvider,
     provider_name: &str,
     model_name: &str,
     observer: &dyn Observer,
@@ -60,19 +61,28 @@ pub async fn maybe_run_skill_review(
         return;
     }
     if SKILL_REVIEW_ACTIVE.try_with(|()| ()).is_ok() {
-        tracing::debug!("Skill review: recursion guard tripped, skipping nested review");
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+            "Skill review: recursion guard tripped, skipping nested review"
+        );
         return;
     }
     if !should_trigger(&history, config.nudge_interval_iterations) {
-        tracing::debug!(
-            iters = count_tool_iterations(&history),
-            threshold = config.nudge_interval_iterations,
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_attrs(::serde_json::json!({
+                    "iters": count_tool_iterations(&history),
+                    "threshold": config.nudge_interval_iterations,
+                })),
             "Skill review: iteration budget not reached, skipping"
         );
         return;
     }
 
-    let tools: Vec<Box<dyn Tool>> = build_review_tools(workspace_dir.clone(), config.clone());
+    let tools: Vec<Box<dyn Tool>> =
+        build_review_tools(workspace_dir.clone(), config.clone(), allow_scripts);
     let review_input = build_review_input(&failed_slugs);
 
     let mut review_history = history;
@@ -89,7 +99,7 @@ pub async fn maybe_run_skill_review(
                 observer,
                 provider_name,
                 model_name,
-                0.3,            // temperature — low so the fork doesn't ramble
+                Some(0.3),      // temperature — low so the fork doesn't ramble
                 true,           // silent
                 None,           // approval: no human in the loop here
                 "skill_review", // channel_name
@@ -104,6 +114,7 @@ pub async fn maybe_run_skill_review(
                 None,                        // activated_tools
                 None,                        // model_switch_callback
                 pacing,
+                false, // strict_tool_parsing — fork uses default parsing
                 max_tool_result_chars,
                 max_context_tokens,
                 None, // shared_budget
@@ -129,7 +140,13 @@ pub async fn maybe_run_skill_review(
             }
         }
         Err(e) => {
-            tracing::warn!("Skill review fork failed: {e}");
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                    .with_attrs(::serde_json::json!({"error": format!("{}", e)})),
+                "Skill review fork failed"
+            );
         }
     }
 }
@@ -137,12 +154,13 @@ pub async fn maybe_run_skill_review(
 fn build_review_tools(
     workspace_dir: PathBuf,
     config: SkillImprovementConfig,
+    allow_scripts: bool,
 ) -> Vec<Box<dyn Tool>> {
     let wd = Arc::new(workspace_dir);
     vec![
         Box::new(SkillsListTool::new((*wd).clone())),
         Box::new(SkillViewTool::new((*wd).clone())),
-        Box::new(SkillManageTool::new((*wd).clone(), config)),
+        Box::new(SkillManageTool::new((*wd).clone(), config, allow_scripts)),
     ]
 }
 

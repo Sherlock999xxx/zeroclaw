@@ -3773,16 +3773,17 @@ pub async fn run(
                 crate::skills::review::maybe_run_skill_review(
                     workspace_dir,
                     review_config,
+                    config.skills.allow_scripts,
                     history_snapshot,
                     failed_slugs,
-                    provider.as_ref(),
+                    model_provider.as_ref(),
                     &provider_name,
                     &model_name,
                     observer.as_ref(),
                     &config.multimodal,
                     &config.pacing,
-                    config.agent.max_tool_result_chars,
-                    config.agent.max_context_tokens,
+                    agent.max_tool_result_chars,
+                    agent.max_context_tokens,
                     None, // cancellation_token — no parent token in single-shot run
                 )
                 .await;
