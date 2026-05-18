@@ -589,9 +589,10 @@ impl AcpServer {
             .to_string_lossy()
             .into_owned();
 
-        // No default agent — every ACP session is bound to an explicit
-        // agent. Accept `agentAlias` (camelCase) or `agent_alias` / `agent`
-        // from the JSON-RPC params object.
+        // Every ACP session is bound to an explicit agent alias.
+        // Accept `agentAlias` (camelCase) or `agent_alias` / `agent`.
+        // When the client omits the alias and exactly one agent is configured,
+        // auto-select it so single-agent setups work without extra config.
         let agent_alias = params
             .get("agentAlias")
             .or_else(|| params.get("agent_alias"))
@@ -599,14 +600,22 @@ impl AcpServer {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                let mut keys = self.config.agents.keys();
+                if self.config.agents.len() == 1 {
+                    keys.next().cloned()
+                } else {
+                    None
+                }
+            })
             .ok_or_else(|| RpcError {
                 code: INVALID_PARAMS,
                 message: "session/new requires `agentAlias` (alias of a configured \
                           [agents.<alias>] entry)"
                     .to_string(),
                 data: None,
-            })?
-            .to_string();
+            })?;
         if self.config.agent(&agent_alias).is_none() {
             return Err(RpcError {
                 code: INVALID_PARAMS,
@@ -1437,6 +1446,81 @@ mod tests {
         .expect("session/new should create a session");
 
         assert!(result["sessionId"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn session_new_auto_selects_sole_configured_agent_when_alias_omitted() {
+        let cwd = tempfile::tempdir().unwrap();
+        let mut config = Config {
+            data_dir: cwd.path().to_path_buf(),
+            providers: {
+                let mut p = zeroclaw_config::providers::Providers::default();
+                p.models.openrouter.insert(
+                    "default".to_string(),
+                    zeroclaw_config::schema::OpenRouterModelProviderConfig {
+                        base: zeroclaw_config::schema::ModelProviderConfig {
+                            api_key: Some("test-key".to_string()),
+                            model: Some("test-model".to_string()),
+                            ..Default::default()
+                        },
+                    },
+                );
+                p
+            },
+            ..Default::default()
+        };
+        config.risk_profiles.insert(
+            "default".to_string(),
+            zeroclaw_config::schema::RiskProfileConfig::default(),
+        );
+        config.agents.insert(
+            "only-agent".to_string(),
+            zeroclaw_config::schema::AliasedAgentConfig {
+                model_provider: "openrouter.default".into(),
+                risk_profile: "default".to_string(),
+                ..Default::default()
+            },
+        );
+        let server = AcpServer::new(config, AcpServerConfig::default());
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            server.handle_session_new(&serde_json::json!({
+                "cwd": cwd.path().to_string_lossy(),
+                "mcpServers": []
+            })),
+        )
+        .await
+        .expect("session/new should not block")
+        .expect("session/new should auto-select the sole configured agent");
+
+        assert!(result["sessionId"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn session_new_requires_alias_when_multiple_agents_configured() {
+        let mut config = Config::default();
+        config.agents.insert(
+            "agent-one".to_string(),
+            zeroclaw_config::schema::AliasedAgentConfig::default(),
+        );
+        config.agents.insert(
+            "agent-two".to_string(),
+            zeroclaw_config::schema::AliasedAgentConfig::default(),
+        );
+        let server = AcpServer::new(config, AcpServerConfig::default());
+
+        let err = server
+            .handle_session_new(&serde_json::json!({"mcpServers": []}))
+            .await
+            .expect_err("session/new without agentAlias should fail when multiple agents exist");
+
+        assert_eq!(err.code, INVALID_PARAMS);
+        assert!(
+            err.message.contains("agentAlias"),
+            "error should mention agentAlias, got: {}",
+            err.message
+        );
     }
 
     #[test]
