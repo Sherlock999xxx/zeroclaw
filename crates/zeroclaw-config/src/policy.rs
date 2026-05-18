@@ -1823,6 +1823,12 @@ impl SecurityPolicy {
                 return true;
             }
         }
+        for root in &self.allowed_roots_write_only {
+            let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
+            if resolved.starts_with(&canonical) {
+                return false;
+            }
+        }
 
         // Forbidden paths gate after the explicit allowlists so the
         // allowlists can coexist with broad default forbidden roots
