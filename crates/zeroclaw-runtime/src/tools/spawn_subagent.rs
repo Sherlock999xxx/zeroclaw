@@ -385,7 +385,6 @@ mod tests {
         );
     }
 
-
     // ── Tool : Attributable contract ──────────────────────────
     //
     // Every Tool impl carries a structured role + alias the same way
