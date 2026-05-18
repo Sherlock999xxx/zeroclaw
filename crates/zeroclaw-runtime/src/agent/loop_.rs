@@ -8606,4 +8606,128 @@ Let me check the result."#;
 
         assert_eq!(result, "ok");
     }
+
+    // ── apply_policy_tool_filter coverage ─────────────────────
+    //
+    // The dispatch-site filter must consult both the parent agent's
+    // SecurityPolicy.allowed_tools / .excluded_tools AND the
+    // caller-supplied allowed_tools list, with both gates composing
+    // by intersection. A tool name absent from either falls out.
+
+    use zeroclaw_api::tool::Tool as TestTool;
+    use zeroclaw_config::policy::SecurityPolicy as TestPolicy;
+
+    struct NamedMockTool {
+        the_name: &'static str,
+    }
+
+    #[async_trait]
+    impl TestTool for NamedMockTool {
+        fn name(&self) -> &str {
+            self.the_name
+        }
+        fn description(&self) -> &str {
+            ""
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+        ) -> anyhow::Result<crate::tools::ToolResult> {
+            Ok(crate::tools::ToolResult {
+                success: true,
+                output: String::new(),
+                error: None,
+            })
+        }
+    }
+
+    fn mock_tool(name: &'static str) -> Box<dyn TestTool> {
+        Box::new(NamedMockTool { the_name: name })
+    }
+
+    fn tool_names(tools: &[Box<dyn TestTool>]) -> Vec<&str> {
+        tools.iter().map(|t| t.name()).collect()
+    }
+
+    #[test]
+    fn apply_policy_tool_filter_no_gates_keeps_everything() {
+        let mut tools = vec![
+            mock_tool("shell"),
+            mock_tool("spawn_subagent"),
+            mock_tool("memory_recall"),
+        ];
+        super::apply_policy_tool_filter(&mut tools, None, None);
+        assert_eq!(
+            tool_names(&tools),
+            vec!["shell", "spawn_subagent", "memory_recall"]
+        );
+    }
+
+    #[test]
+    fn apply_policy_tool_filter_policy_allowlist_restricts() {
+        let mut tools = vec![
+            mock_tool("shell"),
+            mock_tool("spawn_subagent"),
+            mock_tool("memory_recall"),
+        ];
+        let mut policy = TestPolicy::default();
+        policy.allowed_tools = Some(vec!["shell".into(), "memory_recall".into()]);
+
+        super::apply_policy_tool_filter(&mut tools, Some(&policy), None);
+        assert_eq!(tool_names(&tools), vec!["shell", "memory_recall"]);
+    }
+
+    #[test]
+    fn apply_policy_tool_filter_policy_excluded_subtracts_from_unrestricted() {
+        let mut tools = vec![mock_tool("shell"), mock_tool("spawn_subagent")];
+        let mut policy = TestPolicy::default();
+        policy.excluded_tools = Some(vec!["spawn_subagent".into()]);
+
+        super::apply_policy_tool_filter(&mut tools, Some(&policy), None);
+        assert_eq!(tool_names(&tools), vec!["shell"]);
+    }
+
+    #[test]
+    fn apply_policy_tool_filter_caller_filter_alone_restricts() {
+        let mut tools = vec![
+            mock_tool("shell"),
+            mock_tool("spawn_subagent"),
+            mock_tool("memory_recall"),
+        ];
+        let caller = vec!["memory_recall".to_string()];
+
+        super::apply_policy_tool_filter(&mut tools, None, Some(&caller));
+        assert_eq!(tool_names(&tools), vec!["memory_recall"]);
+    }
+
+    #[test]
+    fn apply_policy_tool_filter_policy_and_caller_intersect() {
+        let mut tools = vec![
+            mock_tool("shell"),
+            mock_tool("spawn_subagent"),
+            mock_tool("memory_recall"),
+        ];
+        let mut policy = TestPolicy::default();
+        policy.allowed_tools = Some(vec!["shell".into(), "memory_recall".into()]);
+        let caller = vec!["shell".to_string(), "spawn_subagent".to_string()];
+
+        super::apply_policy_tool_filter(&mut tools, Some(&policy), Some(&caller));
+        // Only `shell` survives — it's the intersection of the policy
+        // allowlist {shell, memory_recall} and the caller filter
+        // {shell, spawn_subagent}.
+        assert_eq!(tool_names(&tools), vec!["shell"]);
+    }
+
+    #[test]
+    fn apply_policy_tool_filter_policy_deny_all_drops_everything() {
+        let mut tools = vec![mock_tool("shell"), mock_tool("spawn_subagent")];
+        let mut policy = TestPolicy::default();
+        policy.allowed_tools = Some(vec![]);
+
+        super::apply_policy_tool_filter(&mut tools, Some(&policy), None);
+        assert!(tools.is_empty(), "Some(vec![]) on policy must deny every tool");
+    }
 }
