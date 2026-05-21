@@ -11,7 +11,6 @@ use tokio::sync::mpsc;
 use zeroclaw_api::jsonrpc::error_codes::*;
 use zeroclaw_api::jsonrpc::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, RpcOutbound};
 use zeroclaw_api::model_provider::ChatMessage;
-use zeroclaw_config::pairing::PairingGuard;
 use zeroclaw_config::schema::Config;
 use zeroclaw_infra::session_backend::SessionBackend;
 
@@ -33,7 +32,6 @@ pub struct RpcDispatcher {
     config: Config,
     sessions: Arc<SessionStore>,
     rpc: Arc<RpcOutbound>,
-    pairing: Arc<PairingGuard>,
     session_backend: Option<Arc<dyn SessionBackend>>,
     authenticated: bool,
 }
@@ -42,7 +40,6 @@ impl RpcDispatcher {
     pub fn new(
         config: Config,
         sessions: Arc<SessionStore>,
-        pairing: Arc<PairingGuard>,
         session_backend: Option<Arc<dyn SessionBackend>>,
         writer_tx: mpsc::Sender<String>,
     ) -> Self {
@@ -50,7 +47,6 @@ impl RpcDispatcher {
             config,
             sessions,
             rpc: Arc::new(RpcOutbound::new(writer_tx)),
-            pairing,
             session_backend,
             authenticated: false,
         }
@@ -133,15 +129,6 @@ impl RpcDispatcher {
                 format!(
                     "Protocol version mismatch: server={RPC_PROTOCOL_VERSION}, client={protocol_version}"
                 ),
-            ));
-        }
-
-        let token = params.get("token").and_then(Value::as_str).unwrap_or("");
-        if self.pairing.require_pairing() && !self.pairing.is_authenticated(token) {
-            return Err(rpc_err(
-                AUTH_REQUIRED,
-                "Invalid or missing pairing token. Check the daemon startup output for the \
-                 pairing code, or run: zeroclaw gateway get-paircode --new",
             ));
         }
 

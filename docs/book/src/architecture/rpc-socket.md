@@ -25,39 +25,26 @@ Default paths (when `ZEROCLAW_SOCKET` is not set):
 NDJSON (newline-delimited JSON). Each line is a complete JSON-RPC 2.0 message. No HTTP framing, no length prefix.
 
 ```
-{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":1,"token":"zc_..."},"id":1}\n
+{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":1},"id":1}\n
 {"jsonrpc":"2.0","result":{"protocolVersion":1,"serverVersion":"0.8.1"},"id":1}\n
 ```
 
-## Authentication
+## Handshake
 
-The first RPC call must be `initialize`. When `require_pairing = true` (the default), the client must send a valid pairing token. The daemon rejects all other methods until `initialize` succeeds. Protocol version mismatch produces a structured error with code `-32002`.
+The first RPC call must be `initialize`. The daemon rejects all other methods until `initialize` succeeds. Protocol version mismatch produces a structured error with code `-32002`.
 
 ```json
 {
   "jsonrpc": "2.0",
   "method": "initialize",
   "params": {
-    "protocolVersion": 1,
-    "token": "zc_abc123"
+    "protocolVersion": 1
   },
   "id": 1
 }
 ```
 
-### Getting a pairing token
-
-The pairing code is printed once at first daemon startup. After that:
-
-```bash
-# Check your config for existing tokens
-grep paired_tokens ~/.zeroclaw/config.toml
-
-# Generate a new one-time pairing code (while daemon is running)
-zeroclaw gateway get-paircode --new
-```
-
-If `require_pairing = false` in your config, the token field is ignored and you can pass an empty string or omit it.
+The socket does not require a pairing token. Access control is handled by Unix filesystem permissions (socket is `0o600`, directory is `0o700`).
 
 ## Methods
 
@@ -88,7 +75,6 @@ Event types: `agent_message_chunk`, `agent_thought_chunk`, `tool_call`, `tool_re
 - Socket directory: `0o700` (owner only)
 - Socket file: `0o600` (owner only)
 - `SO_PEERCRED` on Linux provides the connecting process PID and UID for audit logging
-- Pairing token validated on `initialize` when `require_pairing = true`
 
 ## Quick test
 
@@ -98,16 +84,16 @@ Start the daemon in one terminal:
 zeroclaw daemon
 ```
 
-Note the pairing code in the startup output (if pairing is enabled). In a second terminal, connect with `socat`:
+In a second terminal, connect with `socat`:
 
 ```bash
 socat READLINE UNIX-CONNECT:~/.local/share/zeroclaw/daemon.sock
 ```
 
-Paste lines one at a time (replace the token with yours, or use empty string if pairing is off):
+Paste lines one at a time:
 
 ```
-{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":1,"token":"zc_YOURCODE"},"id":1}
+{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":1},"id":1}
 {"jsonrpc":"2.0","method":"status","params":{},"id":2}
 ```
 

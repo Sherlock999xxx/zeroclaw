@@ -15,7 +15,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use zeroclaw_config::pairing::PairingGuard;
 use zeroclaw_config::schema::Config;
 use zeroclaw_infra::session_queue::SessionActorQueue;
 
@@ -95,16 +94,9 @@ fn peer_label_from(stream: &UnixStream) -> String {
 // ── Listener ─────────────────────────────────────────────────────
 
 /// Run the Unix socket RPC listener as a daemon subsystem.
-///
-/// Creates its own `PairingGuard` and session backend from `config`, matching
-/// the same `(Config, CancellationToken)` signature as `channels_start`.
 pub async fn run_unix_socket(config: Config, cancel: CancellationToken) -> Result<()> {
     let path = socket_path(&config);
 
-    let pairing = Arc::new(PairingGuard::new(
-        config.gateway.require_pairing,
-        &config.gateway.paired_tokens,
-    ));
     let session_backend =
         zeroclaw_infra::make_session_backend(&config.data_dir, &config.channels.session_backend)
             .ok();
@@ -174,7 +166,6 @@ pub async fn run_unix_socket(config: Config, cancel: CancellationToken) -> Resul
 
                 let config = config.clone();
                 let sessions = sessions.clone();
-                let pairing = pairing.clone();
                 let session_backend = session_backend.clone();
                 let count = client_count.clone();
 
@@ -186,7 +177,6 @@ pub async fn run_unix_socket(config: Config, cancel: CancellationToken) -> Resul
                     let mut dispatcher = RpcDispatcher::new(
                         config,
                         sessions,
-                        pairing,
                         session_backend,
                         writer_tx,
                     );
@@ -207,13 +197,11 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
     fn test_config(tmp: &std::path::Path) -> Config {
-        let mut config = Config {
+        Config {
             data_dir: tmp.to_path_buf(),
             config_path: tmp.join("config.toml"),
             ..Config::default()
-        };
-        config.gateway.require_pairing = false;
-        config
+        }
     }
 
     #[tokio::test]
