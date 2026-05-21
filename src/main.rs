@@ -2000,6 +2000,13 @@ async fn main() -> Result<()> {
                             })
                         }
                     })),
+                    #[cfg(unix)]
+                    socket_start: Some(Box::new(|config, cancel| {
+                        Box::pin(async move {
+                            Box::pin(zeroclaw_runtime::rpc::unix::run_unix_socket(config, cancel))
+                                .await
+                        })
+                    })),
                 };
                 let exit = Box::pin(daemon::run(
                     current_config.clone(),

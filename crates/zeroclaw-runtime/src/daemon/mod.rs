@@ -127,6 +127,18 @@ pub struct DaemonSubsystems {
                 + Sync,
         >,
     >,
+    /// Start the Unix socket RPC listener. Same signature as `channels_start`.
+    #[cfg(unix)]
+    pub socket_start: Option<
+        Box<
+            dyn Fn(
+                    Config,
+                    tokio_util::sync::CancellationToken,
+                ) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send>>
+                + Send
+                + Sync,
+        >,
+    >,
     /// Start the MQTT SOP listener. Injected by the binary when channels crate is available.
     pub mqtt_start: Option<
         Box<
@@ -224,6 +236,25 @@ pub async fn run(
         );
     }
 
+    // Unix socket RPC listener (#6837).
+    #[cfg(unix)]
+    if let Some(socket_start) = subsystems.socket_start {
+        let socket_cfg = config.clone();
+        let socket_start = std::sync::Arc::new(socket_start);
+        let socket_cancel = channels_cancel.clone();
+        handles.push(spawn_component_supervisor(
+            "socket",
+            initial_backoff,
+            max_backoff,
+            move || {
+                let cfg = socket_cfg.clone();
+                let start = socket_start.clone();
+                let cancel = socket_cancel.clone();
+                async move { start(cfg, cancel).await }
+            },
+        ));
+    }
+
     // Wire up MQTT SOP listener if configured and referenced by an enabled agent
     if let Some(mqtt_start) = subsystems.mqtt_start {
         let active_mqtt: std::collections::HashSet<String> = config
@@ -296,6 +327,11 @@ pub async fn run(
 
     println!("🧠 ZeroClaw daemon started");
     println!("   Gateway:  http://{host}:{port}");
+    #[cfg(unix)]
+    println!(
+        "   Socket:   {}",
+        crate::rpc::unix::socket_path(&config).display()
+    );
     println!("   Components: gateway, channels, heartbeat, scheduler");
     if config.gateway.require_pairing {
         println!("   Pairing:    enabled (code appears in gateway output above)");

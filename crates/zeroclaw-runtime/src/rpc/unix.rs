@@ -1,0 +1,202 @@
+//! Unix socket transport for the RPC layer.
+//!
+//! Binds at `<config.data_dir>/daemon.sock` so each `--data-dir` gets its own
+//! socket. `$ZEROCLAW_SOCKET` overrides the path.
+
+use super::dispatch::RpcDispatcher;
+use super::session::SessionStore;
+use super::transport::RpcTransport;
+use anyhow::{Context, Result};
+use async_trait::async_trait;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+use zeroclaw_config::pairing::PairingGuard;
+use zeroclaw_config::schema::Config;
+use zeroclaw_infra::session_queue::SessionActorQueue;
+
+/// Resolve socket path: `$ZEROCLAW_SOCKET` or `<data_dir>/daemon.sock`.
+pub fn socket_path(config: &Config) -> PathBuf {
+    if let Ok(p) = std::env::var("ZEROCLAW_SOCKET") {
+        return PathBuf::from(p);
+    }
+    config.data_dir.join("daemon.sock")
+}
+
+// ── Transport ────────────────────────────────────────────────────
+
+pub struct UnixSocketTransport {
+    reader: BufReader<tokio::net::unix::OwnedReadHalf>,
+    writer_tx: mpsc::Sender<String>,
+    peer_label: String,
+}
+
+impl UnixSocketTransport {
+    pub fn new(stream: UnixStream) -> Self {
+        let peer_label = peer_label_from(&stream);
+        let (read_half, write_half) = stream.into_split();
+
+        let (writer_tx, mut writer_rx) = mpsc::channel::<String>(64);
+        tokio::spawn(async move {
+            let mut writer = write_half;
+            while let Some(mut line) = writer_rx.recv().await {
+                if !line.ends_with('\n') {
+                    line.push('\n');
+                }
+                if writer.write_all(line.as_bytes()).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        Self {
+            reader: BufReader::new(read_half),
+            writer_tx,
+            peer_label,
+        }
+    }
+}
+
+#[async_trait]
+impl RpcTransport for UnixSocketTransport {
+    fn writer(&self) -> mpsc::Sender<String> {
+        self.writer_tx.clone()
+    }
+
+    async fn next_frame(&mut self) -> Option<String> {
+        let mut line = String::new();
+        match self.reader.read_line(&mut line).await {
+            Ok(0) => None,
+            Ok(_) => Some(line),
+            Err(_) => None,
+        }
+    }
+
+    fn peer_label(&self) -> String {
+        self.peer_label.clone()
+    }
+}
+
+fn peer_label_from(stream: &UnixStream) -> String {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(cred) = stream.peer_cred() {
+            return format!("unix:pid={},uid={}", cred.pid().unwrap_or(0), cred.uid());
+        }
+    }
+    let _ = stream;
+    "unix:unknown".to_string()
+}
+
+// ── Listener ─────────────────────────────────────────────────────
+
+/// Run the Unix socket RPC listener as a daemon subsystem.
+///
+/// Creates its own `PairingGuard` and session backend from `config`, matching
+/// the same `(Config, CancellationToken)` signature as `channels_start`.
+pub async fn run_unix_socket(config: Config, cancel: CancellationToken) -> Result<()> {
+    let path = socket_path(&config);
+
+    let pairing = Arc::new(PairingGuard::new(
+        config.gateway.require_pairing,
+        &config.gateway.paired_tokens,
+    ));
+    let session_backend =
+        zeroclaw_infra::make_session_backend(&config.data_dir, &config.channels.session_backend)
+            .ok();
+
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+                .await
+                .ok();
+        }
+    }
+
+    // Remove stale socket.
+    if path.exists() {
+        tokio::fs::remove_file(&path)
+            .await
+            .context("removing stale socket")?;
+    }
+
+    let listener = UnixListener::bind(&path).context("binding unix socket")?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .await
+            .ok();
+    }
+
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+            .with_attrs(::serde_json::json!({"path": path.display().to_string()})),
+        "RPC unix socket listening"
+    );
+
+    let session_queue = Arc::new(SessionActorQueue::new(32, 30, 600));
+    let sessions = Arc::new(SessionStore::new(64, session_queue));
+    let client_count = Arc::new(AtomicUsize::new(0));
+
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
+                    "RPC unix socket shutting down"
+                );
+                break;
+            }
+            accept = listener.accept() => {
+                let (stream, _addr) = match accept {
+                    Ok(v) => v,
+                    Err(e) => {
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                            &format!("unix socket accept error: {e}")
+                        );
+                        continue;
+                    }
+                };
+
+                let config = config.clone();
+                let sessions = sessions.clone();
+                let pairing = pairing.clone();
+                let session_backend = session_backend.clone();
+                let count = client_count.clone();
+
+                count.fetch_add(1, Ordering::Relaxed);
+
+                tokio::spawn(async move {
+                    let mut transport = UnixSocketTransport::new(stream);
+                    let writer_tx = transport.writer();
+                    let mut dispatcher = RpcDispatcher::new(
+                        config,
+                        sessions,
+                        pairing,
+                        session_backend,
+                        writer_tx,
+                    );
+                    dispatcher.run(&mut transport).await;
+                    count.fetch_sub(1, Ordering::Relaxed);
+                });
+            }
+        }
+    }
+
+    tokio::fs::remove_file(&path).await.ok();
+    Ok(())
+}

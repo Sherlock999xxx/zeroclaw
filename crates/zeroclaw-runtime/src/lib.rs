@@ -30,6 +30,7 @@ pub mod platform;
 pub mod process_stats;
 pub mod rag;
 pub mod routines;
+pub mod rpc;
 pub mod security;
 pub mod service;
 pub mod skillforge;
