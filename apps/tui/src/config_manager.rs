@@ -15,7 +15,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use zeroclaw_config::sections::SectionShape;
-use zeroclaw_config::traits::{ConfigFieldEntry, PropKind};
+use zeroclaw_config::traits::{ConfigFieldEntry, ConfigTab, PropKind};
 
 use crate::client::{ConfigSectionEntry, ConfigTemplateEntry, RpcClient};
 use crate::theme;
@@ -111,6 +111,26 @@ struct App<'a> {
     // Filter state: None = inactive, Some(buf) = active filter
     filter: Option<String>,
     filter_cursor: usize,
+    // Tab state for field list
+    active_tab: usize,
+    tab_names: Vec<ConfigTab>,
+    // Personality editor state (composite tab on agents)
+    personality_files: Vec<crate::client::PersonalityFileEntry>,
+    personality_cursor: usize,
+    personality_agent: String,
+    personality_content: String,
+    personality_loaded: String,
+    personality_active_file: Option<String>,
+    personality_max_chars: usize,
+    // Skills editor state (composite tab on skill-bundles)
+    skills_list: Vec<crate::client::SkillListEntry>,
+    skills_cursor: usize,
+    skills_bundle: String,
+    skills_active: Option<String>,
+    skills_body: String,
+    skills_body_loaded: String,
+    skills_frontmatter: crate::client::SkillFrontmatter,
+    skills_frontmatter_loaded: crate::client::SkillFrontmatter,
 }
 
 impl<'a> App<'a> {
@@ -135,6 +155,23 @@ impl<'a> App<'a> {
             status_msg: None,
             filter: None,
             filter_cursor: 0,
+            active_tab: 0,
+            tab_names: Vec::new(),
+            personality_files: Vec::new(),
+            personality_cursor: 0,
+            personality_agent: String::new(),
+            personality_content: String::new(),
+            personality_loaded: String::new(),
+            personality_active_file: None,
+            personality_max_chars: 20_000,
+            skills_list: Vec::new(),
+            skills_cursor: 0,
+            skills_bundle: String::new(),
+            skills_active: None,
+            skills_body: String::new(),
+            skills_body_loaded: String::new(),
+            skills_frontmatter: Default::default(),
+            skills_frontmatter_loaded: Default::default(),
         }
     }
 
@@ -161,7 +198,7 @@ impl<'a> App<'a> {
                 Screen::TypeList { .. } => self.handle_type_list(key).await?,
                 Screen::AliasList { .. } => self.handle_alias_list(key).await?,
                 Screen::AliasCreate { .. } => self.handle_alias_create(key).await?,
-                Screen::FieldList { .. } => self.handle_field_list(key).await?,
+                Screen::FieldList { .. } => self.handle_field_list(key, term).await?,
                 Screen::FieldEdit { .. } => self.handle_field_edit(key).await?,
             }
         }
@@ -217,6 +254,133 @@ impl<'a> App<'a> {
     async fn load_fields(&mut self, prefix: &str) -> Result<()> {
         self.fields = self.rpc.config_list(Some(prefix)).await?;
         self.field_cursor = 0;
+        // Compute distinct tab names in field-declaration order.
+        let mut tabs = Vec::new();
+        for f in &self.fields {
+            if !f.tab.is_none() && !tabs.contains(&f.tab) {
+                tabs.push(f.tab);
+            }
+        }
+        // Append composite tabs for agents and skill-bundles.
+        let mut has_composite = false;
+        if prefix.starts_with("agents.") {
+            tabs.push(ConfigTab::Personality);
+            has_composite = true;
+            // Extract agent alias from prefix (agents.<alias>).
+            let agent = prefix.strip_prefix("agents.").unwrap_or("").to_string();
+            self.personality_agent = agent;
+            self.personality_active_file = None;
+            self.personality_files.clear();
+            self.personality_cursor = 0;
+        }
+        if prefix.starts_with("skill-bundles.") {
+            tabs.push(ConfigTab::Skills);
+            has_composite = true;
+            let bundle = prefix
+                .strip_prefix("skill-bundles.")
+                .unwrap_or("")
+                .to_string();
+            self.skills_bundle = bundle;
+            self.skills_active = None;
+            self.skills_list.clear();
+            self.skills_cursor = 0;
+        }
+        // When composite tabs exist and some fields have no tab annotation,
+        // prepend a "Settings" tab so those fields remain accessible.
+        if has_composite && self.fields.iter().any(|f| f.tab == ConfigTab::None) {
+            tabs.insert(0, ConfigTab::Settings);
+            // Re-tag un-annotated fields so tab_field_indices() finds them.
+            for f in &mut self.fields {
+                if f.tab == ConfigTab::None {
+                    f.tab = ConfigTab::Settings;
+                }
+            }
+        }
+        self.tab_names = tabs;
+        self.active_tab = 0;
+        // Eagerly load composite-tab data so it's ready when the user
+        // switches to that tab (avoids showing an empty list).
+        if has_composite {
+            if prefix.starts_with("agents.") {
+                let _ = self.load_personality_files().await;
+            }
+            if prefix.starts_with("skill-bundles.") {
+                let _ = self.load_skills_list().await;
+            }
+        }
+        Ok(())
+    }
+
+    /// Indices of fields visible under the active tab (all fields when no tabs).
+    fn tab_field_indices(&self) -> Vec<usize> {
+        if self.tab_names.is_empty() {
+            return (0..self.fields.len()).collect();
+        }
+        let active = &self.tab_names[self.active_tab];
+        self.fields
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.tab == *active)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Whether the active tab is a composite (custom-rendered) tab.
+    fn is_composite_tab(&self) -> bool {
+        if self.tab_names.is_empty() {
+            return false;
+        }
+        matches!(
+            self.tab_names[self.active_tab],
+            ConfigTab::Personality | ConfigTab::Skills
+        )
+    }
+
+    async fn load_personality_files(&mut self) -> Result<()> {
+        let result = self
+            .rpc
+            .personality_list(Some(&self.personality_agent))
+            .await?;
+        self.personality_files = result.files;
+        self.personality_max_chars = result.max_chars;
+        self.personality_cursor = 0;
+        self.personality_active_file = None;
+        self.personality_content.clear();
+        self.personality_loaded.clear();
+        Ok(())
+    }
+
+    async fn load_personality_file(&mut self, filename: &str) -> Result<()> {
+        let result = self
+            .rpc
+            .personality_get(&self.personality_agent, filename)
+            .await?;
+        let content = result.content.unwrap_or_default();
+        self.personality_loaded = content.clone();
+        self.personality_content = content;
+        self.personality_active_file = Some(filename.to_string());
+        Ok(())
+    }
+
+    async fn load_skills_list(&mut self) -> Result<()> {
+        let result = self.rpc.skills_list(Some(&self.skills_bundle)).await?;
+        self.skills_list = result.skills;
+        self.skills_cursor = 0;
+        self.skills_active = None;
+        self.skills_body.clear();
+        self.skills_body_loaded.clear();
+        self.skills_frontmatter = Default::default();
+        self.skills_frontmatter_loaded = Default::default();
+        Ok(())
+    }
+
+    async fn load_skill(&mut self, name: &str) -> Result<()> {
+        let result = self.rpc.skills_read(&self.skills_bundle, name).await?;
+        self.skills_body_loaded = result.body.clone();
+        self.skills_body = result.body;
+        self.skills_frontmatter_loaded = result.frontmatter.clone();
+        self.skills_frontmatter = result.frontmatter;
+        self.skills_active = Some(name.to_string());
         Ok(())
     }
 
@@ -540,13 +704,32 @@ impl<'a> App<'a> {
 
     // ── Field list ───────────────────────────────────────────────
 
-    async fn handle_field_list(&mut self, key: KeyEvent) -> Result<()> {
-        let field_names: Vec<String> = self
-            .fields
+    async fn handle_field_list(&mut self, key: KeyEvent, term: &mut Term) -> Result<()> {
+        // Composite tabs get their own handler; only ←/→/Esc fall through.
+        if self.is_composite_tab() {
+            match self.tab_names[self.active_tab] {
+                ConfigTab::Personality => return self.handle_personality_tab(key, term).await,
+                ConfigTab::Skills => return self.handle_skills_tab(key, term).await,
+                _ => {}
+            }
+        }
+
+        // Fields visible under active tab, then filtered by `/` query.
+        let tab_indices = self.tab_field_indices();
+        let tab_names: Vec<String> = tab_indices
             .iter()
-            .map(|f| f.path.rsplit('.').next().unwrap_or(&f.path).to_string())
+            .map(|&i| {
+                self.fields[i]
+                    .path
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or(&self.fields[i].path)
+                    .to_string()
+            })
             .collect();
-        let visible = self.filtered_indices(&field_names);
+        let filter_vis = self.filtered_indices(&tab_names);
+        // Map back to original field indices.
+        let visible: Vec<usize> = filter_vis.iter().map(|&fi| tab_indices[fi]).collect();
 
         match self.handle_filter_key(key, visible.len()) {
             FilterAction::Consumed => return Ok(()),
@@ -554,7 +737,7 @@ impl<'a> App<'a> {
                 if let Some(&orig) = visible.get(self.filter_cursor) {
                     self.deactivate_filter();
                     self.field_cursor = orig;
-                    self.enter_field_edit(orig);
+                    self.enter_field_edit(orig, term).await;
                 }
                 return Ok(());
             }
@@ -562,6 +745,22 @@ impl<'a> App<'a> {
         }
 
         match key.code {
+            KeyCode::Left | KeyCode::Char('h') if !self.tab_names.is_empty() => {
+                self.active_tab = self.active_tab.saturating_sub(1);
+                self.field_cursor = self.tab_field_indices().first().copied().unwrap_or(0);
+                self.deactivate_filter();
+                self.on_tab_switched(term).await?;
+                return Ok(());
+            }
+            KeyCode::Right | KeyCode::Char('l') if !self.tab_names.is_empty() => {
+                if self.active_tab + 1 < self.tab_names.len() {
+                    self.active_tab += 1;
+                }
+                self.field_cursor = self.tab_field_indices().first().copied().unwrap_or(0);
+                self.deactivate_filter();
+                self.on_tab_switched(term).await?;
+                return Ok(());
+            }
             KeyCode::Esc | KeyCode::Char('q') => {
                 let screen = std::mem::replace(&mut self.screen, Screen::SectionList);
                 if let Screen::FieldList {
@@ -590,16 +789,26 @@ impl<'a> App<'a> {
                 self.status_msg = None;
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.field_cursor = self.field_cursor.saturating_sub(1);
+                if let Some(pos) = visible.iter().position(|&i| i == self.field_cursor) {
+                    if pos > 0 {
+                        self.field_cursor = visible[pos - 1];
+                    }
+                } else if let Some(&first) = visible.first() {
+                    self.field_cursor = first;
+                }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.field_cursor + 1 < self.fields.len() {
-                    self.field_cursor += 1;
+                if let Some(pos) = visible.iter().position(|&i| i == self.field_cursor) {
+                    if pos + 1 < visible.len() {
+                        self.field_cursor = visible[pos + 1];
+                    }
+                } else if let Some(&first) = visible.first() {
+                    self.field_cursor = first;
                 }
             }
             KeyCode::Enter => {
-                if self.field_cursor < self.fields.len() {
-                    self.enter_field_edit(self.field_cursor);
+                if visible.contains(&self.field_cursor) {
+                    self.enter_field_edit(self.field_cursor, term).await;
                 }
             }
             KeyCode::Char('d') => {
@@ -625,8 +834,474 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    fn enter_field_edit(&mut self, idx: usize) {
+    // ── Composite tab helpers ──────────────────────────────────────
+
+    /// Called after ←/→ tab switch — loads data for composite tabs.
+    async fn on_tab_switched(&mut self, term: &mut Term) -> Result<()> {
+        if !self.is_composite_tab() {
+            return Ok(());
+        }
+        match self.tab_names[self.active_tab] {
+            ConfigTab::Personality => {
+                if self.personality_files.is_empty() {
+                    self.status_msg = Some("Loading personality files...".into());
+                    let _ = self.draw(term);
+                    match self.load_personality_files().await {
+                        Ok(()) => self.status_msg = None,
+                        Err(e) => self.status_msg = Some(format!("Load failed: {e}")),
+                    }
+                }
+            }
+            ConfigTab::Skills => {
+                if self.skills_list.is_empty() {
+                    self.status_msg = Some("Loading skills...".into());
+                    let _ = self.draw(term);
+                    match self.load_skills_list().await {
+                        Ok(()) => self.status_msg = None,
+                        Err(e) => self.status_msg = Some(format!("Load failed: {e}")),
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    // ── Personality tab handler ──────────────────────────────────
+
+    async fn handle_personality_tab(&mut self, key: KeyEvent, term: &mut Term) -> Result<()> {
+        // Two modes: file picker (no active file) or editor (active file).
+        if self.personality_active_file.is_some() {
+            return self.handle_personality_editor(key, term).await;
+        }
+
+        // Tab navigation still works on composite tabs.
+        match key.code {
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.active_tab = self.active_tab.saturating_sub(1);
+                self.deactivate_filter();
+                self.on_tab_switched(term).await?;
+                return Ok(());
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                if self.active_tab + 1 < self.tab_names.len() {
+                    self.active_tab += 1;
+                }
+                self.deactivate_filter();
+                self.on_tab_switched(term).await?;
+                return Ok(());
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                // Back to alias list (reuse the normal Esc logic).
+                let screen = std::mem::replace(&mut self.screen, Screen::SectionList);
+                if let Screen::FieldList {
+                    section_idx,
+                    breadcrumb,
+                    ..
+                } = screen
+                {
+                    if breadcrumb.len() >= 2 {
+                        let mut bc = breadcrumb;
+                        bc.pop();
+                        let section_key = &self.sections[section_idx].key;
+                        let map_path = if bc.len() == 1 {
+                            section_key.clone()
+                        } else {
+                            format!("{}.{}", section_key, bc[1..].join("."))
+                        };
+                        self.load_aliases(&map_path).await?;
+                        self.screen = Screen::AliasList {
+                            section_idx,
+                            map_path,
+                            breadcrumb: bc,
+                        };
+                    }
+                }
+                self.status_msg = None;
+                return Ok(());
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.personality_cursor = self.personality_cursor.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.personality_cursor + 1 < self.personality_files.len() {
+                    self.personality_cursor += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(file) = self.personality_files.get(self.personality_cursor) {
+                    let filename = file.filename.clone();
+                    self.status_msg = Some(format!("Loading {filename}..."));
+                    let _ = self.draw(term);
+                    match self.load_personality_file(&filename).await {
+                        Ok(()) => {
+                            // Try $EDITOR first; fall back to inline editor.
+                            match edit_in_external_editor(
+                                term,
+                                &self.personality_content,
+                                &filename,
+                            ) {
+                                Ok(edited) => {
+                                    self.personality_content = edited;
+                                    if self.personality_content != self.personality_loaded {
+                                        // Auto-save after $EDITOR.
+                                        let agent = self.personality_agent.clone();
+                                        let content = self.personality_content.clone();
+                                        match self
+                                            .rpc
+                                            .personality_put(&agent, &filename, &content)
+                                            .await
+                                        {
+                                            Ok(_) => {
+                                                self.personality_loaded =
+                                                    self.personality_content.clone();
+                                                self.status_msg = Some(format!("Saved {filename}"));
+                                                let _ = self.load_personality_files().await;
+                                            }
+                                            Err(e) => {
+                                                self.status_msg = Some(format!("Save failed: {e}"));
+                                            }
+                                        }
+                                    } else {
+                                        self.status_msg = None;
+                                    }
+                                    self.personality_active_file = None;
+                                }
+                                Err(_) => {
+                                    self.status_msg = None;
+                                    // $EDITOR unavailable — stays in inline
+                                    // editor mode (personality_active_file is
+                                    // already set by load_personality_file).
+                                }
+                            }
+                        }
+                        Err(e) => self.status_msg = Some(format!("Load failed: {e}")),
+                    }
+                }
+            }
+            KeyCode::Char('t') => {
+                // Fill selected file from default template.
+                if let Some(file) = self.personality_files.get(self.personality_cursor) {
+                    let filename = file.filename.clone();
+                    let agent = self.personality_agent.clone();
+                    self.status_msg = Some("Fetching templates...".into());
+                    let _ = self.draw(term);
+                    match self.rpc.personality_templates(Some(&agent)).await {
+                        Ok(result) => {
+                            if let Some(tmpl) = result.files.iter().find(|f| f.filename == filename)
+                            {
+                                self.personality_content = tmpl.content.clone();
+                                self.personality_loaded.clear();
+                                self.personality_active_file = Some(filename.clone());
+
+                                // Try $EDITOR, fall back to inline.
+                                match edit_in_external_editor(
+                                    term,
+                                    &self.personality_content,
+                                    &filename,
+                                ) {
+                                    Ok(edited) => {
+                                        self.personality_content = edited;
+                                        if !self.personality_content.is_empty() {
+                                            let content = self.personality_content.clone();
+                                            match self
+                                                .rpc
+                                                .personality_put(&agent, &filename, &content)
+                                                .await
+                                            {
+                                                Ok(_) => {
+                                                    self.personality_loaded =
+                                                        self.personality_content.clone();
+                                                    self.status_msg =
+                                                        Some(format!("Saved {filename}"));
+                                                    let _ = self.load_personality_files().await;
+                                                }
+                                                Err(e) => {
+                                                    self.status_msg =
+                                                        Some(format!("Save failed: {e}"));
+                                                }
+                                            }
+                                        } else {
+                                            self.status_msg = None;
+                                        }
+                                        self.personality_active_file = None;
+                                    }
+                                    Err(_) => {
+                                        self.status_msg =
+                                            Some(format!("Template loaded for {filename}"));
+                                    }
+                                }
+                            } else {
+                                self.status_msg =
+                                    Some(format!("No template available for {filename}"));
+                            }
+                        }
+                        Err(e) => self.status_msg = Some(format!("Template fetch failed: {e}")),
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn handle_personality_editor(&mut self, key: KeyEvent, term: &mut Term) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                // Back to file picker. Warn if dirty.
+                if self.personality_content != self.personality_loaded {
+                    self.status_msg = Some("Unsaved changes discarded".into());
+                }
+                self.personality_active_file = None;
+            }
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+S = save.
+                if let Some(filename) = &self.personality_active_file {
+                    let filename = filename.clone();
+                    let agent = self.personality_agent.clone();
+                    let content = self.personality_content.clone();
+                    if content.chars().count() > self.personality_max_chars {
+                        self.status_msg = Some(format!(
+                            "Over {} char limit — cannot save",
+                            self.personality_max_chars
+                        ));
+                        return Ok(());
+                    }
+                    self.status_msg = Some(format!("Saving {filename}..."));
+                    let _ = self.draw(term);
+                    match self.rpc.personality_put(&agent, &filename, &content).await {
+                        Ok(_) => {
+                            self.personality_loaded = self.personality_content.clone();
+                            self.status_msg = Some(format!("Saved {filename}"));
+                            // Refresh file list to update exists/size.
+                            let _ = self.load_personality_files().await;
+                            // Re-open the same file.
+                            self.personality_active_file = Some(filename);
+                        }
+                        Err(e) => self.status_msg = Some(format!("Save failed: {e}")),
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                self.personality_content.push('\n');
+            }
+            KeyCode::Backspace => {
+                self.personality_content.pop();
+            }
+            KeyCode::Char(c) => {
+                self.personality_content.push(c);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    // ── Skills tab handler ───────────────────────────────────────
+
+    async fn handle_skills_tab(&mut self, key: KeyEvent, term: &mut Term) -> Result<()> {
+        // Two modes: skill picker (no active skill) or editor (active skill).
+        if self.skills_active.is_some() {
+            return self.handle_skills_editor(key, term).await;
+        }
+
+        match key.code {
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.active_tab = self.active_tab.saturating_sub(1);
+                self.deactivate_filter();
+                self.on_tab_switched(term).await?;
+                return Ok(());
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                if self.active_tab + 1 < self.tab_names.len() {
+                    self.active_tab += 1;
+                }
+                self.deactivate_filter();
+                self.on_tab_switched(term).await?;
+                return Ok(());
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                let screen = std::mem::replace(&mut self.screen, Screen::SectionList);
+                if let Screen::FieldList {
+                    section_idx,
+                    breadcrumb,
+                    ..
+                } = screen
+                {
+                    if breadcrumb.len() >= 2 {
+                        let mut bc = breadcrumb;
+                        bc.pop();
+                        let section_key = &self.sections[section_idx].key;
+                        let map_path = if bc.len() == 1 {
+                            section_key.clone()
+                        } else {
+                            format!("{}.{}", section_key, bc[1..].join("."))
+                        };
+                        self.load_aliases(&map_path).await?;
+                        self.screen = Screen::AliasList {
+                            section_idx,
+                            map_path,
+                            breadcrumb: bc,
+                        };
+                    }
+                }
+                self.status_msg = None;
+                return Ok(());
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.skills_cursor = self.skills_cursor.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.skills_cursor + 1 < self.skills_list.len() {
+                    self.skills_cursor += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(skill) = self.skills_list.get(self.skills_cursor) {
+                    let name = skill.name.clone();
+                    self.status_msg = Some(format!("Loading {name}..."));
+                    let _ = self.draw(term);
+                    match self.load_skill(&name).await {
+                        Ok(()) => {
+                            let hint = format!("{name}.SKILL.md");
+                            match edit_in_external_editor(term, &self.skills_body, &hint) {
+                                Ok(edited) => {
+                                    self.skills_body = edited;
+                                    if self.skills_body != self.skills_body_loaded {
+                                        let bundle = self.skills_bundle.clone();
+                                        let fm = self.skills_frontmatter.clone();
+                                        let body = self.skills_body.clone();
+                                        match self
+                                            .rpc
+                                            .skills_write(&bundle, &name, &fm, &body)
+                                            .await
+                                        {
+                                            Ok(_) => {
+                                                self.skills_body_loaded = self.skills_body.clone();
+                                                self.status_msg = Some(format!("Saved {name}"));
+                                            }
+                                            Err(e) => {
+                                                self.status_msg = Some(format!("Save failed: {e}"));
+                                            }
+                                        }
+                                    } else {
+                                        self.status_msg = None;
+                                    }
+                                    self.skills_active = None;
+                                }
+                                Err(_) => {
+                                    self.status_msg = None;
+                                    // $EDITOR unavailable — falls into inline
+                                    // editor.
+                                }
+                            }
+                        }
+                        Err(e) => self.status_msg = Some(format!("Load failed: {e}")),
+                    }
+                }
+            }
+            KeyCode::Char('x') => {
+                if let Some(skill) = self.skills_list.get(self.skills_cursor) {
+                    let name = skill.name.clone();
+                    let bundle = self.skills_bundle.clone();
+                    self.status_msg = Some(format!("Deleting {name}..."));
+                    let _ = self.draw(term);
+                    match self.rpc.skills_delete(&bundle, &name).await {
+                        Ok(_) => {
+                            self.status_msg = Some(format!("Archived {name}"));
+                            let _ = self.load_skills_list().await;
+                        }
+                        Err(e) => self.status_msg = Some(format!("Delete failed: {e}")),
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn handle_skills_editor(&mut self, key: KeyEvent, term: &mut Term) -> Result<()> {
+        let _ = term;
+        match key.code {
+            KeyCode::Esc => {
+                if self.skills_body != self.skills_body_loaded {
+                    self.status_msg = Some("Unsaved changes discarded".into());
+                }
+                self.skills_active = None;
+            }
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(name) = &self.skills_active {
+                    let name = name.clone();
+                    let bundle = self.skills_bundle.clone();
+                    let frontmatter = self.skills_frontmatter.clone();
+                    let body = self.skills_body.clone();
+                    self.status_msg = Some(format!("Saving {name}..."));
+                    let _ = self.draw(term);
+                    match self
+                        .rpc
+                        .skills_write(&bundle, &name, &frontmatter, &body)
+                        .await
+                    {
+                        Ok(_) => {
+                            self.skills_body_loaded = self.skills_body.clone();
+                            self.skills_frontmatter_loaded = self.skills_frontmatter.clone();
+                            self.status_msg = Some(format!("Saved {name}"));
+                        }
+                        Err(e) => self.status_msg = Some(format!("Save failed: {e}")),
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                self.skills_body.push('\n');
+            }
+            KeyCode::Backspace => {
+                self.skills_body.pop();
+            }
+            KeyCode::Char(c) => {
+                self.skills_body.push(c);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn enter_field_edit(&mut self, idx: usize, term: &mut Term) {
         self.prepare_edit_at(idx);
+
+        // Model field inside a provider alias → fetch available models.
+        let field_path = self.fields[idx].path.clone();
+        let field_current = self.fields[idx]
+            .value
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if field_path.ends_with(".model") && field_path.starts_with("providers.models.") {
+            // providers.models.<family>.<alias>.model → segment at index 2
+            let segments: Vec<&str> = field_path.split('.').collect();
+            if segments.len() >= 4 {
+                let family = segments[2].to_string();
+
+                // Show loading indicator before the blocking RPC call.
+                self.status_msg = Some(format!("Fetching models for {family}..."));
+                let _ = self.draw(term);
+
+                match self.rpc.catalog_models(&family).await {
+                    Ok(models) if !models.is_empty() => {
+                        self.select_cursor =
+                            models.iter().position(|m| m == &field_current).unwrap_or(0);
+                        self.select_items = models;
+                        self.status_msg = None;
+                    }
+                    Ok(_) => {
+                        self.status_msg = Some("No models returned — enter manually".into());
+                    }
+                    Err(_) => {
+                        self.status_msg = Some("Model fetch failed — enter manually".into());
+                    }
+                }
+            }
+        }
+
         if let Screen::FieldList {
             section_idx,
             prefix,
@@ -791,37 +1466,61 @@ impl<'a> App<'a> {
     }
 
     async fn handle_select_edit(&mut self, key: KeyEvent) -> Result<()> {
+        let visible = self.filtered_indices(&self.select_items);
+
+        match self.handle_filter_key(key, visible.len()) {
+            FilterAction::Consumed => return Ok(()),
+            FilterAction::Accept => {
+                if let Some(&orig) = visible.get(self.filter_cursor) {
+                    self.deactivate_filter();
+                    return self.commit_select(orig).await;
+                }
+                return Ok(());
+            }
+            FilterAction::Passthrough => {}
+        }
+
         match key.code {
-            KeyCode::Esc => self.pop_to_field_list().await?,
+            KeyCode::Esc => {
+                self.deactivate_filter();
+                self.pop_to_field_list().await?;
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.select_cursor = self.select_cursor.saturating_sub(1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.select_cursor + 1 < self.select_items.len() {
+                if self.select_cursor + 1 < visible.len() {
                     self.select_cursor += 1;
                 }
             }
             KeyCode::Enter => {
-                if let Some(chosen) = self.select_items.get(self.select_cursor) {
-                    if let Screen::FieldEdit {
-                        prefix, field_idx, ..
-                    } = &self.screen
-                    {
-                        let prop = self.fields[*field_idx].path.clone();
-                        let value = serde_json::Value::String(chosen.clone());
-                        let prefix = prefix.clone();
-                        match self.rpc.config_set(&prop, value).await {
-                            Ok(()) => {
-                                self.status_msg = Some(format!("Set {prop}"));
-                                self.load_fields(&prefix).await?;
-                                self.pop_to_field_list_keep_cursor().await?;
-                            }
-                            Err(e) => self.status_msg = Some(format!("Set failed: {e}")),
-                        }
-                    }
+                if let Some(&orig) = visible.get(self.select_cursor) {
+                    return self.commit_select(orig).await;
                 }
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    async fn commit_select(&mut self, orig_idx: usize) -> Result<()> {
+        if let Some(chosen) = self.select_items.get(orig_idx) {
+            if let Screen::FieldEdit {
+                prefix, field_idx, ..
+            } = &self.screen
+            {
+                let prop = self.fields[*field_idx].path.clone();
+                let value = serde_json::Value::String(chosen.clone());
+                let prefix = prefix.clone();
+                match self.rpc.config_set(&prop, value).await {
+                    Ok(()) => {
+                        self.status_msg = Some(format!("Set {prop}"));
+                        self.load_fields(&prefix).await?;
+                        self.pop_to_field_list_keep_cursor().await?;
+                    }
+                    Err(e) => self.status_msg = Some(format!("Set failed: {e}")),
+                }
+            }
         }
         Ok(())
     }
@@ -1147,19 +1846,77 @@ impl<'a> App<'a> {
         _section_idx: usize,
         breadcrumb: &[String],
     ) {
-        let r = regions(area);
+        let has_tabs = !self.tab_names.is_empty();
+
+        // When tabs are present, split off a row for the tab bar between
+        // breadcrumb and help.
+        let (tab_area, body_area) = if has_tabs {
+            let split = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0)])
+                .split(area);
+            (Some(split[0]), split[1])
+        } else {
+            (None, area)
+        };
+
+        let r = regions(body_area);
 
         let bc: Vec<&str> = std::iter::once("Config")
             .chain(breadcrumb.iter().map(String::as_str))
             .collect();
         render_breadcrumb(frame, r.breadcrumb, &bc);
 
-        let field_names: Vec<String> = self
-            .fields
+        // Tab bar
+        if let Some(tab_rect) = tab_area {
+            let mut spans = Vec::new();
+            for (i, name) in self.tab_names.iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::styled(" │ ", theme::dim_style()));
+                }
+                let label = name.label();
+                if i == self.active_tab {
+                    spans.push(Span::styled(
+                        format!("▸ {label}"),
+                        theme::accent_style().add_modifier(Modifier::BOLD),
+                    ));
+                } else {
+                    spans.push(Span::styled(label, theme::dim_style()));
+                }
+            }
+            frame.render_widget(Paragraph::new(Line::from(spans)), tab_rect);
+        }
+
+        // Composite tabs get custom rendering.
+        if self.is_composite_tab() {
+            match self.tab_names[self.active_tab] {
+                ConfigTab::Personality => {
+                    self.draw_personality_tab(frame, r);
+                    return;
+                }
+                ConfigTab::Skills => {
+                    self.draw_skills_tab(frame, r);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // Fields visible under active tab, then filtered by `/` query.
+        let tab_indices = self.tab_field_indices();
+        let tab_names: Vec<String> = tab_indices
             .iter()
-            .map(|f| f.path.rsplit('.').next().unwrap_or(&f.path).to_string())
+            .map(|&i| {
+                self.fields[i]
+                    .path
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or(&self.fields[i].path)
+                    .to_string()
+            })
             .collect();
-        let visible = self.filtered_indices(&field_names);
+        let filter_vis = self.filtered_indices(&tab_names);
+        let visible: Vec<usize> = filter_vis.iter().map(|&fi| tab_indices[fi]).collect();
 
         if let Some(buf) = &self.filter {
             render_filter_bar(frame, r.help, buf);
@@ -1175,7 +1932,8 @@ impl<'a> App<'a> {
             .iter()
             .map(|&i| {
                 let f = &self.fields[i];
-                let short_name = &field_names[i];
+                let short_name =
+                    &tab_names[tab_indices.iter().position(|&ti| ti == i).unwrap_or(0)];
                 let val_display = if f.is_secret {
                     "••••••".to_string()
                 } else {
@@ -1225,10 +1983,200 @@ impl<'a> App<'a> {
 
         let hints = if self.filter.is_some() {
             "↑↓=navigate  Enter=edit  Esc=clear filter"
+        } else if has_tabs {
+            "←→/hl=tabs  ↑↓/jk=navigate  Enter=edit  d=reset  /=filter  Esc=back"
         } else {
             "↑↓/jk=navigate  Enter=edit  d=reset  /=filter  Esc=back"
         };
         self.draw_footer(frame, r, hints);
+    }
+
+    // ── Composite tab draw methods ──────────────────────────────
+
+    fn draw_personality_tab(&self, frame: &mut Frame, r: Regions) {
+        if let Some(filename) = &self.personality_active_file {
+            // Editor mode: show file content as editable text.
+            let dirty = self.personality_content != self.personality_loaded;
+            let char_count = self.personality_content.chars().count();
+            let status = format!(
+                "{filename}  {char_count}/{} chars{}",
+                self.personality_max_chars,
+                if dirty { "  [modified]" } else { "" },
+            );
+            frame.render_widget(
+                Paragraph::new(Span::styled(status, theme::dim_style())),
+                r.help,
+            );
+
+            // Show last ~N lines that fit the area, with a cursor block.
+            let height = r.main.height.saturating_sub(2) as usize; // border eats 2
+            let lines: Vec<&str> = self.personality_content.split('\n').collect();
+            let start = lines.len().saturating_sub(height);
+            let mut visible_lines: Vec<Line> = lines[start..]
+                .iter()
+                .map(|l| Line::from(Span::styled(*l, theme::body_style())))
+                .collect();
+            // Append cursor to last line.
+            if let Some(last) = visible_lines.last_mut() {
+                let mut spans = last.spans.clone();
+                spans.push(Span::styled("█", theme::input_style()));
+                *last = Line::from(spans);
+            }
+
+            frame.render_widget(
+                Paragraph::new(visible_lines).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" {filename} ")),
+                ),
+                r.main,
+            );
+
+            self.draw_footer(frame, r, "Ctrl+S=save  Esc=back to files");
+        } else {
+            // File picker mode.
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    "Personality files shape your agent's voice and context.",
+                    theme::dim_style(),
+                ))
+                .wrap(Wrap { trim: false }),
+                r.help,
+            );
+
+            let items: Vec<ListItem> = self
+                .personality_files
+                .iter()
+                .map(|f| {
+                    let dot = if f.exists { "●" } else { "○" };
+                    let size = if f.exists {
+                        format!("  ({} B)", f.size)
+                    } else {
+                        String::new()
+                    };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(
+                            format!("{dot} "),
+                            if f.exists {
+                                theme::accent_style()
+                            } else {
+                                theme::dim_style()
+                            },
+                        ),
+                        Span::styled(f.filename.clone(), theme::body_style()),
+                        Span::styled(size, theme::dim_style()),
+                    ]))
+                })
+                .collect();
+
+            let mut state = ListState::default();
+            if !items.is_empty() {
+                state.select(Some(
+                    self.personality_cursor.min(items.len().saturating_sub(1)),
+                ));
+            }
+
+            frame.render_stateful_widget(
+                List::new(items)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Personality Files "),
+                    )
+                    .highlight_style(theme::selected_style())
+                    .highlight_symbol("› "),
+                r.main,
+                &mut state,
+            );
+
+            self.draw_footer(
+                frame,
+                r,
+                "←→/hl=tabs  ↑↓/jk=navigate  Enter=edit  t=template  Esc=back",
+            );
+        }
+    }
+
+    fn draw_skills_tab(&self, frame: &mut Frame, r: Regions) {
+        if let Some(name) = &self.skills_active {
+            // Editor mode.
+            let dirty = self.skills_body != self.skills_body_loaded;
+            let status = format!(
+                "{}  {}{}",
+                name,
+                self.skills_frontmatter.description,
+                if dirty { "  [modified]" } else { "" },
+            );
+            frame.render_widget(
+                Paragraph::new(Span::styled(status, theme::dim_style())).wrap(Wrap { trim: false }),
+                r.help,
+            );
+
+            let height = r.main.height.saturating_sub(2) as usize;
+            let lines: Vec<&str> = self.skills_body.split('\n').collect();
+            let start = lines.len().saturating_sub(height);
+            let mut visible_lines: Vec<Line> = lines[start..]
+                .iter()
+                .map(|l| Line::from(Span::styled(*l, theme::body_style())))
+                .collect();
+            if let Some(last) = visible_lines.last_mut() {
+                let mut spans = last.spans.clone();
+                spans.push(Span::styled("█", theme::input_style()));
+                *last = Line::from(spans);
+            }
+
+            frame.render_widget(
+                Paragraph::new(visible_lines).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" SKILL.md — {name} ")),
+                ),
+                r.main,
+            );
+
+            self.draw_footer(frame, r, "Ctrl+S=save  Esc=back to skills");
+        } else {
+            // Skill picker mode.
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    "Skills in this bundle. Enter to edit SKILL.md, x to archive.",
+                    theme::dim_style(),
+                ))
+                .wrap(Wrap { trim: false }),
+                r.help,
+            );
+
+            let items: Vec<ListItem> = self
+                .skills_list
+                .iter()
+                .map(|s| {
+                    ListItem::new(Line::from(Span::styled(
+                        s.name.clone(),
+                        theme::body_style(),
+                    )))
+                })
+                .collect();
+
+            let mut state = ListState::default();
+            if !items.is_empty() {
+                state.select(Some(self.skills_cursor.min(items.len().saturating_sub(1))));
+            }
+
+            frame.render_stateful_widget(
+                List::new(items)
+                    .block(Block::default().borders(Borders::ALL).title(" Skills "))
+                    .highlight_style(theme::selected_style())
+                    .highlight_symbol("› "),
+                r.main,
+                &mut state,
+            );
+
+            self.draw_footer(
+                frame,
+                r,
+                "←→/hl=tabs  ↑↓/jk=navigate  Enter=edit  x=archive  Esc=back",
+            );
+        }
     }
 
     fn draw_field_edit(
@@ -1248,22 +2196,39 @@ impl<'a> App<'a> {
             .collect();
         render_breadcrumb(frame, r.breadcrumb, &bc);
 
-        frame.render_widget(
-            Paragraph::new(Span::styled(&field.description, theme::dim_style()))
-                .wrap(Wrap { trim: false }),
-            r.help,
-        );
-
         if self.is_select_edit() {
-            // Enum or Bool select
-            let items: Vec<ListItem> = self
-                .select_items
+            // Enum, Bool, or model select — with optional `/` filter.
+            if let Some(buf) = &self.filter {
+                render_filter_bar(frame, r.help, buf);
+            } else {
+                frame.render_widget(
+                    Paragraph::new(Span::styled(&field.description, theme::dim_style()))
+                        .wrap(Wrap { trim: false }),
+                    r.help,
+                );
+            }
+
+            let visible = self.filtered_indices(&self.select_items);
+            let items: Vec<ListItem> = visible
                 .iter()
-                .map(|v| ListItem::new(Line::from(Span::styled(v.clone(), theme::body_style()))))
+                .map(|&i| {
+                    ListItem::new(Line::from(Span::styled(
+                        self.select_items[i].clone(),
+                        theme::body_style(),
+                    )))
+                })
                 .collect();
 
+            let cursor = if self.filter.is_some() {
+                self.filter_cursor
+            } else {
+                self.select_cursor
+            };
+
             let mut state = ListState::default();
-            state.select(Some(self.select_cursor));
+            if !items.is_empty() {
+                state.select(Some(cursor.min(items.len().saturating_sub(1))));
+            }
 
             let title = match field.kind {
                 PropKind::Bool => format!(" {short_name} (toggle) "),
@@ -1280,9 +2245,19 @@ impl<'a> App<'a> {
                 &mut state,
             );
 
-            self.draw_footer(frame, r, "↑↓/jk=navigate  Enter=save  Esc=cancel");
+            let hints = if self.filter.is_some() {
+                "↑↓=navigate  Enter=save  Esc=clear filter"
+            } else {
+                "↑↓/jk=navigate  Enter=save  /=filter  Esc=cancel"
+            };
+            self.draw_footer(frame, r, hints);
         } else {
-            // Text input (masked for secrets)
+            // Text input (masked for secrets) — help text always visible.
+            frame.render_widget(
+                Paragraph::new(Span::styled(&field.description, theme::dim_style()))
+                    .wrap(Wrap { trim: false }),
+                r.help,
+            );
             let kind_hint = if field.is_secret {
                 format!("Type: {} (secret — input hidden)", field.kind.wire_name())
             } else {
@@ -1377,6 +2352,67 @@ fn render_breadcrumb(frame: &mut Frame, area: Rect, segments: &[&str]) {
         spans.push(Span::styled(seg.to_string(), style));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+// ── $EDITOR helper ───────────────────────────────────────────────
+
+/// Open `content` in `$EDITOR` (or `$VISUAL`). Returns `Ok(edited)` on
+/// success, or `Err(reason)` if the editor could not be launched / exited
+/// non-zero. The caller falls back to the inline TUI editor on `Err`.
+fn edit_in_external_editor(
+    term: &mut Term,
+    content: &str,
+    filename_hint: &str,
+) -> Result<String, String> {
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| {
+            if cfg!(windows) {
+                "notepad".into()
+            } else {
+                "vi".into()
+            }
+        });
+
+    // Write content to a temp file with the right extension.
+    let dir = std::env::temp_dir();
+    let tmp_path = dir.join(filename_hint);
+    std::fs::write(&tmp_path, content).map_err(|e| format!("tmp write: {e}"))?;
+
+    // Suspend TUI: leave alternate screen + disable raw mode so the
+    // child process gets a normal terminal.
+    let _ = execute!(term.backend_mut(), LeaveAlternateScreen);
+    let _ = disable_raw_mode();
+
+    // Launch via `sh -c` so $EDITOR values with flags (e.g. "vim -u NONE",
+    // "code --wait") work correctly.
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{} \"{}\"", editor, tmp_path.display()))
+        .status();
+
+    // Restore TUI.
+    let _ = enable_raw_mode();
+    let _ = execute!(term.backend_mut(), EnterAlternateScreen);
+    // Force a full redraw so ratatui repaints everything.
+    let _ = term.clear();
+
+    match status {
+        Ok(s) if s.success() => {
+            let edited =
+                std::fs::read_to_string(&tmp_path).map_err(|e| format!("tmp read: {e}"))?;
+            let _ = std::fs::remove_file(&tmp_path);
+            Ok(edited)
+        }
+        Ok(s) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(format!("{editor} exited with {s}"))
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(format!("failed to launch {editor}: {e}"))
+        }
+    }
 }
 
 // ── Input ────────────────────────────────────────────────────────

@@ -151,6 +151,102 @@ impl HasPropKind for Vec<crate::schema::ToolFilterGroup> {
     const PROP_KIND: PropKind = PropKind::ObjectArray;
 }
 
+/// Tab grouping for config fields and UI surfaces. Each variant maps to a
+/// tab in the TUI and gateway dashboard. Serializes to its PascalCase
+/// variant name on the wire.
+///
+/// Field-partition tabs (`Connection`, `Model`, …) are used as `#[tab(...)]`
+/// annotations on schema structs. Composite tabs (`Personality`, `Skills`,
+/// `PeerGroups`, `Costs`) are rendered by dedicated UI components but share
+/// the same enum so both frontends speak one vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ConfigTab {
+    /// No tab grouping — field appears in a flat list.
+    None,
+
+    // ── Shared (providers + channels) ──
+    Connection,
+    Advanced,
+
+    // ── Providers ──
+    Model,
+
+    // ── Channels ──
+    Behavior,
+
+    // ── Agents: field partitions ──
+    General,
+    Channels,
+    Providers,
+    Bundles,
+    Cron,
+    Tuning,
+    Workspace,
+    Memory,
+
+    // ── Agents: composite (custom-component) tabs ──
+    PeerGroups,
+    Personality,
+
+    // ── MCP ──
+    Settings,
+    Servers,
+
+    // ── Cost ──
+    Limits,
+    Costs,
+
+    // ── Skill bundles ──
+    Skills,
+    Aliases,
+}
+
+impl ConfigTab {
+    /// Display label for the tab bar. Returns `""` for `None`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Connection => "Connection",
+            Self::Advanced => "Advanced",
+            Self::Model => "Model",
+            Self::Behavior => "Behavior",
+            Self::General => "General",
+            Self::Channels => "Channels",
+            Self::Providers => "Providers",
+            Self::Bundles => "Bundles",
+            Self::Cron => "Cron",
+            Self::Tuning => "Tuning",
+            Self::Workspace => "Workspace",
+            Self::Memory => "Memory",
+            Self::PeerGroups => "Peer Groups",
+            Self::Personality => "Personality",
+            Self::Settings => "Settings",
+            Self::Servers => "Servers",
+            Self::Limits => "Limits",
+            Self::Costs => "Costs",
+            Self::Skills => "Skills",
+            Self::Aliases => "Aliases",
+        }
+    }
+
+    /// `true` when this is the `None` variant (no tab grouping).
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+}
+
+impl Default for ConfigTab {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl std::fmt::Display for ConfigTab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 /// Describes a single property field discovered via `#[derive(Configurable)]`.
 #[derive(Clone)]
 pub struct PropFieldInfo {
@@ -179,6 +275,9 @@ pub struct PropFieldInfo {
     /// Subject to the same write-only / no-readback rules as `#[secret]`.
     /// Reserved for future schema additions; currently no fields are derived.
     pub derived_from_secret: bool,
+    /// Tab grouping for this field. `ConfigTab::None` when the field has
+    /// no tab annotation (flat display, no tab bar).
+    pub tab: ConfigTab,
 }
 
 impl PropKind {
@@ -323,6 +422,9 @@ pub struct ConfigFieldEntry {
     pub description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub onboard_section: Option<String>,
+    /// Tab grouping. `ConfigTab::None` = no tab grouping (flat display).
+    #[serde(default, skip_serializing_if = "ConfigTab::is_none")]
+    pub tab: ConfigTab,
 }
 
 impl ConfigFieldEntry {
@@ -354,6 +456,7 @@ impl ConfigFieldEntry {
             enum_variants,
             description: info.description.to_string(),
             onboard_section,
+            tab: info.tab,
         }
     }
 }

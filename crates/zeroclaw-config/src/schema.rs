@@ -635,42 +635,53 @@ pub enum AuthMode {
 pub struct ModelProviderConfig {
     /// Secret API token for this model_provider — grab it from the model_provider's dashboard (OpenAI platform, Anthropic console, OpenRouter keys page, etc.). Stored via the OS keyring when possible; never commit it to config.toml directly.
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
     /// Endpoint URI the client hits. Override the family's default endpoint when pointing at a self-hosted gateway (LiteLLM, vLLM, Ollama), a custom proxy, or any non-standard URL. Leave unset to use the family's default URI from its `ModelEndpoint` impl. Set this to the FULL endpoint URL — there is no separate path-suffix field.
+    #[tab(Connection)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uri: Option<String>,
     /// Model identifier to send with each request — the ID string from the model_provider's catalog (e.g. `gpt-4o`, `claude-sonnet-4-5`, `llama-3.3-70b`). Must match a model the model_provider actually serves on this account.
+    #[tab(Model)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// Sampling temperature passed to the model. Lower values (0.0–0.3) give
     /// deterministic, near-verbatim output — fits code, routing, summarization.
     /// Higher values (0.7–1.2) give more varied output — fits open-ended chat.
+    #[tab(Model)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     /// HTTP request timeout in seconds. Bump this for slow local model_providers (Ollama on CPU, big local models) or high-latency networks; leave unset otherwise.
+    #[tab(Model)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
     /// Extra HTTP headers sent with every request. Niche — used for auth bridges, corporate proxies, or custom gateways that demand a tracing header. Most users never touch this; edit `config.toml` directly if you need it.
+    #[tab(Connection)]
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub extra_headers: HashMap<String, String>,
     /// Wire protocol flavor: `responses` for OpenAI's Codex/Responses API, `chat_completions` for everything else (OpenAI chat, Anthropic, OpenRouter, Groq, local gateways). Auto-selected per model_provider — only override if you're forcing an unusual combination.
+    #[tab(Advanced)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wire_api: Option<WireApi>,
     /// When true, the client pulls credentials from `OPENAI_API_KEY` or `~/.codex/auth.json` instead of the `api_key` field above. Turn on only for the OpenAI Codex model_provider; leave off for standard API-key model_providers.
+    #[tab(Connection)]
     #[serde(default, skip_serializing_if = "is_false")]
     pub requires_openai_auth: bool,
     /// Hard cap on response length in tokens. Most models enforce sensible built-in limits already — leave unset unless you specifically need to clip long outputs for cost or latency reasons.
+    #[tab(Model)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
     /// ModelProvider-specific quirk: fold the system prompt into the first user message instead of sending a separate system role. Only needed for models that reject (or mishandle) a standalone system role — e.g. certain older Mistral variants.
+    #[tab(Advanced)]
     #[serde(default, skip_serializing_if = "is_false")]
     pub merge_system_into_user: bool,
     /// Extra JSON parameters to include in API requests.
     /// Merged at the top level of the request body, allowing provider-specific
     /// features (routing, transforms, etc.) without code changes.
     /// Example: `provider_extra = { model_provider = { only = ["Anthropic"] } }`
+    #[tab(Advanced)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_extra: Option<serde_json::Value>,
     /// Per-model pricing for cost tracking, USD per 1M tokens.
@@ -684,6 +695,7 @@ pub struct ModelProviderConfig {
     ///
     /// Example: `pricing = { opus = 15.0, sonnet = 3.0 }`
     /// Or split: `pricing = { "opus.input" = 15.0, "opus.output" = 75.0 }`
+    #[tab(Advanced)]
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub pricing: HashMap<String, f64>,
     /// Override the provider's default for native tool calling.
@@ -693,12 +705,14 @@ pub struct ModelProviderConfig {
     /// text-fallback because llama-family Groq models reject native tool
     /// calls with HTTP 400. Setting `native_tools = true` re-enables native
     /// tool calling for Groq models that support it.
+    #[tab(Advanced)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_tools: Option<bool>,
     /// Enable or disable chain-of-thought thinking for models that support it
     /// (e.g. Qwen3, GLM-4). `true` turns thinking on, `false` turns it off.
     /// `None` (default) lets the model decide. Forwarded as `enable_thinking`
     /// in the request body; mirrors the Ollama provider's `think` field.
+    #[tab(Advanced)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub think: Option<bool>,
     /// Arbitrary key/value pairs forwarded verbatim as `chat_template_kwargs`
@@ -706,6 +720,7 @@ pub struct ModelProviderConfig {
     /// template variables that control behaviour not exposed by other fields.
     /// Example (Qwen3 thinking suppression):
     ///   `chat_template_kwargs = { enable_thinking = false }`
+    #[tab(Advanced)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_template_kwargs: Option<serde_json::Value>,
 }
@@ -2724,47 +2739,57 @@ impl Default for DelegateToolConfig {
 #[prefix = "delegate-agent"]
 pub struct AliasedAgentConfig {
     /// Whether this agent is active. Set false to disable without removing the definition.
+    #[tab(General)]
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// Channel aliases this agent handles (e.g. `["telegram.<alias>", "discord.<alias>"]`).
     /// Each entry is a `ChannelRef` resolving through `[channels.<type>.<alias>]`;
     /// `Config::validate()` fails loud on dangling references.
+    #[tab(Channels)]
     #[serde(default)]
     pub channels: Vec<crate::providers::ChannelRef>,
     /// Dotted model-provider alias (e.g. `"anthropic.<alias>"`).
     /// Resolves through `model_providers.<type>.<alias>` at runtime;
     /// `Config::validate()` fails loud on dangling references.
+    #[tab(Providers)]
     #[serde(default)]
     pub model_provider: crate::providers::ModelProviderRef,
     /// Risk profile alias (e.g. `"default"`). Resolves delegation guardrails at runtime.
+    #[tab(General)]
     #[serde(default)]
     pub risk_profile: String,
     /// Runtime profile alias (e.g. `"default"`). Resolves agentic/iteration settings.
+    #[tab(General)]
     #[serde(default)]
     pub runtime_profile: String,
     /// Skill bundle aliases. Each entry resolves to
     /// `skill_bundles[key].directory` at runtime; the agent loads every
     /// listed bundle.
+    #[tab(Bundles)]
     #[serde(default)]
     pub skill_bundles: Vec<String>,
     /// Knowledge bundle aliases. Additive — the agent loads every listed
     /// bundle.
+    #[tab(Bundles)]
     #[serde(default)]
     pub knowledge_bundles: Vec<String>,
     /// MCP bundle aliases. Each entry references `mcp_bundles[key]`,
     /// itself a named group of MCP servers; agents pick which bundles to
     /// load.
+    #[tab(Bundles)]
     #[serde(default)]
     pub mcp_bundles: Vec<String>,
     /// Cron job aliases. Each entry references `cron[key]` — a declarative
     /// scheduled job invoked by the scheduler on its configured trigger.
     /// When the cron fires, this agent is the actor that executes the job.
+    #[tab(Cron)]
     #[serde(default)]
     pub cron_jobs: Vec<String>,
     /// TTS provider as a dotted alias reference (`<type>.<alias>`,
     /// e.g. `"openai.<alias>"`). Resolves through `tts_providers.<type>.<alias>`.
     /// Empty = no TTS for this agent (there is no global default-provider concept;
     /// every agent that wants TTS sets its own `tts_provider`).
+    #[tab(Providers)]
     #[serde(default)]
     pub tts_provider: crate::providers::TtsProviderRef,
     /// Transcription / STT provider as a dotted alias reference
@@ -2774,6 +2799,7 @@ pub struct AliasedAgentConfig {
     /// resolved provider (there is no global default), so an inbound voice
     /// flow into an agent with empty `transcription_provider` errors loudly
     /// at the channel boundary.
+    #[tab(Providers)]
     #[serde(default)]
     pub transcription_provider: crate::providers::TranscriptionProviderRef,
 
@@ -2782,27 +2808,34 @@ pub struct AliasedAgentConfig {
     // behavior so an unconfigured agent runs identically to a config
     // that previously lived under a global `[agent]` table.
     /// When true: bootstrap_max_chars=6000, rag_chunk_limit=2. Use for 13B or smaller models.
+    #[tab(Tuning)]
     #[serde(default = "default_agent_compact_context")]
     pub compact_context: bool,
     /// Maximum tool-call loop turns per user message. Default: `10`.
     /// Setting to `0` falls back to the safe default of `10`.
+    #[tab(Tuning)]
     #[serde(default = "default_agent_max_tool_iterations")]
     pub max_tool_iterations: usize,
     /// Maximum conversation history messages retained per session. Default: `50`.
+    #[tab(Tuning)]
     #[serde(default = "default_agent_max_history_messages")]
     pub max_history_messages: usize,
     /// Maximum estimated tokens for conversation history before compaction triggers.
     /// Uses ~4 chars/token heuristic. When this threshold is exceeded, older messages
     /// are summarized to preserve context while staying within budget. Default: `32000`.
+    #[tab(Tuning)]
     #[serde(default = "default_agent_max_context_tokens")]
     pub max_context_tokens: usize,
     /// Enable parallel tool execution within a single iteration. Default: `false`.
+    #[tab(Tuning)]
     #[serde(default)]
     pub parallel_tools: bool,
     /// Tool dispatch strategy (e.g. `"auto"`). Default: `"auto"`.
+    #[tab(Tuning)]
     #[serde(default = "default_agent_tool_dispatcher")]
     pub tool_dispatcher: String,
     /// Tools exempt from the within-turn duplicate-call dedup check. Default: `[]`.
+    #[tab(Tuning)]
     #[serde(default)]
     pub tool_call_dedup_exempt: Vec<String>,
     /// Per-turn MCP tool schema filtering groups.
@@ -2810,51 +2843,62 @@ pub struct AliasedAgentConfig {
     /// When non-empty, only MCP tools matched by an active group are included in the
     /// tool schema sent to the LLM for that turn. Built-in tools always pass through.
     /// Default: `[]` (no filtering — all tools included).
+    #[tab(Tuning)]
     #[serde(default)]
     pub tool_filter_groups: Vec<ToolFilterGroup>,
     /// Maximum characters for the assembled system prompt. When `> 0`, the prompt
     /// is truncated to this limit after assembly (keeping the top portion which
     /// contains identity and safety instructions). `0` means unlimited.
     /// Useful for small-context models (e.g. glm-4.5-air ~8K tokens → set to 8000).
+    #[tab(Tuning)]
     #[serde(default = "default_max_system_prompt_chars")]
     pub max_system_prompt_chars: usize,
     /// Thinking/reasoning level control. Configures how deeply the model reasons
     /// per message. Users can override per-message with `/think:<level>` directives.
+    #[tab(Tuning)]
     #[nested]
     #[serde(default)]
     pub thinking: crate::scattered_types::ThinkingConfig,
     /// History pruning configuration for token efficiency.
+    #[tab(Tuning)]
     #[nested]
     #[serde(default)]
     pub history_pruning: crate::scattered_types::HistoryPrunerConfig,
     /// Enable context-aware tool filtering (only surface relevant tools per iteration).
+    #[tab(Tuning)]
     #[serde(default)]
     pub context_aware_tools: bool,
     /// Post-response quality evaluator configuration.
+    #[tab(Tuning)]
     #[nested]
     #[serde(default)]
     pub eval: crate::scattered_types::EvalConfig,
     /// Automatic complexity-based classification fallback.
+    #[tab(Tuning)]
     #[nested]
     #[serde(default)]
     pub auto_classify: Option<crate::scattered_types::AutoClassifyConfig>,
     /// Context compression configuration for automatic conversation compaction.
+    #[tab(Tuning)]
     #[nested]
     #[serde(default)]
     pub context_compression: crate::scattered_types::ContextCompressionConfig,
     /// Maximum characters for a single tool result before truncation.
     /// Head (2/3) and tail (1/3) are preserved with a truncation marker in the
     /// middle. Set to `0` to disable truncation. Default: `50000`.
+    #[tab(Tuning)]
     #[serde(default = "default_max_tool_result_chars")]
     pub max_tool_result_chars: usize,
     /// Number of most recent conversation turns whose full tool-call/result
     /// messages are preserved in channel conversation history. Older turns
     /// keep only the final assistant text. Set to `0` to disable (previous
     /// behavior). Default: `2`.
+    #[tab(Tuning)]
     #[serde(default = "default_keep_tool_context_turns")]
     pub keep_tool_context_turns: usize,
 
     /// HMAC tool execution receipt configuration.
+    #[tab(Tuning)]
     #[nested]
     #[serde(default)]
     pub tool_receipts: ToolReceiptsConfig,
@@ -2864,6 +2908,7 @@ pub struct AliasedAgentConfig {
     /// filesystem-escape boolean, and cross-agent memory allowlist.
     /// Default is fully jailed (no cross-agent access). See
     /// `crate::multi_agent::AgentWorkspaceConfig`.
+    #[tab(Workspace)]
     #[serde(default)]
     #[nested]
     pub workspace: crate::multi_agent::AgentWorkspaceConfig,
@@ -2872,6 +2917,7 @@ pub struct AliasedAgentConfig {
     /// The `backend` field is locked at agent creation and immutable on
     /// subsequent loads. Defaults to `Sqlite`. See
     /// `crate::multi_agent::AgentMemoryConfig`.
+    #[tab(Memory)]
     #[serde(default)]
     #[nested]
     pub memory: crate::multi_agent::AgentMemoryConfig,
@@ -2881,6 +2927,7 @@ pub struct AliasedAgentConfig {
     /// per-agent workspace; this block selects the format (OpenClaw or
     /// AIEOS) and optional inline/file source for the agent's identity
     /// document.
+    #[tab(Tuning)]
     #[serde(default)]
     #[nested]
     pub identity: IdentityConfig,
@@ -3650,12 +3697,14 @@ pub struct McpServerConfig {
 #[prefix = "mcp"]
 pub struct McpConfig {
     /// Enable MCP tool loading.
+    #[tab(Settings)]
     #[serde(default)]
     pub enabled: bool,
     /// Load MCP tool schemas on-demand via `tool_search` instead of eagerly
     /// including them in the LLM context window. When `true` (the default),
     /// only tool names are listed in the system prompt; the LLM must call
     /// `tool_search` to fetch full schemas before invoking a deferred tool.
+    #[tab(Settings)]
     #[serde(default = "default_deferred_loading")]
     pub deferred_loading: bool,
     /// Configured MCP servers. The `#[nested]` annotation makes the macro
@@ -3663,6 +3712,7 @@ pub struct McpConfig {
     /// dashboard's `+ Add MCP server` affordance and the `POST
     /// /api/config/map-key?path=mcp.servers&key=<name>` endpoint pick it
     /// up automatically (no hand-table on the gateway side).
+    #[tab(Servers)]
     #[serde(default, alias = "mcpServers")]
     #[nested]
     pub servers: Vec<McpServerConfig>,
@@ -4773,26 +4823,32 @@ impl Default for IdentityConfig {
 #[prefix = "cost"]
 pub struct CostConfig {
     /// Enable cost tracking (default: true)
+    #[tab(Limits)]
     #[serde(default = "default_cost_enabled")]
     pub enabled: bool,
 
     /// Daily spending limit in USD (default: 10.00)
+    #[tab(Limits)]
     #[serde(default = "default_daily_limit")]
     pub daily_limit_usd: f64,
 
     /// Monthly spending limit in USD (default: 100.00)
+    #[tab(Limits)]
     #[serde(default = "default_monthly_limit")]
     pub monthly_limit_usd: f64,
 
     /// Warn when spending reaches this percentage of limit (default: 80)
+    #[tab(Limits)]
     #[serde(default = "default_warn_percent")]
     pub warn_at_percent: u8,
 
     /// Allow requests to exceed budget with --override flag (default: false)
+    #[tab(Limits)]
     #[serde(default)]
     pub allow_override: bool,
 
     /// Cost enforcement behavior when budget limits are approached or exceeded.
+    #[tab(Limits)]
     #[serde(default)]
     #[nested]
     pub enforcement: CostEnforcementConfig,
@@ -4801,6 +4857,7 @@ pub struct CostConfig {
     /// `/api/cost?agent=<alias>` and CLI rollups can attribute spend to a
     /// specific agent. Disable on high-volume deployments if the extra
     /// HashMap aggregation shows up in profiles (default: true).
+    #[tab(Limits)]
     #[serde(default = "default_track_per_agent")]
     pub track_per_agent: bool,
 
@@ -4824,6 +4881,7 @@ pub struct CostConfig {
     /// [cost.rates.tools.web_search]
     /// per_call = 0.005
     /// ```
+    #[tab(Costs)]
     #[serde(default)]
     #[nested]
     pub rates: CostRatesConfig,
@@ -10188,42 +10246,52 @@ pub struct TelegramConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Telegram Bot API token (from @BotFather).
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub bot_token: String,
     /// Streaming mode for progressive response delivery via message edits.
+    #[tab(Behavior)]
     #[serde(default)]
     pub stream_mode: StreamMode,
     /// Minimum interval (ms) between draft message edits to avoid rate limits.
+    #[tab(Behavior)]
     #[serde(default = "default_draft_update_interval_ms")]
     pub draft_update_interval_ms: u64,
     /// When true, a newer Telegram message from the same sender in the same chat
     /// cancels the in-flight request and starts a fresh response with preserved history.
+    #[tab(Behavior)]
     #[serde(default)]
     pub interrupt_on_new_message: bool,
     /// When true, only respond to messages that @-mention the bot in groups.
     /// Direct messages are always processed.
+    #[tab(Behavior)]
     #[serde(default)]
     pub mention_only: bool,
     /// Override for the top-level `ack_reactions` setting. When `None`, the
     /// channel falls back to `[channels].ack_reactions`. When set
     /// explicitly, it takes precedence.
+    #[tab(Behavior)]
     #[serde(default)]
     pub ack_reactions: Option<bool>,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
+    #[tab(Advanced)]
     #[serde(default)]
     pub proxy_url: Option<String>,
     /// How long (seconds) to wait for the operator to tap an inline-keyboard
     /// button on a tool approval prompt before auto-denying. Default: 120.
+    #[tab(Behavior)]
     #[serde(default = "default_telegram_approval_timeout_secs")]
     pub approval_timeout_secs: u64,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -10247,67 +10315,82 @@ pub struct DiscordConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Discord bot token (from Discord Developer Portal).
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub bot_token: String,
     /// Guild (server) IDs to restrict the bot to. Empty = listen across all
     /// guilds the bot is invited to. Migrated from the legacy `guild_id`
     /// singular field.
+    #[tab(Advanced)]
     #[serde(default)]
     pub guild_ids: Vec<String>,
     /// Channel IDs to watch. Empty = watch every channel the bot can see.
     /// Used by the archive sidecar (when `archive = true`) and by the
     /// in-channel filter when set.
+    #[tab(Advanced)]
     #[serde(default)]
     pub channel_ids: Vec<String>,
     /// When true, the channel opens a sidecar `discord.db` SQLite memory
     /// backend, archives every non-bot message it sees, and registers the
     /// `discord_search` tool against it. Default: false. Folded in from
     /// the legacy `[channels.discord-history]` block.
+    #[tab(Advanced)]
     #[serde(default)]
     pub archive: bool,
     /// When true, process messages from other bots (not just humans).
     /// The bot still ignores its own messages to prevent feedback loops.
+    #[tab(Advanced)]
     #[serde(default)]
     pub listen_to_bots: bool,
     /// When true, a newer Discord message from the same sender in the same channel
     /// cancels the in-flight request and starts a fresh response with preserved history.
+    #[tab(Behavior)]
     #[serde(default)]
     pub interrupt_on_new_message: bool,
     /// When true, only respond to messages that @-mention the bot.
     /// Other messages in the guild are silently ignored.
+    #[tab(Behavior)]
     #[serde(default)]
     pub mention_only: bool,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
+    #[tab(Advanced)]
     #[serde(default)]
     pub proxy_url: Option<String>,
     /// Streaming mode for progressive response delivery.
     /// `off` (default): single message. `partial`: editable draft updates.
     /// `multi_message`: split response into separate messages at paragraph boundaries.
+    #[tab(Behavior)]
     #[serde(default)]
     pub stream_mode: StreamMode,
     /// Minimum interval (ms) between draft message edits to avoid rate limits.
     /// Only used when `stream_mode = "partial"`.
+    #[tab(Behavior)]
     #[serde(default = "default_draft_update_interval_ms")]
     pub draft_update_interval_ms: u64,
     /// Delay (ms) between sending each message chunk in multi-message mode.
     /// Only used when `stream_mode = "multi_message"`.
+    #[tab(Behavior)]
     #[serde(default = "default_multi_message_delay_ms")]
     pub multi_message_delay_ms: u64,
     /// Stall-watchdog timeout in seconds. When non-zero, the bot will abort
     /// and retry if no progress is made within this duration. 0 = disabled.
+    #[tab(Advanced)]
     #[serde(default)]
     pub stall_timeout_secs: u64,
     /// Seconds to wait for operator approval on `always_ask` tools before auto-denying.
+    #[tab(Behavior)]
     #[serde(default = "default_channel_approval_timeout_secs")]
     pub approval_timeout_secs: u64,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -10331,31 +10414,38 @@ pub struct SlackConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Slack bot OAuth token (xoxb-...).
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub bot_token: String,
     /// Slack app-level token for Socket Mode (xapp-...).
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub app_token: Option<String>,
     /// Explicit list of channel IDs to watch.
     /// Empty = listen across all accessible channels.
     /// Migrated from the legacy `channel_id` singular field.
+    #[tab(Advanced)]
     #[serde(default)]
     pub channel_ids: Vec<String>,
     /// When true, a newer Slack message from the same sender in the same channel
     /// cancels the in-flight request and starts a fresh response with preserved history.
+    #[tab(Behavior)]
     #[serde(default)]
     pub interrupt_on_new_message: bool,
     /// When true (default), replies stay in the originating Slack thread.
     /// When false, replies go to the channel root instead.
+    #[tab(Advanced)]
     #[serde(default)]
     pub thread_replies: Option<bool>,
     /// When true, only respond to messages that @-mention the bot in groups.
     /// Direct messages remain allowed.
+    #[tab(Behavior)]
     #[serde(default)]
     pub mention_only: bool,
     /// When true (and `mention_only` is also true), messages inside a Slack
@@ -10364,34 +10454,42 @@ pub struct SlackConfig {
     /// keep a back-and-forth going without the user repeating @-mentions.
     /// Set this to true in channels shared with human discussion where the
     /// bot should stay silent unless explicitly addressed.
+    #[tab(Advanced)]
     #[serde(default)]
     pub strict_mention_in_thread: bool,
     /// Use the newer Slack `markdown` block type (12 000 char limit, richer formatting).
     /// Defaults to false (uses universally supported `section` blocks with `mrkdwn`).
     /// Enable this only if your Slack workspace supports the `markdown` block type.
+    #[tab(Advanced)]
     #[serde(default)]
     pub use_markdown_blocks: bool,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
+    #[tab(Advanced)]
     #[serde(default)]
     pub proxy_url: Option<String>,
     /// Enable progressive draft message streaming via `chat.update`.
+    #[tab(Behavior)]
     #[serde(default)]
     pub stream_drafts: bool,
     /// Minimum interval (ms) between draft message edits to avoid Slack rate limits.
+    #[tab(Behavior)]
     #[serde(default = "default_slack_draft_update_interval_ms")]
     pub draft_update_interval_ms: u64,
     /// Emoji reaction name (without colons) that cancels an in-flight request.
     /// For example, `"x"` means reacting with `:x:` cancels the task.
     /// Leave unset to disable reaction-based cancellation.
+    #[tab(Advanced)]
     #[serde(default)]
     pub cancel_reaction: Option<String>,
     /// Seconds to wait for operator approval on `always_ask` tools before auto-denying.
+    #[tab(Behavior)]
     #[serde(default = "default_channel_approval_timeout_secs")]
     pub approval_timeout_secs: u64,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -10418,24 +10516,29 @@ pub struct MattermostConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Mattermost server URL (e.g. `"https://mattermost.example.com"`).
+    #[tab(Connection)]
     pub url: String,
     /// Mattermost bot access token. When unset, the channel falls back to
     /// the login flow using `login_id` + `password`.
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     #[serde(default)]
     pub bot_token: Option<String>,
     /// Login ID (email or username) for the password login flow. Used only
     /// when `bot_token` is unset; both `login_id` and `password` must be
     /// set together.
+    #[tab(Connection)]
     #[serde(default)]
     pub login_id: Option<String>,
     /// Account password for the login flow. Used only when `bot_token` is
     /// unset; both `login_id` and `password` must be set together.
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     #[serde(default)]
     pub password: Option<String>,
@@ -10444,12 +10547,14 @@ pub struct MattermostConfig {
     /// poll them all. Explicit IDs disable discovery and pin the bot to the
     /// listed channels only. Migrated from the legacy `channel_id` singular
     /// field.
+    #[tab(Advanced)]
     #[serde(default)]
     pub channel_ids: Vec<String>,
     /// Team IDs to restrict auto-discovery to. Empty = discover across every
     /// team the bot belongs to. Non-empty = only discover public/private
     /// channels whose `team_id` is in this list. DMs and group DMs (which
     /// have no team) are governed by `discover_dms` instead.
+    #[tab(Advanced)]
     #[serde(default)]
     pub team_ids: Vec<String>,
     /// When true (default), auto-discovery includes DM (`type=D`) and group
@@ -10457,10 +10562,12 @@ pub struct MattermostConfig {
     /// private team channels only. Has no effect when `channel_ids` lists
     /// explicit IDs. Defaults to `true` at the call site via
     /// `discover_dms.unwrap_or(true)`.
+    #[tab(Advanced)]
     #[serde(default)]
     pub discover_dms: Option<bool>,
     /// When true (default), replies thread on the original post.
     /// When false, replies go to the channel root.
+    #[tab(Advanced)]
     #[serde(default)]
     pub thread_replies: Option<bool>,
     /// When true, only respond to messages that @-mention the bot. Other
@@ -10468,19 +10575,23 @@ pub struct MattermostConfig {
     /// channels always bypass this filter: a 1:1 (or small-group) direct
     /// conversation has no ambient noise to gate against, so every message
     /// is treated as addressed to the bot.
+    #[tab(Behavior)]
     #[serde(default)]
     pub mention_only: Option<bool>,
     /// When true, a newer Mattermost message from the same sender in the same channel
     /// cancels the in-flight request and starts a fresh response with preserved history.
+    #[tab(Behavior)]
     #[serde(default)]
     pub interrupt_on_new_message: bool,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
+    #[tab(Advanced)]
     #[serde(default)]
     pub proxy_url: Option<String>,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -10506,29 +10617,37 @@ pub struct WebhookConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Port to listen on for incoming webhooks.
+    #[tab(Advanced)]
     pub port: u16,
     /// URL path to listen on (default: `/webhook`).
+    #[tab(Advanced)]
     #[serde(default)]
     pub listen_path: Option<String>,
     /// URL to POST/PUT outbound messages to.
+    #[tab(Advanced)]
     #[serde(default)]
     pub send_url: Option<String>,
     /// HTTP method for outbound messages (`POST` or `PUT`). Default: `POST`.
+    #[tab(Advanced)]
     #[serde(default)]
     pub send_method: Option<String>,
     /// Optional `Authorization` header value for outbound requests.
+    #[tab(Connection)]
     #[serde(default)]
     pub auth_header: Option<String>,
     /// Optional shared secret for webhook signature verification (HMAC-SHA256).
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub secret: Option<String>,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -10551,10 +10670,12 @@ pub struct IMessageConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -10577,71 +10698,88 @@ pub struct MatrixConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Matrix homeserver URL (e.g. `"https://matrix.org"`).
+    #[tab(Connection)]
     pub homeserver: String,
     /// Matrix access token for the bot account. When unset, the channel
     /// falls back to password login using `user_id` + `password`.
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     #[serde(default)]
     pub access_token: Option<String>,
     /// Optional Matrix user ID (e.g. `"@bot:matrix.org"`).
+    #[tab(Connection)]
     #[serde(default)]
     pub user_id: Option<String>,
     /// Optional Matrix device ID.
+    #[tab(Connection)]
     #[serde(default)]
     pub device_id: Option<String>,
     /// Allowed Matrix room IDs or aliases. Empty = allow all rooms.
     /// Supports canonical room IDs (`!abc:server`) and aliases (`#room:server`).
+    #[tab(Behavior)]
     #[serde(default)]
     pub allowed_rooms: Vec<String>,
     /// Whether to interrupt an in-flight agent response when a new message arrives.
+    #[tab(Behavior)]
     #[serde(default)]
     pub interrupt_on_new_message: bool,
     /// Streaming mode for progressive response delivery.
     /// `"off"` (default): single message. `"partial"`: edit-in-place draft.
     /// `"multi_message"`: paragraph-split delivery.
+    #[tab(Behavior)]
     #[serde(default)]
     pub stream_mode: StreamMode,
     /// Minimum interval (ms) between draft message edits in Partial mode.
+    #[tab(Behavior)]
     #[serde(default = "default_matrix_draft_update_interval_ms")]
     pub draft_update_interval_ms: u64,
     /// Delay (ms) between sending each paragraph in MultiMessage mode.
+    #[tab(Behavior)]
     #[serde(default = "default_multi_message_delay_ms")]
     pub multi_message_delay_ms: u64,
     /// When true, only respond to messages that @-mention the bot in groups.
     /// Direct messages are always processed.
+    #[tab(Behavior)]
     #[serde(default)]
     pub mention_only: bool,
     /// Optional Matrix recovery key for automatic E2EE key backup restore.
     /// When set, ZeroClaw recovers room keys and cross-signing secrets on startup.
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     #[serde(default)]
     pub recovery_key: Option<String>,
     /// Optional login password for Matrix account (used for initial login flow).
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     #[serde(default)]
     pub password: Option<String>,
     /// Seconds to wait for operator approval on `always_ask` tools before auto-denying.
+    #[tab(Behavior)]
     #[serde(default = "default_channel_approval_timeout_secs")]
     pub approval_timeout_secs: u64,
     /// When true (default), replies are sent as thread replies. Starts a new thread from the
     /// incoming message when none exists. When false, only continues existing threads.
+    #[tab(Behavior)]
     #[serde(default = "default_true")]
     pub reply_in_thread: bool,
     /// Override for the top-level `[channels].ack_reactions`. When
     /// `None`, falls back to the channels-wide default. When set
     /// explicitly (`true`/`false`), takes precedence for this Matrix
     /// instance only.
+    #[tab(Behavior)]
     #[serde(default)]
     pub ack_reactions: Option<bool>,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -10663,39 +10801,49 @@ pub struct SignalConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Base URL for the signal-cli HTTP daemon (e.g. `"http://127.0.0.1:8686"`).
+    #[tab(Connection)]
     pub http_url: String,
     /// E.164 phone number of the signal-cli account (e.g. "+1234567890").
+    #[tab(Connection)]
     pub account: String,
     /// Group IDs to filter messages. Empty = accept all messages (DMs and
     /// groups). When non-empty, only messages from listed groups are
     /// accepted (DMs are still accepted unless `dm_only` flips the policy
     /// to DMs-only). Migrated from the legacy `group_id` singular field.
+    #[tab(Advanced)]
     #[serde(default)]
     pub group_ids: Vec<String>,
     /// When true, only accept direct messages and ignore all group traffic.
     /// Mutually exclusive with `group_ids` (which is ignored when this is
     /// set). Migrated from the legacy `group_id = "dm"` sentinel.
+    #[tab(Advanced)]
     #[serde(default)]
     pub dm_only: bool,
     /// Skip messages that are attachment-only (no text body).
+    #[tab(Advanced)]
     #[serde(default)]
     pub ignore_attachments: bool,
     /// Skip incoming story messages.
+    #[tab(Advanced)]
     #[serde(default)]
     pub ignore_stories: bool,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
+    #[tab(Advanced)]
     #[serde(default)]
     pub proxy_url: Option<String>,
     /// Seconds to wait for operator approval on `always_ask` tools before auto-denying.
+    #[tab(Behavior)]
     #[serde(default = "default_channel_approval_timeout_secs")]
     pub approval_timeout_secs: u64,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -10752,20 +10900,24 @@ pub struct WhatsAppConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Access token from Meta Business Suite (Cloud API mode)
     #[serde(default)]
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub access_token: Option<String>,
     /// Phone number ID from Meta Business API (Cloud API mode)
+    #[tab(Connection)]
     #[serde(default)]
     pub phone_number_id: Option<String>,
     /// Webhook verify token (you define this, Meta sends it back for verification)
     /// Only used in Cloud API mode
     #[serde(default)]
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub verify_token: Option<String>,
     /// App secret from Meta Business Suite (for webhook signature verification)
@@ -10773,70 +10925,85 @@ pub struct WhatsAppConfig {
     /// Only used in Cloud API mode
     #[serde(default)]
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub app_secret: Option<String>,
     /// Session database path for WhatsApp Web client (Web mode)
     /// When set, enables native WhatsApp Web mode with wa-rs
+    #[tab(Connection)]
     #[serde(default)]
     pub session_path: Option<String>,
     /// Phone number for pair code linking (Web mode, optional)
     /// Format: country code + number (e.g., "15551234567")
     /// If not set, QR code pairing will be used
+    #[tab(Connection)]
     #[serde(default)]
     pub pair_phone: Option<String>,
     /// Custom pair code for linking (Web mode, optional)
     /// Leave empty to let WhatsApp generate one
+    #[tab(Connection)]
     #[serde(default)]
     pub pair_code: Option<String>,
     /// Override the WhatsApp Web WebSocket URL (Web mode, optional). Used
     /// by integration tests and proxy setups; leave unset to use the
     /// default endpoint that ships with `wa-rs`.
+    #[tab(Connection)]
     #[serde(default)]
     pub ws_url: Option<String>,
     /// When true, only respond to messages that @-mention the bot in groups (Web mode only).
     /// Direct messages are always processed.
     /// Bot identity is resolved from the wa-rs device at runtime; `pair_phone` seeds it on first connect.
+    #[tab(Behavior)]
     #[serde(default)]
     pub mention_only: bool,
     /// Usage mode for WhatsApp Web: "business" (default) or "personal".
     /// In personal mode the bot applies dm_policy, group_policy, and
     /// self_chat_mode to decide which chats to respond in.
+    #[tab(Advanced)]
     #[serde(default)]
     pub mode: WhatsAppWebMode,
     /// Policy for direct messages when mode = "personal".
     /// "allowlist" (default) | "ignore" | "all".
+    #[tab(Advanced)]
     #[serde(default)]
     pub dm_policy: WhatsAppChatPolicy,
     /// Policy for group chats when mode = "personal".
     /// "allowlist" (default) | "ignore" | "all".
+    #[tab(Advanced)]
     #[serde(default)]
     pub group_policy: WhatsAppChatPolicy,
     /// When true and mode = "personal", always respond to messages in the
     /// user's own self-chat (Notes to Self). Defaults to false.
+    #[tab(Advanced)]
     #[serde(default)]
     pub self_chat_mode: bool,
     /// Regex patterns for DM mention gating (case-insensitive).
     /// When non-empty, only direct messages matching at least one pattern are
     /// processed; matched fragments are stripped from the forwarded content.
     /// Example: `["@?ZeroClaw", "\\+?15555550123"]`
+    #[tab(Advanced)]
     #[serde(default)]
     pub dm_mention_patterns: Vec<String>,
     /// Regex patterns for group-chat mention gating (case-insensitive).
     /// When non-empty, only group messages matching at least one pattern are
     /// processed; matched fragments are stripped from the forwarded content.
     /// Example: `["@?ZeroClaw", "\\+?15555550123"]`
+    #[tab(Advanced)]
     #[serde(default)]
     pub group_mention_patterns: Vec<String>,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
+    #[tab(Advanced)]
     #[serde(default)]
     pub proxy_url: Option<String>,
     /// Seconds to wait for operator approval on `always_ask` tools before auto-denying.
+    #[tab(Behavior)]
     #[serde(default = "default_channel_approval_timeout_secs")]
     pub approval_timeout_secs: u64,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -10858,22 +11025,27 @@ pub struct LinqConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Linq Partner API token (Bearer auth)
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub api_token: String,
     /// Phone number to send from (E.164 format)
+    #[tab(Advanced)]
     pub from_phone: String,
     /// Webhook signing secret for signature verification
     #[serde(default)]
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub signing_secret: Option<String>,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -10896,25 +11068,31 @@ pub struct WatiConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// WATI API token (Bearer auth).
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub api_token: String,
     /// WATI API base URL (default: <https://live-mt-server.wati.io>).
+    #[tab(Advanced)]
     #[serde(default = "default_wati_api_url")]
     pub api_url: String,
     /// Tenant ID for multi-channel setups (optional).
+    #[tab(Advanced)]
     #[serde(default)]
     pub tenant_id: Option<String>,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
+    #[tab(Advanced)]
     #[serde(default)]
     pub proxy_url: Option<String>,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -10941,12 +11119,15 @@ pub struct NextcloudTalkConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Nextcloud base URL (e.g. `"https://cloud.example.com"`).
+    #[tab(Connection)]
     pub base_url: String,
     /// Bot app token used for OCS API bearer auth.
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub app_token: String,
     /// Shared secret for webhook signature verification.
@@ -10954,19 +11135,23 @@ pub struct NextcloudTalkConfig {
     /// Can also be set via `ZEROCLAW_NEXTCLOUD_TALK_WEBHOOK_SECRET`.
     #[serde(default)]
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub webhook_secret: Option<String>,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
+    #[tab(Advanced)]
     #[serde(default)]
     pub proxy_url: Option<String>,
     /// Display name of the bot in Nextcloud Talk (e.g. "zeroclaw").
     /// Used to filter out the bot's own messages and prevent feedback loops.
     /// If not set, defaults to an empty string (no self-message filtering by name).
+    #[tab(Advanced)]
     #[serde(default)]
     pub bot_name: Option<String>,
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
     /// Controls whether and how streaming draft updates are delivered.
@@ -10974,10 +11159,12 @@ pub struct NextcloudTalkConfig {
     /// - `"off"` (default) — responses are sent as a single final message.
     /// - `"partial"` — a placeholder is posted first and edited incrementally
     ///   as tokens arrive, making long responses visible in real time.
+    #[tab(Behavior)]
     #[serde(default)]
     pub stream_mode: StreamMode,
     /// Minimum interval in milliseconds between consecutive OCS edit calls per
     /// room when `stream_mode = "partial"`. Default: 1000 ms.
+    #[tab(Behavior)]
     #[serde(default = "default_draft_update_interval_ms")]
     pub draft_update_interval_ms: u64,
 }
@@ -11035,37 +11222,47 @@ pub struct MqttConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// MQTT broker URL (e.g., `mqtt://localhost:1883` or `mqtts://broker.example.com:8883`).
     /// Use `mqtt://` for plain connections or `mqtts://` for TLS.
+    #[tab(Connection)]
     pub broker_url: String,
     /// MQTT client ID (must be unique per broker).
+    #[tab(Advanced)]
     pub client_id: String,
     /// Topics to subscribe to (e.g., `sensors/#`, `alerts/+/critical`).
     /// At least one topic is required.
+    #[tab(Advanced)]
     #[serde(default)]
     pub topics: Vec<String>,
     /// MQTT QoS level (0 = at-most-once, 1 = at-least-once, 2 = exactly-once). Default: 1.
+    #[tab(Advanced)]
     #[serde(default = "default_mqtt_qos")]
     pub qos: u8,
     /// Username for authentication (optional).
+    #[tab(Connection)]
     pub username: Option<String>,
     /// Password for authentication (optional).
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub password: Option<String>,
     /// Enable TLS encryption. Must match the broker_url scheme:
     /// - `mqtt://` → `use_tls: false`
     /// - `mqtts://` → `use_tls: true`
+    #[tab(Advanced)]
     #[serde(default)]
     pub use_tls: bool,
     /// Keep-alive interval in seconds (default: 30). Prevents broker disconnect on idle.
+    #[tab(Advanced)]
     #[serde(default = "default_mqtt_keep_alive_secs")]
     pub keep_alive_secs: u64,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -11151,41 +11348,53 @@ pub struct IrcConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// IRC server hostname
+    #[tab(Advanced)]
     pub server: String,
     /// IRC server port (default: 6697 for TLS)
+    #[tab(Advanced)]
     #[serde(default = "default_irc_port")]
     pub port: u16,
     /// Bot nickname
+    #[tab(Advanced)]
     pub nickname: String,
     /// Username (defaults to nickname if not set)
+    #[tab(Connection)]
     pub username: Option<String>,
     /// Channels to join on connect
+    #[tab(Advanced)]
     #[serde(default)]
     pub channels: Vec<String>,
     /// Server password (for bouncers like ZNC)
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub server_password: Option<String>,
     /// NickServ IDENTIFY password
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub nickserv_password: Option<String>,
     /// SASL PLAIN password (IRCv3)
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub sasl_password: Option<String>,
     /// Verify TLS certificate (default: true)
+    #[tab(Advanced)]
     pub verify_tls: Option<bool>,
     /// When true, only respond to messages that mention the bot.
     /// Other messages in the channel are silently ignored.
+    #[tab(Behavior)]
     #[serde(default)]
     pub mention_only: bool,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -11226,45 +11435,56 @@ pub struct LarkConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// App ID from Lark/Feishu developer console
+    #[tab(Connection)]
     pub app_id: String,
     /// App Secret from Lark/Feishu developer console
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub app_secret: String,
     /// Encrypt key for webhook message decryption (optional)
     #[serde(default)]
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub encrypt_key: Option<String>,
     /// Verification token for webhook validation (optional)
     #[serde(default)]
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub verification_token: Option<String>,
     /// When true, only respond to messages that @-mention the bot in groups.
     /// Direct messages are always processed.
+    #[tab(Behavior)]
     #[serde(default)]
     pub mention_only: bool,
     /// Whether to use the Feishu (Chinese) endpoint instead of Lark (International)
+    #[tab(Advanced)]
     #[serde(default)]
     pub use_feishu: bool,
     /// Event receive mode: "websocket" (default) or "webhook"
+    #[tab(Advanced)]
     #[serde(default)]
     pub receive_mode: LarkReceiveMode,
     /// HTTP port for webhook mode only. Must be set when receive_mode = "webhook".
     /// Not required (and ignored) for websocket mode.
+    #[tab(Advanced)]
     #[serde(default)]
     pub port: Option<u16>,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
+    #[tab(Advanced)]
     #[serde(default)]
     pub proxy_url: Option<String>,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -11316,6 +11536,7 @@ pub struct LineConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Long-lived channel access token (from LINE Developers Console).
@@ -11323,6 +11544,7 @@ pub struct LineConfig {
     /// Falls back to the `LINE_CHANNEL_ACCESS_TOKEN` environment variable if empty.
     #[serde(default)]
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub channel_access_token: String,
     /// Channel secret (from LINE Developers Console).
@@ -11330,6 +11552,7 @@ pub struct LineConfig {
     /// Falls back to the `LINE_CHANNEL_SECRET` environment variable if empty.
     #[serde(default)]
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub channel_secret: String,
     /// DM (1:1 chat) access policy. Default: `pairing`.
@@ -11337,6 +11560,7 @@ pub struct LineConfig {
     /// - `open`      — respond to everyone
     /// - `pairing`   — require one-time `/bind <code>` handshake on first contact
     /// - `allowlist` — respond only to user IDs listed in `allowed_users`
+    #[tab(Advanced)]
     #[serde(default)]
     pub dm_policy: LineDmPolicy,
     /// Group / multi-person chat policy. Default: `mention`.
@@ -11344,18 +11568,22 @@ pub struct LineConfig {
     /// - `open`     — respond to every message
     /// - `mention`  — respond only when @mentioned
     /// - `disabled` — ignore all group messages
+    #[tab(Advanced)]
     #[serde(default)]
     pub group_policy: LineGroupPolicy,
     /// TCP port the embedded webhook server listens on. Default: `8443`.
+    #[tab(Advanced)]
     #[serde(default = "default_line_webhook_port")]
     pub webhook_port: u16,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
+    #[tab(Advanced)]
     #[serde(default)]
     pub proxy_url: Option<String>,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -11845,21 +12073,26 @@ pub struct DingTalkConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Client ID (AppKey) from DingTalk developer console
+    #[tab(Connection)]
     pub client_id: String,
     /// Client Secret (AppSecret) from DingTalk developer console
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub client_secret: String,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
+    #[tab(Advanced)]
     #[serde(default)]
     pub proxy_url: Option<String>,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -11882,15 +12115,18 @@ pub struct WeComConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Webhook key from WeCom Bot configuration
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub webhook_key: String,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -11917,21 +12153,26 @@ pub struct WeChatConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Override the iLink API base URL. Default: `https://ilinkai.weixin.qq.com`.
+    #[tab(Advanced)]
     #[serde(default)]
     pub api_base_url: Option<String>,
     /// Override the CDN base URL. Default: `https://novac2c.cdn.weixin.qq.com/c2c`.
+    #[tab(Advanced)]
     #[serde(default)]
     pub cdn_base_url: Option<String>,
     /// Directory to persist bot token and sync cursor.
     /// Default: `~/.zeroclaw/wechat/`.
+    #[tab(Advanced)]
     #[serde(default)]
     pub state_dir: Option<String>,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -11954,21 +12195,26 @@ pub struct QQConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// App ID from QQ Bot developer console
+    #[tab(Connection)]
     pub app_id: String,
     /// App Secret from QQ Bot developer console
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub app_secret: String,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
+    #[tab(Advanced)]
     #[serde(default)]
     pub proxy_url: Option<String>,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -11991,15 +12237,18 @@ pub struct TwitterConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Twitter API v2 Bearer Token (OAuth 2.0)
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub bearer_token: String,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -12022,20 +12271,25 @@ pub struct MochatConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Mochat API base URL
+    #[tab(Advanced)]
     pub api_url: String,
     /// Mochat API token
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub api_token: String,
     /// Poll interval in seconds for new messages. Default: 5
+    #[tab(Advanced)]
     #[serde(default = "default_mochat_poll_interval")]
     pub poll_interval_secs: u64,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -12062,28 +12316,35 @@ pub struct RedditConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Reddit OAuth2 client ID.
+    #[tab(Connection)]
     pub client_id: String,
     /// Reddit OAuth2 client secret.
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub client_secret: String,
     /// Reddit OAuth2 refresh token for persistent access.
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub refresh_token: String,
     /// Reddit bot username (without `u/` prefix).
+    #[tab(Advanced)]
     pub username: String,
     /// Subreddits to filter messages (without `r/` prefix). Empty = accept
     /// from any subreddit the bot has access to. Migrated from the legacy
     /// `subreddit` singular field.
+    #[tab(Advanced)]
     #[serde(default)]
     pub subreddits: Vec<String>,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -12106,17 +12367,21 @@ pub struct BlueskyConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Bluesky handle (e.g. `"mybot.bsky.social"`).
+    #[tab(Connection)]
     pub handle: String,
     /// App-specific password (from Bluesky settings).
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub app_password: String,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }
@@ -12242,18 +12507,22 @@ pub struct NostrConfig {
     /// `enabled = true`. Default: `false` so an operator who pastes a partial
     /// `[channels.<type>.<alias>]` block doesn't accidentally bring a channel
     /// live before the rest of its config is filled in.
+    #[tab(Behavior)]
     #[serde(default)]
     pub enabled: bool,
     /// Private key in hex or nsec bech32 format
     #[secret]
+    #[tab(Connection)]
     #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
     pub private_key: String,
     /// Relay URLs (wss://). Defaults to popular public relays if omitted.
+    #[tab(Advanced)]
     #[serde(default = "default_nostr_relays")]
     pub relays: Vec<String>,
 
     /// Tools excluded from this channel's tool spec. When set, these tools
     /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
     #[serde(default)]
     pub excluded_tools: Vec<String>,
 }

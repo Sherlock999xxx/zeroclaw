@@ -32,6 +32,18 @@ pub mod method {
     pub const CONFIG_VALIDATE: &str = "config/validate";
     pub const CONFIG_SECTIONS: &str = "config/sections";
     pub const CONFIG_STATUS: &str = "config/status";
+    pub const CONFIG_CATALOG_MODELS: &str = "config/catalog-models";
+    // Personality
+    pub const PERSONALITY_LIST: &str = "personality/list";
+    pub const PERSONALITY_GET: &str = "personality/get";
+    pub const PERSONALITY_PUT: &str = "personality/put";
+    pub const PERSONALITY_TEMPLATES: &str = "personality/templates";
+    // Skills
+    pub const SKILLS_LIST: &str = "skills/list";
+    pub const SKILLS_READ: &str = "skills/read";
+    pub const SKILLS_WRITE: &str = "skills/write";
+    pub const SKILLS_CREATE: &str = "skills/write";
+    pub const SKILLS_DELETE: &str = "skills/delete";
 }
 
 // ── Socket path resolution ───────────────────────────────────────
@@ -214,6 +226,104 @@ impl RpcClient {
             .await?;
         Ok(result.templates)
     }
+
+    pub async fn catalog_models(&self, provider: &str) -> Result<Vec<String>> {
+        let result: CatalogModelsResult = self
+            .call(
+                method::CONFIG_CATALOG_MODELS,
+                serde_json::json!({ "model_provider": provider }),
+            )
+            .await?;
+        Ok(result.models)
+    }
+
+    // ── Personality helpers ──────────────────────────────────────
+
+    pub async fn personality_list(&self, agent: Option<&str>) -> Result<PersonalityListResult> {
+        self.call(
+            method::PERSONALITY_LIST,
+            serde_json::json!({ "agent": agent }),
+        )
+        .await
+    }
+
+    pub async fn personality_get(
+        &self,
+        agent: &str,
+        filename: &str,
+    ) -> Result<PersonalityGetResult> {
+        self.call(
+            method::PERSONALITY_GET,
+            serde_json::json!({ "agent": agent, "filename": filename }),
+        )
+        .await
+    }
+
+    pub async fn personality_put(
+        &self,
+        agent: &str,
+        filename: &str,
+        content: &str,
+    ) -> Result<PersonalityPutResult> {
+        self.call(
+            method::PERSONALITY_PUT,
+            serde_json::json!({ "agent": agent, "filename": filename, "content": content }),
+        )
+        .await
+    }
+
+    pub async fn personality_templates(
+        &self,
+        agent: Option<&str>,
+    ) -> Result<PersonalityTemplatesResult> {
+        self.call(
+            method::PERSONALITY_TEMPLATES,
+            serde_json::json!({ "agent": agent }),
+        )
+        .await
+    }
+
+    // ── Skills helpers ───────────────────────────────────────────
+
+    pub async fn skills_list(&self, bundle: Option<&str>) -> Result<SkillsListResult> {
+        self.call(method::SKILLS_LIST, serde_json::json!({ "bundle": bundle }))
+            .await
+    }
+
+    pub async fn skills_read(&self, bundle: &str, name: &str) -> Result<SkillsReadResult> {
+        self.call(
+            method::SKILLS_READ,
+            serde_json::json!({ "bundle": bundle, "name": name }),
+        )
+        .await
+    }
+
+    pub async fn skills_write(
+        &self,
+        bundle: &str,
+        name: &str,
+        frontmatter: &SkillFrontmatter,
+        body: &str,
+    ) -> Result<SkillsWriteResult> {
+        self.call(
+            method::SKILLS_WRITE,
+            serde_json::json!({
+                "bundle": bundle,
+                "name": name,
+                "frontmatter": frontmatter,
+                "body": body,
+            }),
+        )
+        .await
+    }
+
+    pub async fn skills_delete(&self, bundle: &str, name: &str) -> Result<SkillsDeleteResult> {
+        self.call(
+            method::SKILLS_DELETE,
+            serde_json::json!({ "bundle": bundle, "name": name }),
+        )
+        .await
+    }
 }
 
 // ── Response types (client-side, minimal) ────────────────────────
@@ -269,6 +379,12 @@ pub struct ConfigTemplatesResult {
     pub templates: Vec<ConfigTemplateEntry>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CatalogModelsResult {
+    pub models: Vec<String>,
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ConfigTemplateEntry {
@@ -276,4 +392,95 @@ pub struct ConfigTemplateEntry {
     pub kind: MapKeyKind,
     pub value_type: String,
     pub description: String,
+}
+
+// ── Personality types ────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PersonalityFileEntry {
+    pub filename: String,
+    pub exists: bool,
+    #[serde(default)]
+    pub size: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PersonalityListResult {
+    pub files: Vec<PersonalityFileEntry>,
+    pub max_chars: usize,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PersonalityGetResult {
+    pub filename: String,
+    #[serde(default)]
+    pub content: Option<String>,
+    pub exists: bool,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PersonalityPutResult {
+    pub bytes_written: u64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct TemplateFileEntry {
+    pub filename: String,
+    pub content: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PersonalityTemplatesResult {
+    pub files: Vec<TemplateFileEntry>,
+}
+
+// ── Skills types ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct SkillFrontmatter {
+    pub name: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SkillListEntry {
+    pub bundle: String,
+    pub name: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SkillsListResult {
+    pub skills: Vec<SkillListEntry>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SkillsReadResult {
+    pub bundle: String,
+    pub name: String,
+    pub frontmatter: SkillFrontmatter,
+    pub body: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SkillsWriteResult {
+    pub bundle: String,
+    pub name: String,
+    pub written: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SkillsDeleteResult {
+    pub bundle: String,
+    pub name: String,
+    pub deleted: bool,
 }

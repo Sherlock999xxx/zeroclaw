@@ -1,6 +1,6 @@
 //! Property helpers used by the `Configurable` derive macro and the `zeroclaw config` CLI.
 
-use crate::traits::{PropFieldInfo, PropKind};
+use crate::traits::{ConfigTab, PropFieldInfo, PropKind};
 
 /// For a `#[nested] HashMap<String, T>` field, parse a `get_prop`/`set_prop`
 /// path of the form `<my_prefix>.<field_name>.<hm_key>.<inner_suffix>` and
@@ -137,6 +137,7 @@ pub fn make_prop_field(
     enum_variants: Option<fn() -> Vec<String>>,
     description: &'static str,
     derived_from_secret: bool,
+    tab: ConfigTab,
 ) -> PropFieldInfo {
     let display_value = if is_secret || derived_from_secret {
         match table.and_then(|t| t.get(serde_name)) {
@@ -159,6 +160,7 @@ pub fn make_prop_field(
         enum_variants,
         description,
         derived_from_secret,
+        tab,
     }
 }
 
