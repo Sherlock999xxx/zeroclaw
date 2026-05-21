@@ -1339,14 +1339,18 @@ fn render_breadcrumb(frame: &mut Frame, area: Rect, segments: &[&str]) {
 
 fn wait_key() -> Result<Option<KeyEvent>> {
     loop {
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
+        match event::read()? {
+            Event::Key(key) => {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    return Ok(Some(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+                }
+                return Ok(Some(key));
             }
-            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                return Ok(Some(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
-            }
-            return Ok(Some(key));
+            Event::Resize(..) => return Ok(None),
+            _ => continue,
         }
     }
 }
