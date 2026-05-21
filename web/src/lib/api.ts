@@ -256,6 +256,8 @@ export interface ListResponseEntry {
   /** Variants for `kind === 'enum'` fields (drives <select> options). */
   enum_variants?: string[];
   onboard_section?: string;
+  /** Tab grouping from `ConfigTab` enum. Absent when `ConfigTab::None`. */
+  tab?: string;
 }
 
 export interface DriftEntry {

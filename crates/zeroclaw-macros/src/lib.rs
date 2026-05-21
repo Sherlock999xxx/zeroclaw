@@ -126,7 +126,8 @@ fn has_serde_meta(field: &syn::Field, ident: &str) -> bool {
         display_name,
         description,
         integration,
-        resource_key
+        resource_key,
+        tab
     )
 )]
 pub fn derive_configurable(input: TokenStream) -> TokenStream {
@@ -223,6 +224,10 @@ pub fn derive_configurable(input: TokenStream) -> TokenStream {
         let serde_skip = has_serde_skip(field);
         let derived_from_secret = has_attr(field, "derived_from_secret");
         let is_resource_key = has_attr(field, "resource_key");
+        let tab_token = match extract_tab_variant(&field.attrs) {
+            Some(variant) => quote! { crate::config::ConfigTab::#variant },
+            None => quote! { crate::config::ConfigTab::None },
+        };
 
         // ── Secret handling ──
         if is_secret {
@@ -1662,6 +1667,7 @@ pub fn derive_configurable(input: TokenStream) -> TokenStream {
                         enum_variants: #enum_variants_expr,
                         description: #description_lit,
                         derived_from_secret: #derived_from_secret,
+                        tab: #tab_token,
                     }
                 }
             });
@@ -1678,6 +1684,7 @@ pub fn derive_configurable(input: TokenStream) -> TokenStream {
                     #enum_variants_expr,
                     #description_lit,
                     #derived_from_secret,
+                    #tab_token,
                 )
             });
         }
@@ -1962,6 +1969,21 @@ fn snake_to_title(s: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Read the `#[tab(Variant)]` field-level attribute and return the variant
+/// ident (e.g. `Connection`), or `None` when the attribute is absent.
+fn extract_tab_variant(attrs: &[syn::Attribute]) -> Option<syn::Ident> {
+    for attr in attrs {
+        if !attr.path().is_ident("tab") {
+            continue;
+        }
+        // Parse #[tab(Ident)] — parenthesised single ident.
+        if let Ok(ident) = attr.parse_args::<syn::Ident>() {
+            return Some(ident);
+        }
+    }
+    None
 }
 
 /// Read the `&str` value of a `#[name = "value"]` field-level attribute,
