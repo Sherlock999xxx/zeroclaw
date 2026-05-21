@@ -1,6 +1,6 @@
 //! `OnboardUi` backends. `term` is the dialoguer-based terminal UI; `quick`
 //! is the headless, flag-driven backend for scripted/CI runs. The ratatui
-//! backend lives in `zeroclaw-tui` and lands in a later commit.
+//! backend lives in `apps/tui` (`zeroclaw-tui` crate).
 
 pub mod quick;
 pub mod term;
