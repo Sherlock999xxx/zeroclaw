@@ -25,6 +25,7 @@
 - [Logging](./architecture/logging.md)
 - [Multi-agent runtime](./architecture/multi-agent.md)
 - [SubAgents](./architecture/subagents.md)
+- [RPC socket transport](./architecture/rpc-socket.md)
 
 # Reference
 
