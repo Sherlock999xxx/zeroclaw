@@ -48,9 +48,7 @@ pub mod method {
     pub const SESSION_NEW: &str = "session/new";
     pub const SESSION_PROMPT: &str = "session/prompt";
     pub const SESSION_CANCEL: &str = "session/cancel";
-    pub const SESSION_CONFIGURE: &str = "session/configure";
     pub const SESSION_CLOSE: &str = "session/close";
-    pub const AGENTS_LIST: &str = "agents/list";
     pub const SESSION_APPROVE: &str = "session/approve";
     // Dashboard
     pub const STATUS: &str = "status";
@@ -508,34 +506,10 @@ impl RpcClient {
         .await
     }
 
-    pub async fn session_prompt(
-        &self,
-        session_id: &str,
-        prompt: &str,
-    ) -> Result<SessionPromptResult> {
-        self.call(
-            method::SESSION_PROMPT,
-            serde_json::json!({ "session_id": session_id, "prompt": prompt }),
-        )
-        .await
-    }
-
     pub async fn session_cancel(&self, session_id: &str) -> Result<SessionCancelResult> {
         self.call(
             method::SESSION_CANCEL,
             serde_json::json!({ "session_id": session_id }),
-        )
-        .await
-    }
-
-    pub async fn session_configure(
-        &self,
-        session_id: &str,
-        overrides: SessionConfigureOverrides,
-    ) -> Result<SessionConfigureResult> {
-        self.call(
-            method::SESSION_CONFIGURE,
-            serde_json::json!({ "session_id": session_id, "overrides": overrides }),
         )
         .await
     }
@@ -565,10 +539,6 @@ impl RpcClient {
             params["replacement"] = serde_json::Value::String(replacement.clone());
         }
         self.call(method::SESSION_APPROVE, params).await
-    }
-
-    pub async fn agents_list(&self) -> Result<AgentsListResult> {
-        self.call(method::AGENTS_LIST, serde_json::json!({})).await
     }
 
     // ── Dashboard helpers ────────────────────────────────────────
@@ -863,42 +833,12 @@ pub struct SessionCancelResult {
     pub cancelled: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionConfigureOverrides {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f64>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionConfigureResult {
-    pub session_id: String,
-    pub overrides: serde_json::Value,
-}
-
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionApproveResult {
     pub session_id: String,
     pub request_id: String,
     pub acknowledged: bool,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentEntry {
-    pub alias: String,
-    pub enabled: bool,
-    pub channels: Vec<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentsListResult {
-    pub agents: Vec<AgentEntry>,
 }
 
 #[derive(Debug, Clone)]

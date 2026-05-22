@@ -145,6 +145,18 @@ impl ChatState {
     }
 
     pub fn apply_update(&mut self, update: SessionUpdate) {
+        // Ignore notifications that belong to a different session.
+        let update_sid = match &update {
+            SessionUpdate::AgentMessageChunk { session_id, .. }
+            | SessionUpdate::AgentThoughtChunk { session_id, .. }
+            | SessionUpdate::ToolCall { session_id, .. }
+            | SessionUpdate::ToolResult { session_id, .. }
+            | SessionUpdate::ApprovalRequest { session_id, .. } => session_id.as_str(),
+        };
+        if update_sid != self.session_id {
+            return;
+        }
+
         match update {
             SessionUpdate::AgentMessageChunk { text, .. } => {
                 self.streaming_text.push_str(&text);
@@ -203,7 +215,10 @@ impl ChatState {
 
     pub fn commit_turn(&mut self, full_text: String) {
         self.streaming_text.clear();
-        self.streaming_thought.clear();
+        let thought = std::mem::take(&mut self.streaming_thought);
+        if !thought.is_empty() {
+            self.entries.push(ChatEntry::AgentThought(thought));
+        }
         if !full_text.is_empty() {
             self.entries.push(ChatEntry::AgentMessage(full_text));
         }
@@ -227,7 +242,6 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::Margin,
     style::{Color, Modifier, Style},
     widgets::{Clear, Wrap},
     Frame, Terminal,
@@ -519,8 +533,8 @@ fn render_approval_overlay(f: &mut Frame, state: &ChatState, area: Rect) {
     f.render_widget(Clear, overlay_area);
 
     let text = format!(
-        "Approve tool call: {}\n\n  {}\n\n  Enter=Allow  a=Always  Ctrl+D=Reject  e=Edit",
-        pa.tool_name, pa.arguments_summary
+        "Approve tool call: {}  [{}s]\n\n  {}\n\n  Enter=Allow  a=Always  Ctrl+D=Reject  e=Edit",
+        pa.tool_name, pa.timeout_secs, pa.arguments_summary
     );
     let p = Paragraph::new(text)
         .block(
