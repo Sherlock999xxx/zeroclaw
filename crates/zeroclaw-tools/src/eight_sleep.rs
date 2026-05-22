@@ -247,9 +247,7 @@ impl EightSleepTool {
         let from_ts = from
             .and_then(|f| f.parse::<u128>().ok())
             .unwrap_or(now_ms - 86_400_000);
-        let to_ts = to
-            .and_then(|t| t.parse::<u128>().ok())
-            .unwrap_or(now_ms);
+        let to_ts = to.and_then(|t| t.parse::<u128>().ok()).unwrap_or(now_ms);
 
         let url = format!(
             "{}/devices/{device_id}/metrics?from={from_ts}&to={to_ts}&side={side}",
@@ -299,12 +297,9 @@ impl EightSleepTool {
             }
         });
 
-        self.send_with_retry(
-            "set_temperature",
-            &token,
-            &url,
-            |builder| builder.json(&body),
-        )
+        self.send_with_retry("set_temperature", &token, &url, |builder| {
+            builder.json(&body)
+        })
         .await
     }
 
@@ -322,13 +317,8 @@ impl EightSleepTool {
             }
         });
 
-        self.send_with_retry(
-            "set_priming",
-            &token,
-            &url,
-            |builder| builder.json(&body),
-        )
-        .await
+        self.send_with_retry("set_priming", &token, &url, |builder| builder.json(&body))
+            .await
     }
 
     /// Set alarm time for a given side.
@@ -351,13 +341,8 @@ impl EightSleepTool {
             }
         });
 
-        self.send_with_retry(
-            "set_alarm",
-            &token,
-            &url,
-            |builder| builder.json(&body),
-        )
-        .await
+        self.send_with_retry("set_alarm", &token, &url, |builder| builder.json(&body))
+            .await
     }
 
     /// Send a PUT request with 401 retry. Takes a closure that customizes
@@ -501,7 +486,10 @@ impl Tool for EightSleepTool {
             }
         };
 
-        if let Err(error) = self.security.enforce_tool_operation(operation, "eight_sleep") {
+        if let Err(error) = self
+            .security
+            .enforce_tool_operation(operation, "eight_sleep")
+        {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -558,7 +546,10 @@ impl Tool for EightSleepTool {
                         });
                     }
                 };
-                let enabled = args.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+                let enabled = args
+                    .get("enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
                 self.set_priming(side, enabled).await
             }
             "set_alarm" => {
@@ -580,11 +571,16 @@ impl Tool for EightSleepTool {
                         return Ok(ToolResult {
                             success: false,
                             output: String::new(),
-                            error: Some("set_alarm requires 'time' parameter (HH:MM format)".into()),
+                            error: Some(
+                                "set_alarm requires 'time' parameter (HH:MM format)".into(),
+                            ),
                         });
                     }
                 };
-                let enabled = args.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+                let enabled = args
+                    .get("enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
                 self.set_alarm(side, time, enabled).await
             }
             _ => unreachable!(),
@@ -593,8 +589,7 @@ impl Tool for EightSleepTool {
         match result {
             Ok(value) => Ok(ToolResult {
                 success: true,
-                output: serde_json::to_string_pretty(&value)
-                    .unwrap_or_else(|_| value.to_string()),
+                output: serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
                 error: None,
             }),
             Err(e) => Ok(ToolResult {
@@ -772,8 +767,15 @@ mod tests {
         )
         .with_api_base(format!("{base}/v1"));
 
-        let result = tool.execute(json!({"action": "get_bed_state"})).await.unwrap();
-        assert!(result.success, "expected success, got error: {:?}", result.error);
+        let result = tool
+            .execute(json!({"action": "get_bed_state"}))
+            .await
+            .unwrap();
+        assert!(
+            result.success,
+            "expected success, got error: {:?}",
+            result.error
+        );
         let body: serde_json::Value = serde_json::from_str(&result.output).unwrap();
         assert_eq!(body["id"], "device-123");
     }
@@ -813,7 +815,11 @@ mod tests {
             .execute(json!({"action": "set_temperature", "side": "left", "temperature": 5}))
             .await
             .unwrap();
-        assert!(result.success, "expected success, got error: {:?}", result.error);
+        assert!(
+            result.success,
+            "expected success, got error: {:?}",
+            result.error
+        );
     }
 
     #[tokio::test]
@@ -827,7 +833,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path_match("/v1/users/login"))
-            .respond_with(ResponseTemplate::new(401).set_body_json(json!({"error": "invalid credentials"})))
+            .respond_with(
+                ResponseTemplate::new(401).set_body_json(json!({"error": "invalid credentials"})),
+            )
             .mount(&server)
             .await;
 
@@ -841,7 +849,10 @@ mod tests {
         )
         .with_api_base(format!("{base}/v1"));
 
-        let result = tool.execute(json!({"action": "get_bed_state"})).await.unwrap();
+        let result = tool
+            .execute(json!({"action": "get_bed_state"}))
+            .await
+            .unwrap();
         assert!(!result.success);
         assert!(result.error.as_deref().unwrap().contains("login failed"));
     }
@@ -891,8 +902,15 @@ mod tests {
         )
         .with_api_base(format!("{base}/v1"));
 
-        let result = tool.execute(json!({"action": "get_bed_state"})).await.unwrap();
-        assert!(result.success, "expected success, got error: {:?}", result.error);
+        let result = tool
+            .execute(json!({"action": "get_bed_state"}))
+            .await
+            .unwrap();
+        assert!(
+            result.success,
+            "expected success, got error: {:?}",
+            result.error
+        );
         let body: serde_json::Value = serde_json::from_str(&result.output).unwrap();
         assert_eq!(body["id"], "auto-detected-1");
     }
