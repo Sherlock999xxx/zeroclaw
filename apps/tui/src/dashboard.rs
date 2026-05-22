@@ -60,6 +60,7 @@ impl Tab {
 
 pub(crate) struct Dashboard<'a> {
     rpc: &'a RpcClient,
+    connect_label: String,
     tab: Tab,
     last_poll: Option<Instant>,
     // Data
@@ -99,9 +100,10 @@ pub(crate) struct Dashboard<'a> {
 }
 
 impl<'a> Dashboard<'a> {
-    pub(crate) fn new(rpc: &'a RpcClient) -> Self {
+    pub(crate) fn new(rpc: &'a RpcClient, connect_label: &str) -> Self {
         Self {
             rpc,
+            connect_label: connect_label.to_string(),
             tab: Tab::Overview,
             last_poll: None,
             status: None,
@@ -380,9 +382,9 @@ impl<'a> Dashboard<'a> {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(7), // status box (expanded for process stats)
-                Constraint::Length(8), // cost summary
-                Constraint::Min(0),    // agents
+                Constraint::Length(8),                            // status box
+                Constraint::Length(4 + self.agents.len() as u16), // agents
+                Constraint::Min(0),                               // connected TUIs
             ])
             .split(area);
 
@@ -396,6 +398,10 @@ impl<'a> Dashboard<'a> {
 
         if let Some(ref s) = self.status {
             let mut lines = vec![
+                Line::from(vec![
+                    Span::styled("Connected  ", theme::dim_style()),
+                    Span::styled(&self.connect_label, theme::accent_style()),
+                ]),
                 Line::from(vec![
                     Span::styled("Server     ", theme::dim_style()),
                     Span::styled(format!("v{}", s.server_version), theme::body_style()),
@@ -453,58 +459,13 @@ impl<'a> Dashboard<'a> {
             frame.render_widget(Paragraph::new(lines), inner);
         }
 
-        // Cost summary
-        let cost_block = Block::default()
-            .title(Span::styled(" Cost ", theme::title_style()))
-            .borders(Borders::ALL)
-            .border_style(theme::dim_style());
-        let cost_inner = cost_block.inner(chunks[1]);
-        frame.render_widget(cost_block, chunks[1]);
-
-        if let Some(ref c) = self.cost {
-            let lines = vec![
-                Line::from(vec![
-                    Span::styled("Session    ", theme::dim_style()),
-                    Span::styled(format!("${:.4}", c.session_cost_usd), theme::body_style()),
-                ]),
-                Line::from(vec![
-                    Span::styled("Daily      ", theme::dim_style()),
-                    Span::styled(format!("${:.4}", c.daily_cost_usd), theme::body_style()),
-                ]),
-                Line::from(vec![
-                    Span::styled("Monthly    ", theme::dim_style()),
-                    Span::styled(format!("${:.4}", c.monthly_cost_usd), theme::accent_style()),
-                ]),
-                Line::from(vec![
-                    Span::styled("Requests   ", theme::dim_style()),
-                    Span::styled(format!("{}", c.request_count), theme::body_style()),
-                ]),
-                Line::from(vec![
-                    Span::styled("Tokens     ", theme::dim_style()),
-                    Span::styled(format_tokens(c.total_tokens), theme::body_style()),
-                ]),
-            ];
-            frame.render_widget(Paragraph::new(lines), cost_inner);
-        }
-
-        // Bottom section: Connected TUIs + Agents
-        let bottom = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(40), // Connected TUIs
-                Constraint::Percentage(60), // Agents
-            ])
-            .split(chunks[2]);
-
-        self.draw_tuis_panel(frame, bottom[0]);
-
-        // Agents summary
+        // Agents
         let agents_block = Block::default()
             .title(Span::styled(" Agents ", theme::title_style()))
             .borders(Borders::ALL)
             .border_style(theme::dim_style());
-        let agents_inner = agents_block.inner(bottom[1]);
-        frame.render_widget(agents_block, bottom[1]);
+        let agents_inner = agents_block.inner(chunks[1]);
+        frame.render_widget(agents_block, chunks[1]);
 
         let items: Vec<ListItem> = self
             .agents
@@ -530,6 +491,9 @@ impl<'a> Dashboard<'a> {
             .collect();
 
         frame.render_widget(List::new(items), agents_inner);
+
+        // Connected TUIs
+        self.draw_tuis_panel(frame, chunks[2]);
     }
 
     fn draw_tuis_panel(&self, frame: &mut ratatui::Frame, area: Rect) {
@@ -564,15 +528,17 @@ impl<'a> Dashboard<'a> {
                 } else {
                     theme::body_style()
                 };
-                let transport_label = if t.transport.is_empty() {
-                    String::new()
-                } else {
+                let peer = if !t.peer_label.is_empty() {
+                    format!(" [{}]", t.peer_label)
+                } else if !t.transport.is_empty() {
                     format!(" [{}]", t.transport)
+                } else {
+                    String::new()
                 };
                 ListItem::new(Line::from(vec![
                     Span::styled("\u{25cf} ", Style::default().fg(Color::Green)),
                     Span::styled(&t.tui_id, id_style),
-                    Span::styled(transport_label, theme::dim_style()),
+                    Span::styled(peer, theme::dim_style()),
                     Span::styled(you_marker, theme::accent_style()),
                     Span::styled(format!("  {elapsed}"), theme::dim_style()),
                 ]))

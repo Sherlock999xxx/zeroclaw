@@ -45,14 +45,18 @@ enum Mode {
 
 /// Run the TUI event loop. Returns `true` if the daemon disconnected
 /// (caller should attempt reconnection), `false` if the user quit normally.
-pub async fn run(rpc: &RpcClient, mut term: &mut config_manager::Term) -> Result<bool> {
+pub async fn run(
+    rpc: &RpcClient,
+    mut term: &mut config_manager::Term,
+    connect_label: &str,
+) -> Result<bool> {
     let mut mode = Mode::Dashboard;
     let mut show_help = false;
     let mut bar_area = Rect::default();
     let mut content_area = Rect::default();
     let mut disconnect_since: Option<std::time::Instant> = None;
 
-    let mut dashboard_pane = dashboard::Dashboard::new(rpc);
+    let mut dashboard_pane = dashboard::Dashboard::new(rpc, connect_label);
     dashboard_pane.init().await?;
     let mut config_app = config_manager::App::new(rpc);
     config_app.init().await?;

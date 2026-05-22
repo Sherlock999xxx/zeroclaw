@@ -732,7 +732,7 @@ function OverviewTab({
                       color: "var(--pc-text-muted)",
                     }}
                   >
-                    {tui.transport || "unknown"}
+                    {tui.peer_label || tui.transport || "unknown"}
                   </span>
                 </div>
                 <span
