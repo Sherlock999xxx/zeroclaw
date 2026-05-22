@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use clap::Parser;
@@ -18,6 +19,10 @@ mod widgets;
 const DAEMON_CONNECT_INTERVAL: Duration = Duration::from_millis(50);
 const DAEMON_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Set to `true` once the alternate screen is active so signal/panic
+/// handlers know they need to restore the terminal before exiting.
+static TERMINAL_ACTIVE: AtomicBool = AtomicBool::new(false);
+
 #[derive(Parser)]
 #[command(
     name = "zeroclaw-tui",
@@ -32,10 +37,23 @@ struct Cli {
     /// If omitted, opens the config manager.
     #[arg(long, short = 'a')]
     agent: Option<String>,
+
+    /// Connect to a remote daemon via WSS instead of the local Unix socket.
+    /// Example: `--connect wss://host:9781`
+    #[arg(long)]
+    connect: Option<String>,
+}
+
+/// Where the TUI should connect.
+enum ConnectTarget {
+    UnixSocket(PathBuf),
+    Wss(String),
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    install_panic_hook();
+
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -45,33 +63,104 @@ async fn main() -> ExitCode {
     }
 }
 
+/// Install a panic hook that restores the terminal before printing the
+/// panic message.  Without this, a panic inside the event loop leaves the
+/// terminal in raw mode / alternate screen, making the error unreadable.
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        force_restore_terminal();
+        default_hook(info);
+    }));
+}
+
+/// Best-effort terminal restoration used by the panic hook and SIGTERM
+/// handler.  Errors are intentionally ignored — we're already crashing.
+fn force_restore_terminal() {
+    if TERMINAL_ACTIVE.load(Ordering::Relaxed) {
+        let _ = crossterm::terminal::disable_raw_mode();
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::DisableMouseCapture,
+            crossterm::terminal::LeaveAlternateScreen
+        );
+    }
+}
+
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let config_dir = client::resolve_config_dir(cli.config_dir.as_deref())?;
-    let socket = client::resolve_socket_path(&config_dir)?;
+
+    let target = if let Some(url) = cli.connect {
+        ConnectTarget::Wss(url)
+    } else {
+        let config_dir = client::resolve_config_dir(cli.config_dir.as_deref())?;
+        let socket = client::resolve_socket_path(&config_dir)?;
+        ConnectTarget::UnixSocket(socket)
+    };
 
     // Initial connection (before the terminal is initialized).
-    let mut rpc = match client::RpcClient::connect(&socket, None, None).await {
-        Ok(c) => c,
-        Err(_) => {
-            spawn_ephemeral_daemon(&config_dir)?;
-            await_daemon_ready(&socket).await?
+    let mut rpc = match &target {
+        ConnectTarget::UnixSocket(socket) => {
+            match client::RpcClient::connect(socket, None, None).await {
+                Ok(c) => c,
+                Err(_) => {
+                    let config_dir = client::resolve_config_dir(cli.config_dir.as_deref())?;
+                    spawn_ephemeral_daemon(&config_dir)?;
+                    await_daemon_ready(socket).await?
+                }
+            }
         }
+        ConnectTarget::Wss(url) => client::RpcClient::connect_wss(url, None, None).await?,
     };
 
     let mut term = config_manager::init_terminal()?;
-    let result = run_with_reconnect(&mut rpc, &mut term, &socket).await;
+    TERMINAL_ACTIVE.store(true, Ordering::Relaxed);
+
+    let result = run_until_exit(&mut rpc, &mut term, &target).await;
+
+    TERMINAL_ACTIVE.store(false, Ordering::Relaxed);
     config_manager::restore_terminal(&mut term)?;
     result
+}
+
+/// Wraps the reconnect loop with a SIGTERM handler so the TUI exits
+/// cleanly (terminal restored) instead of dying mid-draw.
+async fn run_until_exit(
+    rpc: &mut client::RpcClient,
+    term: &mut config_manager::Term,
+    target: &ConnectTarget,
+) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            r = run_with_reconnect(rpc, term, target) => r,
+            _ = sigterm.recv() => Ok(()),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        run_with_reconnect(rpc, term, target).await
+    }
 }
 
 async fn run_with_reconnect(
     rpc: &mut client::RpcClient,
     term: &mut config_manager::Term,
-    socket: &std::path::Path,
+    target: &ConnectTarget,
 ) -> anyhow::Result<()> {
     loop {
-        let should_reconnect = app::run(rpc, term).await?;
+        let should_reconnect = match app::run(rpc, term).await {
+            Ok(reconnect) => reconnect,
+            Err(_) if rpc.is_disconnected() => {
+                // RPC error caused by a dead connection — treat as
+                // disconnect and enter the reconnect loop instead of
+                // propagating a fatal error.
+                true
+            }
+            Err(e) => return Err(e),
+        };
         if !should_reconnect {
             return Ok(());
         }
@@ -79,16 +168,23 @@ async fn run_with_reconnect(
         // reclaim the same UID via HMAC signature verification.
         let prev_id = rpc.tui_id().map(String::from);
         let prev_sig = rpc.tui_sig().map(String::from);
-        // Retry connecting to the existing socket. We do NOT spawn a new
-        // daemon here — multiple TUIs reconnecting simultaneously would
-        // each spawn their own, causing a stampede. The daemon is managed
-        // externally (service manager, manual restart, or the initial
-        // startup path in run()).
+        // Retry connecting. We do NOT spawn a new daemon here — multiple
+        // TUIs reconnecting simultaneously would each spawn their own,
+        // causing a stampede. The daemon is managed externally (service
+        // manager, manual restart, or the initial startup path in run()).
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
-            if let Ok(c) =
-                client::RpcClient::connect(socket, prev_id.as_deref(), prev_sig.as_deref()).await
-            {
+            let result = match target {
+                ConnectTarget::UnixSocket(socket) => {
+                    client::RpcClient::connect(socket, prev_id.as_deref(), prev_sig.as_deref())
+                        .await
+                }
+                ConnectTarget::Wss(url) => {
+                    client::RpcClient::connect_wss(url, prev_id.as_deref(), prev_sig.as_deref())
+                        .await
+                }
+            };
+            if let Ok(c) = result {
                 *rpc = c;
                 break;
             }
@@ -113,7 +209,7 @@ fn spawn_ephemeral_daemon(config_dir: &std::path::Path) -> anyhow::Result<()> {
         .stderr(std::process::Stdio::null());
 
     cmd.spawn()
-        .map_err(|e| anyhow::anyhow!("failed to spawn daemon: {e}"))?;
+        .map_err(|e| anyhow::Error::msg(format!("failed to spawn daemon: {e}")))?;
 
     Ok(())
 }

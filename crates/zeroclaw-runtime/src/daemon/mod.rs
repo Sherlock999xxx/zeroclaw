@@ -219,6 +219,19 @@ pub struct DaemonSubsystems {
                 + Sync,
         >,
     >,
+    /// Start the WSS (WebSocket Secure) RPC listener for remote TUI connections.
+    /// Same signature as `socket_start`; shares `RpcContext` and `client_count`.
+    pub wss_start: Option<
+        Box<
+            dyn Fn(
+                    std::sync::Arc<crate::rpc::context::RpcContext>,
+                    tokio_util::sync::CancellationToken,
+                    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+                ) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send>>
+                + Send
+                + Sync,
+        >,
+    >,
     /// Start the MQTT SOP listener. Injected by the binary when channels crate is available.
     pub mqtt_start: Option<
         Box<
@@ -324,10 +337,15 @@ pub async fn run(
         );
     }
 
-    // Unix socket RPC listener (#6837).
+    // RPC transports: Unix socket (#6837) and WSS (remote TUI connections).
+    // Build the shared RpcContext if either transport is configured.
     let socket_client_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     #[cfg(unix)]
-    if let Some(socket_start) = subsystems.socket_start {
+    let need_rpc_ctx = subsystems.socket_start.is_some() || subsystems.wss_start.is_some();
+    #[cfg(not(unix))]
+    let need_rpc_ctx = subsystems.wss_start.is_some();
+
+    let rpc_ctx = if need_rpc_ctx {
         use crate::rpc::context::RpcContext;
         use crate::rpc::session::SessionStore;
         use zeroclaw_infra::session_queue::SessionActorQueue;
@@ -341,7 +359,7 @@ pub async fn run(
         .ok();
 
         // Wire the memory subsystem so `memory/list` and `memory/search`
-        // work over the RPC socket (same pattern as the gateway).
+        // work over RPC transports (same pattern as the gateway).
         let rpc_memory: Option<std::sync::Arc<dyn zeroclaw_api::memory_traits::Memory>> = if config
             .agents
             .is_empty()
@@ -370,7 +388,7 @@ pub async fn run(
             }
         };
 
-        let rpc_ctx = std::sync::Arc::new(RpcContext {
+        Some(std::sync::Arc::new(RpcContext {
             config: std::sync::Arc::new(parking_lot::RwLock::new(config.clone())),
             sessions,
             session_backend,
@@ -382,8 +400,17 @@ pub async fn run(
                 crate::rpc::context::ApprovalPendingMap::default(),
             ),
             tui_registry,
-        });
+        }))
+    } else {
+        None
+    };
 
+    // Unix socket RPC listener.
+    #[cfg(unix)]
+    if let Some(socket_start) = subsystems.socket_start {
+        let rpc_ctx = rpc_ctx
+            .clone()
+            .expect("rpc_ctx built when socket_start is Some");
         let socket_start = std::sync::Arc::new(socket_start);
         let socket_cancel = channels_cancel.clone();
         let count = socket_client_count.clone();
@@ -395,6 +422,28 @@ pub async fn run(
                 let ctx = rpc_ctx.clone();
                 let start = socket_start.clone();
                 let cancel = socket_cancel.clone();
+                let count = count.clone();
+                async move { start(ctx, cancel, count).await }
+            },
+        ));
+    }
+
+    // WSS RPC listener (remote TUI connections).
+    if let Some(wss_start) = subsystems.wss_start {
+        let rpc_ctx = rpc_ctx
+            .clone()
+            .expect("rpc_ctx built when wss_start is Some");
+        let wss_start = std::sync::Arc::new(wss_start);
+        let wss_cancel = channels_cancel.clone();
+        let count = socket_client_count.clone();
+        handles.push(spawn_component_supervisor(
+            "wss",
+            initial_backoff,
+            max_backoff,
+            move || {
+                let ctx = rpc_ctx.clone();
+                let start = wss_start.clone();
+                let cancel = wss_cancel.clone();
                 let count = count.clone();
                 async move { start(ctx, cancel, count).await }
             },

@@ -2022,6 +2022,30 @@ async fn main() -> Result<()> {
                             .await
                         })
                     })),
+                    wss_start: Some(Box::new(|ctx, cancel, client_count| {
+                        Box::pin(async move {
+                            let wss_cfg = ctx.config.read().wss.clone();
+                            if !wss_cfg.enabled {
+                                // WSS disabled — park until cancelled.
+                                cancel.cancelled().await;
+                                return Ok(());
+                            }
+                            let tls_acceptor = zeroclaw_runtime::rpc::wss::build_tls_acceptor(
+                                &wss_cfg.cert_path,
+                                &wss_cfg.key_path,
+                            )?;
+                            let bind_addr: std::net::SocketAddr =
+                                format!("{}:{}", wss_cfg.bind, wss_cfg.port).parse()?;
+                            zeroclaw_runtime::rpc::wss::run_wss_listener(
+                                ctx,
+                                cancel,
+                                client_count,
+                                tls_acceptor,
+                                bind_addr,
+                            )
+                            .await
+                        })
+                    })),
                 };
                 let exit = Box::pin(daemon::run(
                     current_config.clone(),

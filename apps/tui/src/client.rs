@@ -1,4 +1,4 @@
-//! JSON-RPC 2.0 client over a Unix socket (NDJSON framing).
+//! JSON-RPC 2.0 client over Unix socket (NDJSON) or WebSocket (WSS).
 //!
 //! Wraps [`RpcOutbound`] from `zeroclaw-api` — the same request/response
 //! plumbing the daemon uses for bidirectional calls.
@@ -308,7 +308,136 @@ impl RpcClient {
         let resp = rpc
             .request(method::INITIALIZE, init_params)
             .await
-            .map_err(|e| anyhow::anyhow!("initialize: {} ({})", e.message, e.code))?;
+            .map_err(|e| anyhow::Error::msg(format!("initialize: {} ({})", e.message, e.code)))?;
+
+        let server_version = resp
+            .get("server_version")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+
+        let tui_id = resp.get("tui_id").and_then(Value::as_str).map(String::from);
+        let tui_sig = resp
+            .get("tui_sig")
+            .and_then(Value::as_str)
+            .map(String::from);
+
+        let bcast_rx = notif_tx.subscribe();
+        let (update_tx, update_rx) = mpsc::channel::<SessionUpdate>(64);
+        let router_task = spawn_notification_router(bcast_rx, update_tx);
+
+        Ok(Self {
+            rpc,
+            _read_task: read_task,
+            _router_task: router_task,
+            server_version,
+            notifications_bcast: notif_tx,
+            notifications: update_rx,
+            connection_state: conn_state,
+            tui_id,
+            tui_sig,
+        })
+    }
+
+    /// Connect to the daemon via WebSocket Secure (WSS).
+    ///
+    /// Same handshake and reconnect semantics as [`connect`] — pass
+    /// previous `tui_id`/`tui_sig` to reclaim identity on reconnect.
+    pub async fn connect_wss(
+        url: &str,
+        prev_tui_id: Option<&str>,
+        prev_tui_sig: Option<&str>,
+    ) -> Result<Self> {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let (ws_stream, _response) = tokio_tungstenite::connect_async(url)
+            .await
+            .with_context(|| format!("WSS connect to {url}"))?;
+
+        let (mut sink, mut stream) = ws_stream.split();
+
+        let (writer_tx, mut writer_rx) = mpsc::channel::<String>(64);
+        tokio::spawn(async move {
+            while let Some(line) = writer_rx.recv().await {
+                if sink.send(Message::Text(line.into())).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let rpc = Arc::new(jsonrpc::RpcOutbound::new(writer_tx));
+        let (notif_tx, _) = broadcast::channel::<RpcNotification>(256);
+        let notif_tx_for_reader = notif_tx.clone();
+
+        let conn_state = Arc::new(Mutex::new(ConnectionState::Connected));
+        let conn_state_for_reader = conn_state.clone();
+
+        let rpc_for_reader = rpc.clone();
+        let read_task = tokio::spawn(async move {
+            loop {
+                match stream.next().await {
+                    Some(Ok(Message::Text(text))) => {
+                        let frame: Value = match serde_json::from_str(&text) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+                        if let Some(id) = frame.get(jsonrpc::field::ID).and_then(Value::as_str) {
+                            let result = frame.get(jsonrpc::field::RESULT).cloned();
+                            let error: Option<jsonrpc::JsonRpcError> = frame
+                                .get(jsonrpc::field::ERROR)
+                                .and_then(|e| serde_json::from_value(e.clone()).ok());
+                            rpc_for_reader.dispatch_response(id, result, error);
+                        } else if let Some(method) =
+                            frame.get(jsonrpc::field::METHOD).and_then(Value::as_str)
+                        {
+                            let params = frame.get("params").cloned().unwrap_or(Value::Null);
+                            let _ = notif_tx_for_reader.send(RpcNotification {
+                                method: method.to_string(),
+                                params,
+                            });
+                        }
+                    }
+                    Some(Ok(Message::Close(frame))) => {
+                        let reason = frame
+                            .map(|f| f.reason.to_string())
+                            .unwrap_or_else(|| "server closed connection".to_string());
+                        *conn_state_for_reader.lock().unwrap() =
+                            ConnectionState::Disconnected { reason };
+                        break;
+                    }
+                    Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => continue,
+                    Some(Ok(Message::Binary(_))) => continue,
+                    Some(Err(e)) => {
+                        *conn_state_for_reader.lock().unwrap() = ConnectionState::Disconnected {
+                            reason: e.to_string(),
+                        };
+                        break;
+                    }
+                    None => {
+                        *conn_state_for_reader.lock().unwrap() = ConnectionState::Disconnected {
+                            reason: "EOF (WSS connection closed)".to_string(),
+                        };
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Initialize handshake — identical to Unix socket path.
+        let mut init_params = serde_json::json!({
+            "protocol_version": jsonrpc::ACP_PROTOCOL_VERSION
+        });
+        if let Some(id) = prev_tui_id {
+            init_params["tui_id"] = serde_json::Value::String(id.to_string());
+        }
+        if let Some(sig) = prev_tui_sig {
+            init_params["tui_sig"] = serde_json::Value::String(sig.to_string());
+        }
+        let resp = rpc
+            .request(method::INITIALIZE, init_params)
+            .await
+            .map_err(|e| anyhow::Error::msg(format!("initialize: {} ({})", e.message, e.code)))?;
 
         let server_version = resp
             .get("server_version")
@@ -347,8 +476,8 @@ impl RpcClient {
             self.rpc.request(method, params),
         )
         .await
-        .map_err(|_| anyhow::anyhow!("RPC {method}: timed out after 5s"))?
-        .map_err(|e| anyhow::anyhow!("RPC {method}: {} ({})", e.message, e.code))?;
+        .map_err(|_| anyhow::Error::msg(format!("RPC {method}: timed out after 5s")))?
+        .map_err(|e| anyhow::Error::msg(format!("RPC {method}: {} ({})", e.message, e.code)))?;
         serde_json::from_value(result).with_context(|| format!("deserializing {method} result"))
     }
 
@@ -361,9 +490,9 @@ impl RpcClient {
         let result = rpc
             .request(method, params)
             .await
-            .map_err(|e| anyhow::anyhow!("RPC {method}: {} ({})", e.message, e.code))?;
+            .map_err(|e| anyhow::Error::msg(format!("RPC {method}: {} ({})", e.message, e.code)))?;
         serde_json::from_value(result)
-            .map_err(|e| anyhow::anyhow!("deserializing {method} result: {e}"))
+            .map_err(|e| anyhow::Error::msg(format!("deserializing {method} result: {e}")))
     }
 
     // ── Connection state ─────────────────────────────────────────
@@ -371,6 +500,14 @@ impl RpcClient {
     /// Current connection state. Cheap mutex read, safe to call on every frame.
     pub fn connection_state(&self) -> ConnectionState {
         self.connection_state.lock().unwrap().clone()
+    }
+
+    /// Returns `true` when the daemon connection is known to be dead.
+    pub fn is_disconnected(&self) -> bool {
+        matches!(
+            self.connection_state(),
+            ConnectionState::Disconnected { .. }
+        )
     }
 
     // ── Notifications ─────────────────────────────────────────────
@@ -1138,6 +1275,9 @@ pub struct TuiListEntry {
     pub connected_at: String,
     pub connected_at_unix: i64,
     pub peer_label: String,
+    /// Transport protocol: `"unix"` or `"wss"`.
+    #[serde(default)]
+    pub transport: String,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
