@@ -63,6 +63,7 @@
 - [MCP (Model Context Protocol)](./tools/mcp.md)
 - [Browser automation](./tools/browser.md)
 - [Skills](./tools/skills.md)
+- [8Sleep](./tools/eight-sleep.md)
 
 # Security
 

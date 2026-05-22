@@ -61,6 +61,7 @@ pub use zeroclaw_tools::composio::ComposioTool;
 pub use zeroclaw_tools::content_search::ContentSearchTool;
 pub use zeroclaw_tools::data_management::DataManagementTool;
 pub use zeroclaw_tools::discord_search::DiscordSearchTool;
+pub use zeroclaw_tools::eight_sleep::EightSleepTool;
 pub use zeroclaw_tools::escalate::EscalateToHumanTool;
 pub use zeroclaw_tools::file_edit::FileEditTool;
 pub use zeroclaw_tools::file_write::FileWriteTool;
@@ -676,6 +677,36 @@ pub fn all_tools_with_runtime(
             );
         } else {
             tool_arcs.push(Arc::new(NotionTool::new(notion_api_key, security.clone())));
+        }
+    }
+
+    // 8Sleep Pod integration (config-gated)
+    if root_config.eight_sleep.enabled {
+        let email = if root_config.eight_sleep.email.trim().is_empty() {
+            std::env::var("EIGHT_SLEEP_EMAIL").unwrap_or_default()
+        } else {
+            root_config.eight_sleep.email.trim().to_string()
+        };
+        let password = if root_config.eight_sleep.password.trim().is_empty() {
+            std::env::var("EIGHT_SLEEP_PASSWORD").unwrap_or_default()
+        } else {
+            root_config.eight_sleep.password.trim().to_string()
+        };
+        if email.is_empty() || password.is_empty() {
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "8Sleep tool enabled but no credentials found (set eight_sleep.email/password or EIGHT_SLEEP_EMAIL/EIGHT_SLEEP_PASSWORD env vars)"
+            );
+        } else {
+            tool_arcs.push(Arc::new(EightSleepTool::new(
+                email,
+                password,
+                root_config.eight_sleep.device_id.clone(),
+                root_config.eight_sleep.request_timeout_secs,
+                security.clone(),
+            )));
         }
     }
 

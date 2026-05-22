@@ -472,6 +472,11 @@ pub struct Config {
     #[nested]
     pub image_gen: ImageGenConfig,
 
+    /// 8Sleep Pod integration configuration (`[eight_sleep]`).
+    #[serde(default)]
+    #[nested]
+    pub eight_sleep: EightSleepConfig,
+
     /// Plugin system configuration (`[plugins]`).
     #[serde(default)]
     #[nested]
@@ -6808,6 +6813,57 @@ impl Default for ImageGenConfig {
     }
 }
 
+// ── 8Sleep ──────────────────────────────────────────────────────
+
+/// 8Sleep Pod integration configuration (`[eight_sleep]`).
+///
+/// Controls bed temperature, priming, alarms, and reads sleep metrics
+/// through the 8Sleep cloud API. Uses JWT auth (email + password).
+///
+/// Disclaimer: 8Sleep does not publish a stable public API. This
+/// integration uses the same HTTPS endpoints the official mobile app
+/// calls and may break without notice.
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "eight_sleep"]
+pub struct EightSleepConfig {
+    /// Enable the `eight_sleep` tool. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// 8Sleep account email.
+    #[serde(default)]
+    pub email: String,
+    /// 8Sleep account password. Encrypted at rest.
+    /// Falls back to `EIGHT_SLEEP_PASSWORD` env var.
+    #[serde(default)]
+    #[secret]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub password: String,
+    /// Optional Pod device ID. When empty, the first device on the
+    /// account is used automatically.
+    #[serde(default)]
+    pub device_id: Option<String>,
+    /// Request timeout in seconds. Default: 30.
+    #[serde(default = "default_eight_sleep_timeout_secs")]
+    pub request_timeout_secs: u64,
+}
+
+fn default_eight_sleep_timeout_secs() -> u64 {
+    30
+}
+
+impl Default for EightSleepConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            email: String::new(),
+            password: String::new(),
+            device_id: None,
+            request_timeout_secs: default_eight_sleep_timeout_secs(),
+        }
+    }
+}
+
 // ── Claude Code ─────────────────────────────────────────────────
 
 /// Claude Code CLI tool configuration (`[claude_code]` section).
@@ -12761,6 +12817,7 @@ impl Default for Config {
             knowledge: KnowledgeConfig::default(),
             linkedin: LinkedInConfig::default(),
             image_gen: ImageGenConfig::default(),
+            eight_sleep: EightSleepConfig::default(),
             plugins: PluginsConfig::default(),
             locale: None,
             verifiable_intent: VerifiableIntentConfig::default(),
@@ -13196,6 +13253,12 @@ impl Config {
                 description: "Scheduled tasks",
                 category: "ToolsAutomation",
                 active: !self.cron.is_empty(),
+            },
+            crate::config::IntegrationDescriptor {
+                display_name: "8Sleep",
+                description: "Pod temperature, priming, alarms & sleep metrics",
+                category: "ToolsAutomation",
+                active: self.eight_sleep.enabled,
             },
         ]
     }
@@ -16032,6 +16095,7 @@ auto_save = true
             knowledge: KnowledgeConfig::default(),
             linkedin: LinkedInConfig::default(),
             image_gen: ImageGenConfig::default(),
+            eight_sleep: EightSleepConfig::default(),
             plugins: PluginsConfig::default(),
             locale: None,
             verifiable_intent: VerifiableIntentConfig::default(),
@@ -16629,6 +16693,7 @@ default_temperature = 0.7
             knowledge: KnowledgeConfig::default(),
             linkedin: LinkedInConfig::default(),
             image_gen: ImageGenConfig::default(),
+            eight_sleep: EightSleepConfig::default(),
             plugins: PluginsConfig::default(),
             locale: None,
             verifiable_intent: VerifiableIntentConfig::default(),
