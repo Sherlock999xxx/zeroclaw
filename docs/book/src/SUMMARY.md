@@ -137,7 +137,6 @@
 - [PR workflow](./maintainers/pr-workflow.md)
 - [Reviewer playbook](./maintainers/reviewer-playbook.md)
 - [Labels](./maintainers/labels.md)
-- [Label cleanup snapshot](./maintainers/label-cleanup-2026-05.md)
 - [Superseding PRs](./maintainers/superseding.md)
 - [Release runbook](./maintainers/release-runbook.md)
 - [Changelog generation](./maintainers/changelog-generation.md)

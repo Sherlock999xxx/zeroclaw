@@ -26,8 +26,6 @@ Use the live no-space module spelling for scoped module labels: `provider:openai
 
 Legacy duplicate labels such as `provider: openai`, `channel: telegram`, or `tool: shell` are cleanup candidates. Migrate open issues/PRs to the canonical no-space spelling before deletion. Do not delete labels with open references, broadly rename label families, or remove stale-policy labels without a maintainer decision for that cleanup batch.
 
-For the May 2026 audit and proposed cleanup buckets, see [Label cleanup snapshot](./label-cleanup-2026-05.md).
-
 ## Cleanup protocol
 
 Label cleanup is a maintainer action, not a side effect of normal PR review.
