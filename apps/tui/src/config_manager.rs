@@ -2266,24 +2266,25 @@ impl<'a> App<'a> {
     ) {
         let has_tabs = !self.tab_names.is_empty();
 
-        // When tabs are present, split off a row for the tab bar between
-        // breadcrumb and help.
-        let (tab_area, body_area) = if has_tabs {
-            let split = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(1), Constraint::Min(0)])
-                .split(area);
-            (Some(split[0]), split[1])
-        } else {
-            (None, area)
-        };
-
-        let r = regions(body_area);
+        // Breadcrumb first, then optional tab bar, then the rest.
+        let r = regions(area);
 
         let bc: Vec<&str> = std::iter::once("Config")
             .chain(breadcrumb.iter().map(String::as_str))
             .collect();
         render_breadcrumb(frame, r.breadcrumb, &bc);
+
+        // When tabs are present, split the help row into tab bar + help.
+        // The help area is 2 rows: use the first for tabs, second for help.
+        let tab_area = if has_tabs {
+            let split = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Length(1)])
+                .split(r.help);
+            Some(split[0])
+        } else {
+            None
+        };
 
         // Tab bar
         if let Some(tab_rect) = tab_area {
