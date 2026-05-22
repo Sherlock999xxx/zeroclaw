@@ -2280,6 +2280,21 @@ pub async fn run_tool_call_loop(
                             )))
                             .await;
                     }
+                    ::zeroclaw_log::record!(
+                        INFO,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Success)
+                            .with_attrs(::serde_json::json!({
+                                "model": model,
+                                "iteration": iteration + 1,
+                                "tool": tool_name.clone(),
+                                "arguments": scrub_credentials(&tool_args.to_string()),
+                                "replaced": true,
+                                "output": scrub_credentials(replacement),
+                                "trace_id": turn_id,
+                            })),
+                        "tool_call_result"
+                    );
                     ordered_results[idx] = Some((
                         tool_name.clone(),
                         call.tool_call_id.clone(),

@@ -31,6 +31,7 @@ pub enum ApprovalResponse {
     /// Execute and add tool to session-scoped allowlist.
     Always,
     /// Skip execution; return this as the tool result instead.
+    #[serde(rename = "replace_with")]
     ReplaceWith(String),
 }
 
@@ -632,6 +633,9 @@ mod tests {
         assert_eq!(json, "\"always\"");
         let parsed: ApprovalResponse = serde_json::from_str("\"no\"").unwrap();
         assert_eq!(parsed, ApprovalResponse::No);
+        let json = serde_json::to_string(&ApprovalResponse::ReplaceWith("foo".to_string())).unwrap();
+        let parsed: ApprovalResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, ApprovalResponse::ReplaceWith("foo".to_string()));
     }
 
     // ── ApprovalRequest ──────────────────────────────────────
