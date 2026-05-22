@@ -12,6 +12,7 @@ import type {
   Session,
   ChannelDetail,
   SessionMessagesResponse,
+  TuiEntry,
 } from "../types/api";
 import { clearToken, getToken, setToken } from "./auth";
 import { apiOrigin, basePath } from "./basePath";
@@ -204,6 +205,19 @@ export function getHealth(): Promise<HealthSnapshot> {
   return apiFetch<HealthSnapshot | { health: HealthSnapshot }>(
     "/api/health",
   ).then((data) => unwrapField(data, "health"));
+}
+
+// ---------------------------------------------------------------------------
+// TUIs
+// ---------------------------------------------------------------------------
+
+export function getTuis(): Promise<TuiEntry[]> {
+  return apiFetch<TuiEntry[] | { tuis: TuiEntry[] }>("/api/tuis").then(
+    (data) => {
+      const result = unwrapField(data, "tuis");
+      return Array.isArray(result) ? result : [];
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------

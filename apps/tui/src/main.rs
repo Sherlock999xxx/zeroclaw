@@ -51,7 +51,7 @@ async fn run() -> anyhow::Result<()> {
     let socket = client::resolve_socket_path(&config_dir)?;
 
     // Initial connection (before the terminal is initialized).
-    let mut rpc = match client::RpcClient::connect(&socket).await {
+    let mut rpc = match client::RpcClient::connect(&socket, None, None).await {
         Ok(c) => c,
         Err(_) => {
             spawn_ephemeral_daemon(&config_dir)?;
@@ -75,6 +75,10 @@ async fn run_with_reconnect(
         if !should_reconnect {
             return Ok(());
         }
+        // Preserve TUI identity across reconnects so the daemon can
+        // reclaim the same UID via HMAC signature verification.
+        let prev_id = rpc.tui_id().map(String::from);
+        let prev_sig = rpc.tui_sig().map(String::from);
         // Retry connecting to the existing socket. We do NOT spawn a new
         // daemon here — multiple TUIs reconnecting simultaneously would
         // each spawn their own, causing a stampede. The daemon is managed
@@ -82,7 +86,9 @@ async fn run_with_reconnect(
         // startup path in run()).
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
-            if let Ok(c) = client::RpcClient::connect(socket).await {
+            if let Ok(c) =
+                client::RpcClient::connect(socket, prev_id.as_deref(), prev_sig.as_deref()).await
+            {
                 *rpc = c;
                 break;
             }
@@ -122,7 +128,7 @@ async fn await_daemon_ready(socket: &std::path::Path) -> anyhow::Result<client::
                 socket.display(),
             );
         }
-        match client::RpcClient::connect(socket).await {
+        match client::RpcClient::connect(socket, None, None).await {
             Ok(c) => return Ok(c),
             Err(_) => tokio::time::sleep(DAEMON_CONNECT_INTERVAL).await,
         }

@@ -1,0 +1,255 @@
+//! TUI session identity — UID generation, HMAC signing, and live
+//! connection registry.
+//!
+//! **Source of truth** for connected TUI state. The `TuiRegistry` lives
+//! on [`super::context::RpcContext`] and is the single canonical location
+//! for "which TUIs are connected right now." Nothing else stores this.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Mutex;
+
+use chrono::{DateTime, Utc};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
+
+// ── TUI entry ────────────────────────────────────────────────────
+
+/// A connected TUI client.
+#[derive(Debug, Clone)]
+pub struct TuiEntry {
+    pub tui_id: String,
+    pub connected_at: DateTime<Utc>,
+    pub peer_label: String,
+}
+
+// ── Registry ─────────────────────────────────────────────────────
+
+/// Daemon-wide registry of connected TUI clients.
+///
+/// **Source of truth** for live TUI connection state. Not persisted —
+/// rebuilt on each daemon start from incoming `initialize` handshakes.
+pub struct TuiRegistry {
+    /// HMAC signing key loaded from `.secret_key`. `None` = signing
+    /// disabled — UIDs are issued unsigned and reconnects trust claimed
+    /// identities without verification.
+    signing_key: Option<Vec<u8>>,
+    /// Connected TUIs keyed by `tui_id`.
+    connected: Mutex<HashMap<String, TuiEntry>>,
+}
+
+impl TuiRegistry {
+    /// Create a registry, attempting to load the signing key from
+    /// `<config_dir>/.secret_key`. If the file is missing or
+    /// unreadable, signing is silently disabled.
+    pub fn new(config_dir: &Path) -> Self {
+        let key_path = config_dir.join(".secret_key");
+        let signing_key = std::fs::read_to_string(&key_path)
+            .ok()
+            .and_then(|hex_str| hex::decode(hex_str.trim()).ok())
+            .filter(|key| !key.is_empty());
+
+        Self {
+            signing_key,
+            connected: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Test constructor with no signing key.
+    #[cfg(test)]
+    pub fn new_unsigned() -> Self {
+        Self {
+            signing_key: None,
+            connected: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Whether HMAC signing is enabled (`.secret_key` was loaded).
+    pub fn signing_is_enabled(&self) -> bool {
+        self.signing_key.is_some()
+    }
+
+    // ── UID generation ───────────────────────────────────────────
+
+    /// Generate a short TUI ID: `tui_` + 8 hex chars (4 random bytes).
+    pub fn generate_tui_id() -> String {
+        let bytes: [u8; 4] = rand::random();
+        format!("tui_{}", hex::encode(bytes))
+    }
+
+    /// Generate a TUI ID that is not currently in the registry.
+    pub fn generate_unique_tui_id(&self) -> String {
+        let connected = self.connected.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            let id = Self::generate_tui_id();
+            if !connected.contains_key(&id) {
+                return id;
+            }
+        }
+    }
+
+    // ── HMAC signing ─────────────────────────────────────────────
+
+    /// Sign a TUI ID with HMAC-SHA256. Returns `None` if signing is
+    /// disabled.
+    pub fn sign(&self, tui_id: &str) -> Option<String> {
+        let key = self.signing_key.as_ref()?;
+        let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+        mac.update(tui_id.as_bytes());
+        Some(hex::encode(mac.finalize().into_bytes()))
+    }
+
+    /// Verify a TUI ID + signature. Returns `true` if:
+    /// - Signing is disabled (trust all), OR
+    /// - The signature is valid.
+    pub fn verify(&self, tui_id: &str, sig: &str) -> bool {
+        let Some(ref key) = self.signing_key else {
+            return true;
+        };
+        let Ok(sig_bytes) = hex::decode(sig) else {
+            return false;
+        };
+        let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+        mac.update(tui_id.as_bytes());
+        mac.verify_slice(&sig_bytes).is_ok()
+    }
+
+    // ── Registry operations ──────────────────────────────────────
+
+    /// Register a connected TUI.
+    pub fn register(&self, entry: TuiEntry) {
+        self.connected
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(entry.tui_id.clone(), entry);
+    }
+
+    /// Unregister a disconnected TUI.
+    pub fn unregister(&self, tui_id: &str) {
+        self.connected
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(tui_id);
+    }
+
+    /// Snapshot of all connected TUIs.
+    pub fn list(&self) -> Vec<TuiEntry> {
+        self.connected
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect()
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generate_tui_id_format() {
+        let id = TuiRegistry::generate_tui_id();
+        assert!(id.starts_with("tui_"), "expected tui_ prefix, got {id}");
+        assert_eq!(id.len(), 12, "tui_ + 8 hex chars = 12, got {}", id.len());
+        // Hex chars only after prefix
+        assert!(
+            id[4..].chars().all(|c| c.is_ascii_hexdigit()),
+            "non-hex chars in {id}"
+        );
+    }
+
+    #[test]
+    fn sign_verify_roundtrip() {
+        let registry = TuiRegistry {
+            signing_key: Some(vec![0xAB; 32]),
+            connected: Mutex::new(HashMap::new()),
+        };
+        let id = "tui_deadbeef";
+        let sig = registry.sign(id).expect("signing should succeed");
+        assert!(registry.verify(id, &sig), "roundtrip verify failed");
+    }
+
+    #[test]
+    fn verify_rejects_tampered_sig() {
+        let registry = TuiRegistry {
+            signing_key: Some(vec![0xAB; 32]),
+            connected: Mutex::new(HashMap::new()),
+        };
+        let id = "tui_deadbeef";
+        let sig = registry.sign(id).unwrap();
+        // Flip a character
+        let mut tampered = sig.clone();
+        let replacement = if tampered.ends_with('0') { 'f' } else { '0' };
+        tampered.pop();
+        tampered.push(replacement);
+        assert!(!registry.verify(id, &tampered), "tampered sig should fail");
+    }
+
+    #[test]
+    fn verify_rejects_wrong_id() {
+        let registry = TuiRegistry {
+            signing_key: Some(vec![0xAB; 32]),
+            connected: Mutex::new(HashMap::new()),
+        };
+        let sig = registry.sign("tui_aaaaaaaa").unwrap();
+        assert!(
+            !registry.verify("tui_bbbbbbbb", &sig),
+            "wrong ID should fail"
+        );
+    }
+
+    #[test]
+    fn verify_without_key_trusts_all() {
+        let registry = TuiRegistry::new_unsigned();
+        assert!(registry.verify("tui_anything", "bogus_sig"));
+    }
+
+    #[test]
+    fn signing_disabled_returns_none() {
+        let registry = TuiRegistry::new_unsigned();
+        assert!(registry.sign("tui_test").is_none());
+        assert!(!registry.signing_is_enabled());
+    }
+
+    #[test]
+    fn register_unregister_lifecycle() {
+        let registry = TuiRegistry::new_unsigned();
+        assert!(registry.list().is_empty());
+
+        registry.register(TuiEntry {
+            tui_id: "tui_aabb0011".to_string(),
+            connected_at: Utc::now(),
+            peer_label: "test".to_string(),
+        });
+        assert_eq!(registry.list().len(), 1);
+        assert_eq!(registry.list()[0].tui_id, "tui_aabb0011");
+
+        registry.unregister("tui_aabb0011");
+        assert!(registry.list().is_empty());
+    }
+
+    #[test]
+    fn unregister_unknown_is_noop() {
+        let registry = TuiRegistry::new_unsigned();
+        registry.unregister("tui_nonexistent"); // must not panic
+    }
+
+    #[test]
+    fn generate_unique_avoids_existing() {
+        let registry = TuiRegistry::new_unsigned();
+        // Pre-populate with a known ID
+        registry.register(TuiEntry {
+            tui_id: "tui_00000000".to_string(),
+            connected_at: Utc::now(),
+            peer_label: "test".to_string(),
+        });
+        // generate_unique should return something different
+        let id = registry.generate_unique_tui_id();
+        assert_ne!(id, "tui_00000000");
+    }
+}

@@ -176,6 +176,7 @@ pub struct DaemonSubsystems {
     /// Start the gateway HTTP server. Injected by the binary when `gateway` feature is on.
     /// The fifth argument is the reload sender — the gateway hands it to its
     /// AppState so /admin/reload can signal the daemon to re-init.
+    /// The sixth argument is the TUI registry for the /api/tuis endpoint.
     pub gateway_start: Option<
         Box<
             dyn Fn(
@@ -184,6 +185,7 @@ pub struct DaemonSubsystems {
                     Config,
                     Option<tokio::sync::broadcast::Sender<serde_json::Value>>,
                     Option<tokio::sync::watch::Sender<bool>>,
+                    Option<std::sync::Arc<crate::rpc::tui_identity::TuiRegistry>>,
                 ) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send>>
                 + Send
                 + Sync,
@@ -259,11 +261,17 @@ pub async fn run(
     // (below) selects on it alongside OS signals. Cross-platform.
     let (reload_tx, reload_rx) = tokio::sync::watch::channel::<bool>(false);
 
+    // Construct the TUI registry early so both the gateway (for /api/tuis)
+    // and the RPC socket (for tui/list) share the same Arc.
+    let tui_registry =
+        std::sync::Arc::new(crate::rpc::tui_identity::TuiRegistry::new(&config.data_dir));
+
     if let Some(gateway_start) = subsystems.gateway_start {
         let gateway_cfg = config.clone();
         let gateway_host = host.clone();
         let gateway_event_tx = event_tx.clone();
         let gateway_reload_tx = reload_tx.clone();
+        let gateway_tui_registry = tui_registry.clone();
         let gateway_start = std::sync::Arc::new(gateway_start);
         handles.push(spawn_component_supervisor(
             "gateway",
@@ -274,8 +282,9 @@ pub async fn run(
                 let host = gateway_host.clone();
                 let tx = gateway_event_tx.clone();
                 let reload = gateway_reload_tx.clone();
+                let tui_reg = gateway_tui_registry.clone();
                 let start = gateway_start.clone();
-                async move { start(host, port, cfg, Some(tx), Some(reload)).await }
+                async move { start(host, port, cfg, Some(tx), Some(reload), Some(tui_reg)).await }
             },
         ));
     }
@@ -372,6 +381,7 @@ pub async fn run(
             approval_pending: std::sync::Arc::new(
                 crate::rpc::context::ApprovalPendingMap::default(),
             ),
+            tui_registry,
         });
 
         let socket_start = std::sync::Arc::new(socket_start);

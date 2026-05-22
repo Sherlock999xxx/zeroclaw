@@ -439,6 +439,9 @@ pub struct AppState {
     /// need to be rebuilt to apply it." The dashboard polls
     /// `/api/config/reload-status` and surfaces a reload banner when true.
     pub pending_reload: Arc<std::sync::atomic::AtomicBool>,
+    /// TUI session registry from the daemon (for /api/tuis endpoint).
+    /// `None` when the gateway runs standalone without a daemon.
+    pub tui_registry: Option<Arc<zeroclaw_runtime::rpc::tui_identity::TuiRegistry>>,
 }
 
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
@@ -452,6 +455,8 @@ pub async fn run_gateway(
     // the daemon's wait loop reacts via `subscribe()` and tears down to
     // re-init. Cross-platform replacement for the SIGUSR1 hack.
     reload_tx: Option<tokio::sync::watch::Sender<bool>>,
+    // TUI session registry from the daemon for the /api/tuis endpoint.
+    tui_registry: Option<Arc<zeroclaw_runtime::rpc::tui_identity::TuiRegistry>>,
     canvas_store: Option<CanvasStore>,
 ) -> Result<()> {
     // ── Security: warn on public bind without tunnel or explicit opt-in ──
@@ -1226,6 +1231,7 @@ pub async fn run_gateway(
         canvas_store,
         cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        tui_registry,
         #[cfg(feature = "webauthn")]
         webauthn: if config.security.webauthn.enabled {
             let secret_store = Arc::new(zeroclaw_runtime::security::SecretStore::new(
@@ -1400,6 +1406,7 @@ pub async fn run_gateway(
         .route("/api/cli-tools", get(api::handle_api_cli_tools))
         .route("/api/channels", get(api::handle_api_channels))
         .route("/api/health", get(api::handle_api_health))
+        .route("/api/tuis", get(api::handle_api_tuis))
         .route("/api/sessions", get(api::handle_api_sessions_list))
         .route("/api/sessions/running", get(api::handle_api_sessions_running))
         .route(
@@ -3328,10 +3335,9 @@ mod tests {
         // immediately with that Err. We race a short delay against
         // the spawn: a still-running task at the deadline means boot
         // got far enough to start serving.
-        let handle =
-            tokio::spawn(
-                async move { run_gateway("127.0.0.1", 0, config, None, None, None).await },
-            );
+        let handle = tokio::spawn(async move {
+            run_gateway("127.0.0.1", 0, config, None, None, None, None).await
+        });
 
         match tokio::time::timeout(
             std::time::Duration::from_millis(750),
@@ -3384,10 +3390,9 @@ mod tests {
         };
         config.agents.insert("fake123".to_string(), agent);
 
-        let handle =
-            tokio::spawn(
-                async move { run_gateway("127.0.0.1", 0, config, None, None, None).await },
-            );
+        let handle = tokio::spawn(async move {
+            run_gateway("127.0.0.1", 0, config, None, None, None, None).await
+        });
 
         match tokio::time::timeout(
             std::time::Duration::from_millis(750),
@@ -3454,6 +3459,7 @@ mod tests {
             canvas_store: CanvasStore::new(),
             cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tui_registry: None,
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -3524,6 +3530,7 @@ mod tests {
             canvas_store: CanvasStore::new(),
             cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tui_registry: None,
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -4075,6 +4082,7 @@ mod tests {
             canvas_store: CanvasStore::new(),
             cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tui_registry: None,
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -4158,6 +4166,7 @@ mod tests {
             canvas_store: CanvasStore::new(),
             cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tui_registry: None,
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -4253,6 +4262,7 @@ mod tests {
             canvas_store: CanvasStore::new(),
             cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tui_registry: None,
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -4320,6 +4330,7 @@ mod tests {
             canvas_store: CanvasStore::new(),
             cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tui_registry: None,
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -4392,6 +4403,7 @@ mod tests {
             canvas_store: CanvasStore::new(),
             cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tui_registry: None,
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -4469,6 +4481,7 @@ mod tests {
             canvas_store: CanvasStore::new(),
             cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tui_registry: None,
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -4546,6 +4559,7 @@ mod tests {
             canvas_store: CanvasStore::new(),
             cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tui_registry: None,
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -4650,6 +4664,7 @@ mod tests {
             nextcloud_talk: Some(channel),
             nextcloud_talk_webhook_secret: None,
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tui_registry: None,
             wati: None,
             gmail_push: None,
             observer: Arc::new(zeroclaw_runtime::observability::NoopObserver),

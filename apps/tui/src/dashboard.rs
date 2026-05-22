@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::client::{
     AgentStatusEntry, CostSummaryResult, CronJobEntry, CronSchedule, MemoryEntryResult,
-    MessageEntry, RpcClient, SessionEntry, StatusResult,
+    MessageEntry, RpcClient, SessionEntry, StatusResult, TuiListEntry,
 };
 use crate::mouse;
 use crate::theme;
@@ -71,6 +71,7 @@ pub(crate) struct Dashboard<'a> {
     cron_jobs: Vec<CronJobEntry>,
     memories: Vec<MemoryEntryResult>,
     memory_error: Option<String>,
+    tuis: Vec<TuiListEntry>,
     // Session messages (loaded on demand)
     session_messages: Vec<MessageEntry>,
     session_messages_id: Option<String>,
@@ -110,6 +111,7 @@ impl<'a> Dashboard<'a> {
             cron_jobs: Vec::new(),
             memories: Vec::new(),
             memory_error: None,
+            tuis: Vec::new(),
             session_messages: Vec::new(),
             session_messages_id: None,
             session_state: ListState::default(),
@@ -167,6 +169,9 @@ impl<'a> Dashboard<'a> {
                 }
                 if let Ok(a) = self.rpc.agents_status().await {
                     self.agents = a.agents;
+                }
+                if let Ok(t) = self.rpc.tui_list().await {
+                    self.tuis = t.tuis;
                 }
             }
             Tab::Sessions => {
@@ -245,6 +250,15 @@ impl<'a> Dashboard<'a> {
     // ── Drawing ──────────────────────────────────────────────────
 
     pub(crate) fn draw(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+        // Clear stale data when disconnected so panels don't show
+        // ghost entries from a previous daemon lifetime.
+        if matches!(
+            self.rpc.connection_state(),
+            crate::client::ConnectionState::Disconnected { .. }
+        ) {
+            self.tuis.clear();
+        }
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -471,13 +485,24 @@ impl<'a> Dashboard<'a> {
             frame.render_widget(Paragraph::new(lines), cost_inner);
         }
 
+        // Bottom section: Connected TUIs + Agents
+        let bottom = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(40), // Connected TUIs
+                Constraint::Percentage(60), // Agents
+            ])
+            .split(chunks[2]);
+
+        self.draw_tuis_panel(frame, bottom[0]);
+
         // Agents summary
         let agents_block = Block::default()
             .title(Span::styled(" Agents ", theme::title_style()))
             .borders(Borders::ALL)
             .border_style(theme::dim_style());
-        let agents_inner = agents_block.inner(chunks[2]);
-        frame.render_widget(agents_block, chunks[2]);
+        let agents_inner = agents_block.inner(bottom[1]);
+        frame.render_widget(agents_block, bottom[1]);
 
         let items: Vec<ListItem> = self
             .agents
@@ -503,6 +528,50 @@ impl<'a> Dashboard<'a> {
             .collect();
 
         frame.render_widget(List::new(items), agents_inner);
+    }
+
+    fn draw_tuis_panel(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let block = Block::default()
+            .title(Span::styled(
+                format!(" Connected TUIs ({}) ", self.tuis.len()),
+                theme::title_style(),
+            ))
+            .borders(Borders::ALL)
+            .border_style(theme::dim_style());
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        if self.tuis.is_empty() {
+            frame.render_widget(
+                Paragraph::new(Span::styled("No TUIs connected", theme::dim_style())),
+                inner,
+            );
+            return;
+        }
+
+        let my_id = self.rpc.tui_id();
+        let items: Vec<ListItem> = self
+            .tuis
+            .iter()
+            .map(|t| {
+                let is_me = my_id == Some(t.tui_id.as_str());
+                let you_marker = if is_me { " (you)" } else { "" };
+                let elapsed = format_relative_time(t.connected_at_unix);
+                let id_style = if is_me {
+                    theme::accent_style()
+                } else {
+                    theme::body_style()
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled("\u{25cf} ", Style::default().fg(Color::Green)),
+                    Span::styled(&t.tui_id, id_style),
+                    Span::styled(you_marker, theme::accent_style()),
+                    Span::styled(format!("  {elapsed}"), theme::dim_style()),
+                ]))
+            })
+            .collect();
+
+        frame.render_widget(List::new(items), inner);
     }
 
     // ── Sessions tab ─────────────────────────────────────────────
@@ -1684,6 +1753,27 @@ fn truncate(s: &str, max: usize) -> String {
         format!("{}...", &first_line[..max])
     } else {
         first_line.to_string()
+    }
+}
+
+fn format_relative_time(epoch_secs: i64) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let delta = (now - epoch_secs).max(0) as u64;
+    if delta < 60 {
+        "just now".to_string()
+    } else if delta < 3600 {
+        let m = delta / 60;
+        format!("{m}m ago")
+    } else if delta < 86400 {
+        let h = delta / 3600;
+        format!("{h}h ago")
+    } else {
+        let d = delta / 86400;
+        format!("{d}d ago")
     }
 }
 

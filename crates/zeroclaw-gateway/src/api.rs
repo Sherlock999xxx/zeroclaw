@@ -1172,6 +1172,35 @@ pub async fn handle_api_channels(
     Json(serde_json::json!({ "channels": channels })).into_response()
 }
 
+/// GET /api/tuis — list connected TUI sessions
+pub async fn handle_api_tuis(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let tuis: Vec<serde_json::Value> = state
+        .tui_registry
+        .as_ref()
+        .map(|r| {
+            r.list()
+                .into_iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "tui_id": e.tui_id,
+                        "connected_at": e.connected_at.to_rfc3339(),
+                        "peer_label": e.peer_label,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Json(serde_json::json!({ "tuis": tuis })).into_response()
+}
+
 /// GET /api/health — component health snapshot
 pub async fn handle_api_health(
     State(state): State<AppState>,
@@ -1848,6 +1877,7 @@ mod tests {
             canvas_store: zeroclaw_runtime::tools::CanvasStore::new(),
             cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tui_registry: None,
             reload_tx: None,
             #[cfg(feature = "webauthn")]
             webauthn: None,

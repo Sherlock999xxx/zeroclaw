@@ -1953,20 +1953,23 @@ async fn main() -> Result<()> {
                 let canvas_store_for_channels = canvas_store_for_channels.clone();
                 let subsystems = daemon::DaemonSubsystems {
                     #[cfg(feature = "gateway")]
-                    gateway_start: Some(Box::new(move |host, port, config, tx, reload_tx| {
-                        let canvas_store = canvas_store_for_gateway.clone();
-                        Box::pin(async move {
-                            Box::pin(zeroclaw_gateway::run_gateway(
-                                &host,
-                                port,
-                                config,
-                                tx,
-                                reload_tx,
-                                Some(canvas_store),
-                            ))
-                            .await
-                        })
-                    })),
+                    gateway_start: Some(Box::new(
+                        move |host, port, config, tx, reload_tx, tui_registry| {
+                            let canvas_store = canvas_store_for_gateway.clone();
+                            Box::pin(async move {
+                                Box::pin(zeroclaw_gateway::run_gateway(
+                                    &host,
+                                    port,
+                                    config,
+                                    tx,
+                                    reload_tx,
+                                    tui_registry,
+                                    Some(canvas_store),
+                                ))
+                                .await
+                            })
+                        },
+                    )),
                     #[cfg(not(feature = "gateway"))]
                     gateway_start: None,
                     channels_start: Some(Box::new(move |config, cancel| {
@@ -3880,9 +3883,12 @@ async fn run_gateway_if_enabled(
 ) -> anyhow::Result<()> {
     // Standalone gateway (no daemon supervisor): pass None for reload_tx so
     // /admin/reload returns 503 with a clear "no supervisor; restart
-    // manually" message, and None for canvas_store so the gateway falls
-    // back to its own default.
-    Box::pin(gateway::run_gateway(host, port, config, tx, None, None)).await
+    // manually" message, None for tui_registry (no TUI socket), and None
+    // for canvas_store so the gateway falls back to its own default.
+    Box::pin(gateway::run_gateway(
+        host, port, config, tx, None, None, None,
+    ))
+    .await
 }
 
 #[cfg(not(feature = "gateway"))]

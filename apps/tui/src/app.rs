@@ -86,7 +86,7 @@ pub async fn run(rpc: &RpcClient, mut term: &mut config_manager::Term) -> Result
                 Mode::Logs => logs_pane.draw(frame, chunks[1]),
             }
 
-            draw_status_bar(frame, chunks[2], &conn_state);
+            draw_status_bar(frame, chunks[2], &conn_state, rpc.tui_id());
 
             // Help modal overlay (drawn last so it sits on top).
             if show_help {
@@ -106,7 +106,10 @@ pub async fn run(rpc: &RpcClient, mut term: &mut config_manager::Term) -> Result
 
         // Poll for input with a timeout so live panes refresh periodically.
         if !event::poll(TICK)? {
-            if matches!(conn_state, ConnectionState::Disconnected { .. }) {
+            // Re-read live connection state — the snapshot from draw time
+            // may be stale if the read task detected EOF since then.
+            let live_state = rpc.connection_state();
+            if matches!(live_state, ConnectionState::Disconnected { .. }) {
                 // Keep the UI alive for a few seconds so the user sees the
                 // disconnect reason, then hand off to the caller to reconnect.
                 // RPC calls are skipped — they'd hang on the dead socket.
@@ -263,7 +266,12 @@ fn draw_mode_bar(frame: &mut ratatui::Frame, area: Rect, active: Mode) {
 const HEALTHY_GREEN: Color = Color::Rgb(80, 220, 120);
 const DEAD_RED: Color = Color::Rgb(255, 80, 80);
 
-fn draw_status_bar(frame: &mut ratatui::Frame, area: Rect, state: &ConnectionState) {
+fn draw_status_bar(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    state: &ConnectionState,
+    tui_id: Option<&str>,
+) {
     let (dot, label, style) = match state {
         ConnectionState::Connected => (
             "\u{25cf}",
@@ -277,16 +285,27 @@ fn draw_status_bar(frame: &mut ratatui::Frame, area: Rect, state: &ConnectionSta
         ),
     };
 
-    let text_len = 1 + label.len(); // dot + label
+    // Show TUI ID prefix when connected and assigned.
+    let id_span = match (state, tui_id) {
+        (ConnectionState::Connected, Some(id)) => Some(Span::styled(
+            format!("{id} "),
+            Style::default().fg(HEALTHY_GREEN),
+        )),
+        _ => None,
+    };
+
+    let id_len = id_span.as_ref().map(|s| s.width()).unwrap_or(0);
+    let text_len = id_len + 1 + label.len(); // id + dot + label
     let padding = (area.width as usize).saturating_sub(text_len);
 
-    let line = Line::from(vec![
-        Span::raw(" ".repeat(padding)),
-        Span::styled(dot, style),
-        Span::styled(label, style),
-    ]);
+    let mut spans = vec![Span::raw(" ".repeat(padding))];
+    if let Some(id) = id_span {
+        spans.push(id);
+    }
+    spans.push(Span::styled(dot, style));
+    spans.push(Span::styled(label, style));
 
-    frame.render_widget(Paragraph::new(line), area);
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 // ── Help modal ───────────────────────────────────────────────────

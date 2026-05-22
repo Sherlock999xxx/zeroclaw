@@ -115,6 +115,9 @@ pub enum Method {
     // Logs / Events
     LogsSubscribe,
     LogsQuery,
+
+    // TUI
+    TuiList,
 }
 
 impl Method {
@@ -185,6 +188,8 @@ impl Method {
         // Logs
         (Method::LogsSubscribe, "logs/subscribe"),
         (Method::LogsQuery, "logs/query"),
+        // TUI
+        (Method::TuiList, "tui/list"),
     ];
 
     /// Resolve a wire method name to a variant. Table scan, no hand-written
@@ -228,15 +233,27 @@ pub struct RpcDispatcher {
     ctx: Arc<RpcContext>,
     rpc: Arc<RpcOutbound>,
     authenticated: bool,
+    /// TUI session UID assigned during `initialize`. Used for registry
+    /// cleanup on disconnect.
+    tui_id: Option<String>,
+    /// Transport-level peer label (e.g. `unix:pid=1234,uid=1000`).
+    peer_label: String,
 }
 
 impl RpcDispatcher {
-    pub fn new(ctx: Arc<RpcContext>, writer_tx: mpsc::Sender<String>) -> Self {
+    pub fn new(ctx: Arc<RpcContext>, writer_tx: mpsc::Sender<String>, peer_label: String) -> Self {
         Self {
             ctx,
             rpc: Arc::new(RpcOutbound::new(writer_tx)),
             authenticated: false,
+            tui_id: None,
+            peer_label,
         }
+    }
+
+    /// TUI ID assigned during initialize, if any.
+    pub fn tui_id(&self) -> Option<&str> {
+        self.tui_id.as_deref()
     }
 
     /// Flush dirty config paths to disk. Clone the config out of the
@@ -385,6 +402,9 @@ impl RpcDispatcher {
             // Logs
             Method::LogsSubscribe => self.handle_logs_subscribe().await,
             Method::LogsQuery => self.handle_logs_query(&req.params).await,
+
+            // TUI
+            Method::TuiList => self.handle_tui_list(),
         };
 
         if is_notification {
@@ -412,11 +432,46 @@ impl RpcDispatcher {
             ));
         }
 
+        // TUI identity: reconnect with previous credentials or generate new
+        let tui_id = if let (Some(claimed_id), Some(sig)) =
+            (req.tui_id.as_deref(), req.tui_sig.as_deref())
+        {
+            // Client presents ID + signature — verify
+            if !self.ctx.tui_registry.verify(claimed_id, sig) {
+                return Err(rpc_err(AUTH_REQUIRED, "Invalid TUI signature"));
+            }
+            // Remove stale entry from previous connection before re-registering
+            self.ctx.tui_registry.unregister(claimed_id);
+            claimed_id.to_string()
+        } else if let Some(claimed_id) = req.tui_id.as_deref() {
+            // Client claims ID but no signature — accept only if signing disabled
+            if self.ctx.tui_registry.signing_is_enabled() {
+                return Err(rpc_err(AUTH_REQUIRED, "TUI signature required"));
+            }
+            self.ctx.tui_registry.unregister(claimed_id);
+            claimed_id.to_string()
+        } else {
+            // Fresh connection — generate new ID
+            self.ctx.tui_registry.generate_unique_tui_id()
+        };
+
+        let tui_sig = self.ctx.tui_registry.sign(&tui_id);
+        self.ctx
+            .tui_registry
+            .register(super::tui_identity::TuiEntry {
+                tui_id: tui_id.clone(),
+                connected_at: chrono::Utc::now(),
+                peer_label: self.peer_label.clone(),
+            });
+        self.tui_id = Some(tui_id.clone());
+
         self.authenticated = true;
 
         to_result(InitializeResult {
             protocol_version: RPC_PROTOCOL_VERSION,
             server_version: env!("CARGO_PKG_VERSION").to_string(),
+            tui_id: Some(tui_id),
+            tui_sig,
         })
     }
 
@@ -449,6 +504,23 @@ impl RpcDispatcher {
             );
         }
         Ok(val)
+    }
+
+    // ── TUI handlers ─────────────────────────────────────────────
+
+    fn handle_tui_list(&self) -> RpcResult {
+        let entries = self.ctx.tui_registry.list();
+        to_result(TuiListResult {
+            tuis: entries
+                .into_iter()
+                .map(|e| TuiListEntry {
+                    tui_id: e.tui_id,
+                    connected_at: e.connected_at.to_rfc3339(),
+                    connected_at_unix: e.connected_at.timestamp(),
+                    peer_label: e.peer_label,
+                })
+                .collect(),
+        })
     }
 
     // ── Session handlers ─────────────────────────────────────────
@@ -1971,6 +2043,8 @@ mod tests {
         let r = InitializeResult {
             protocol_version: 1,
             server_version: "0.1.0".into(),
+            tui_id: None,
+            tui_sig: None,
         };
         let val = to_result(r).unwrap();
         assert_eq!(val["protocol_version"], 1);

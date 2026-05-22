@@ -172,9 +172,16 @@ pub async fn run_unix_socket(
 
                 tokio::spawn(async move {
                     let mut transport = UnixSocketTransport::new(stream);
+                    let peer = transport.peer_label();
                     let writer_tx = transport.writer();
-                    let mut dispatcher = RpcDispatcher::new(ctx, writer_tx);
+                    let mut dispatcher = RpcDispatcher::new(ctx.clone(), writer_tx, peer);
                     dispatcher.run(&mut transport).await;
+
+                    // Cleanup: unregister TUI from registry on disconnect
+                    if let Some(tui_id) = dispatcher.tui_id() {
+                        ctx.tui_registry.unregister(tui_id);
+                    }
+
                     count.fetch_sub(1, Ordering::Relaxed);
                 });
             }
@@ -246,6 +253,8 @@ mod tests {
 
         let params = InitializeParams {
             protocol_version: 1,
+            tui_id: None,
+            tui_sig: None,
         };
         writer
             .write_all(rpc_request(Method::Initialize, &params, 1).as_bytes())
@@ -289,6 +298,8 @@ mod tests {
 
         let init_params = InitializeParams {
             protocol_version: 1,
+            tui_id: None,
+            tui_sig: None,
         };
         writer
             .write_all(rpc_request(Method::Initialize, &init_params, 1).as_bytes())
@@ -447,9 +458,7 @@ mod tests {
             "decision": "allow_once",
         });
         writer
-            .write_all(
-                rpc_request(Method::SessionApprove, &approve_params, 10).as_bytes(),
-            )
+            .write_all(rpc_request(Method::SessionApprove, &approve_params, 10).as_bytes())
             .await
             .unwrap();
 

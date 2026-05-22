@@ -60,6 +60,8 @@ pub mod method {
     pub const MEMORY_LIST: &str = "memory/list";
     pub const MEMORY_SEARCH: &str = "memory/search";
     pub const SESSION_MESSAGES: &str = "session/messages";
+    // TUI identity
+    pub const TUI_LIST: &str = "tui/list";
 }
 
 // ── Socket path resolution ───────────────────────────────────────
@@ -212,11 +214,22 @@ pub struct RpcClient {
     notifications_bcast: broadcast::Sender<RpcNotification>,
     pub notifications: mpsc::Receiver<SessionUpdate>,
     connection_state: Arc<Mutex<ConnectionState>>,
+    /// TUI session UID assigned by the daemon during initialize.
+    pub tui_id: Option<String>,
+    /// HMAC signature for reconnection. Pass back in next initialize.
+    pub tui_sig: Option<String>,
 }
 
 impl RpcClient {
     /// Connect to the daemon socket and complete the `initialize` handshake.
-    pub async fn connect(socket: &Path) -> Result<Self> {
+    ///
+    /// Pass previous `tui_id` and `tui_sig` on reconnect to reclaim
+    /// the same identity. Pass `None` for both on first connect.
+    pub async fn connect(
+        socket: &Path,
+        prev_tui_id: Option<&str>,
+        prev_tui_sig: Option<&str>,
+    ) -> Result<Self> {
         let stream = UnixStream::connect(socket)
             .await
             .with_context(|| format!("connecting to {}", socket.display()))?;
@@ -283,9 +296,15 @@ impl RpcClient {
             }
         });
 
-        let init_params = serde_json::json!({
+        let mut init_params = serde_json::json!({
             "protocol_version": jsonrpc::ACP_PROTOCOL_VERSION
         });
+        if let Some(id) = prev_tui_id {
+            init_params["tui_id"] = serde_json::Value::String(id.to_string());
+        }
+        if let Some(sig) = prev_tui_sig {
+            init_params["tui_sig"] = serde_json::Value::String(sig.to_string());
+        }
         let resp = rpc
             .request(method::INITIALIZE, init_params)
             .await
@@ -296,6 +315,12 @@ impl RpcClient {
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string();
+
+        let tui_id = resp.get("tui_id").and_then(Value::as_str).map(String::from);
+        let tui_sig = resp
+            .get("tui_sig")
+            .and_then(Value::as_str)
+            .map(String::from);
 
         let bcast_rx = notif_tx.subscribe();
         let (update_tx, update_rx) = mpsc::channel::<SessionUpdate>(64);
@@ -309,15 +334,21 @@ impl RpcClient {
             notifications_bcast: notif_tx,
             notifications: update_rx,
             connection_state: conn_state,
+            tui_id,
+            tui_sig,
         })
     }
 
     pub async fn call<T: DeserializeOwned>(&self, method: &str, params: Value) -> Result<T> {
-        let result = self
-            .rpc
-            .request(method, params)
-            .await
-            .map_err(|e| anyhow::anyhow!("RPC {method}: {} ({})", e.message, e.code))?;
+        // Timeout prevents indefinite hangs when the daemon dies between
+        // the connection-state check and the actual RPC send/recv.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.rpc.request(method, params),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("RPC {method}: timed out after 5s"))?
+        .map_err(|e| anyhow::anyhow!("RPC {method}: {} ({})", e.message, e.code))?;
         serde_json::from_value(result).with_context(|| format!("deserializing {method} result"))
     }
 
@@ -627,6 +658,23 @@ impl RpcClient {
         .await
     }
 
+    // ── TUI identity helpers ─────────────────────────────────────
+
+    /// The TUI session UID assigned by the daemon, if connected.
+    pub fn tui_id(&self) -> Option<&str> {
+        self.tui_id.as_deref()
+    }
+
+    /// The HMAC signature for the TUI session UID.
+    pub fn tui_sig(&self) -> Option<&str> {
+        self.tui_sig.as_deref()
+    }
+
+    /// List all connected TUI sessions from the daemon registry.
+    pub async fn tui_list(&self) -> Result<TuiListResult> {
+        self.call(method::TUI_LIST, serde_json::json!({})).await
+    }
+
     // ── Test-only constructors ────────────────────────────────────
 
     /// Test-only constructor that skips the Unix socket connect + initialize handshake.
@@ -642,6 +690,8 @@ impl RpcClient {
             notifications_bcast: notif_tx,
             notifications: rx,
             connection_state: Arc::new(Mutex::new(ConnectionState::Connected)),
+            tui_id: None,
+            tui_sig: None,
         }
     }
 }
@@ -1077,6 +1127,23 @@ pub struct SessionMessagesResult {
 pub struct MessageEntry {
     pub role: String,
     pub content: String,
+}
+
+// ── TUI identity types ───────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct TuiListEntry {
+    pub tui_id: String,
+    pub connected_at: String,
+    pub connected_at_unix: i64,
+    pub peer_label: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct TuiListResult {
+    pub tuis: Vec<TuiListEntry>,
 }
 
 // ── Tests ────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ pub mod context;
 pub mod dispatch;
 pub mod session;
 pub mod transport;
+pub mod tui_identity;
 pub mod turn;
 pub mod types;
 #[cfg(unix)]

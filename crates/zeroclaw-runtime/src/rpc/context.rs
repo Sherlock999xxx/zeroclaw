@@ -18,6 +18,7 @@ use zeroclaw_config::schema::Config;
 use zeroclaw_infra::session_backend::SessionBackend;
 
 use super::session::SessionStore;
+use super::tui_identity::TuiRegistry;
 
 /// Registry for in-flight tool approval requests.
 ///
@@ -79,6 +80,10 @@ pub struct RpcContext {
 
     /// In-flight approval requests waiting for session/approve RPC calls.
     pub approval_pending: Arc<ApprovalPendingMap>,
+
+    /// Live TUI client registry. Tracks connected TUI sessions by UID.
+    /// **Source of truth** for "which TUIs are connected right now."
+    pub tui_registry: Arc<TuiRegistry>,
 }
 
 impl RpcContext {
@@ -95,6 +100,7 @@ impl RpcContext {
             event_tx: None,
             reload_tx: None,
             approval_pending: Arc::new(ApprovalPendingMap::default()),
+            tui_registry: Arc::new(TuiRegistry::new_unsigned()),
         })
     }
 }

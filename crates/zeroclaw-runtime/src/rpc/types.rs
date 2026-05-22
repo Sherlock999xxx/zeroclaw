@@ -56,6 +56,12 @@ rpc_type! {
     pub struct InitializeParams {
         #[serde(default = "default_protocol_version")]
         pub protocol_version: u64,
+        /// TUI ID from a previous connection (reconnection).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub tui_id: Option<String>,
+        /// HMAC signature proving ownership of the claimed TUI ID.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub tui_sig: Option<String>,
     }
 }
 
@@ -67,6 +73,12 @@ rpc_type! {
     pub struct InitializeResult {
         pub protocol_version: u64,
         pub server_version: String,
+        /// Assigned TUI session UID.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub tui_id: Option<String>,
+        /// HMAC signature for reconnection. Pass back in next initialize.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub tui_sig: Option<String>,
     }
 }
 
@@ -80,6 +92,28 @@ rpc_type! {
 }
 
 // Health: no params, result is `Value` from `health::snapshot_json()`.
+
+// ══════════════════════════════════════════════════════════════════════
+// ── TUI ──────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+rpc_type! {
+    pub struct TuiListEntry {
+        pub tui_id: String,
+        /// RFC 3339 timestamp (for gateway API / web frontend).
+        pub connected_at: String,
+        /// Unix epoch seconds (for TUI client relative-time display
+        /// without requiring chrono).
+        pub connected_at_unix: i64,
+        pub peer_label: String,
+    }
+}
+
+rpc_type! {
+    pub struct TuiListResult {
+        pub tuis: Vec<TuiListEntry>,
+    }
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // ── Sessions ─────────────────────────────────────────────────────────
