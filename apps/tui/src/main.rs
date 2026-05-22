@@ -55,6 +55,16 @@ enum ConnectTarget {
     Wss { url: String, skip_verify: bool },
 }
 
+impl ConnectTarget {
+    /// Human-readable label for the dashboard Status box.
+    fn label(&self) -> String {
+        match self {
+            Self::UnixSocket(p) => format!("unix:{}", p.display()),
+            Self::Wss { url, .. } => url.clone(),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     install_panic_hook();
@@ -161,7 +171,8 @@ async fn run_with_reconnect(
     target: &ConnectTarget,
 ) -> anyhow::Result<()> {
     loop {
-        let should_reconnect = match app::run(rpc, term).await {
+        let label = target.label();
+        let should_reconnect = match app::run(rpc, term, &label).await {
             Ok(reconnect) => reconnect,
             Err(_) if rpc.is_disconnected() => {
                 // RPC error caused by a dead connection — treat as
