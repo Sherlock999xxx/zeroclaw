@@ -26,6 +26,21 @@ Use the live no-space module spelling for scoped module labels: `provider:openai
 
 Legacy duplicate labels such as `provider: openai`, `channel: telegram`, or `tool: shell` are cleanup candidates. Migrate open issues/PRs to the canonical no-space spelling before deletion. Do not delete labels with open references, broadly rename label families, or remove stale-policy labels without a maintainer decision for that cleanup batch.
 
+For the May 2026 audit and proposed cleanup buckets, see [Label cleanup snapshot](./label-cleanup-2026-05.md).
+
+## Cleanup protocol
+
+Label cleanup is a maintainer action, not a side effect of normal PR review.
+
+Use this sequence:
+
+1. Refresh live label usage before acting.
+2. Split candidates into zero-history deletes, zero-open duplicate deletes, migrate-first active labels, and policy holdbacks.
+3. For labels with open refs, add the canonical label to each open issue/PR, remove the legacy label, verify the legacy label has zero open refs, then delete it.
+4. Do not delete governance labels, stale-policy labels, contributor-tier labels, or default GitHub labels as part of module-label cleanup.
+
+Every live cleanup batch needs exact maintainer approval for the labels and issue/PR refs being changed.
+
 ## Type labels
 
 Type labels capture the high-level work class. They are separate from path labels such as `docs`, `ci`, or `dependencies`.

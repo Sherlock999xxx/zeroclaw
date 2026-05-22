@@ -10,6 +10,7 @@ This section covers everything beyond day-to-day development — docs, translati
 - [PR workflow](./pr-workflow.md) — branch protection, DoR/DoD, AI-assisted contribution policy, failure recovery
 - [Reviewer playbook](./reviewer-playbook.md) — review depth matrix, intake triage, automation override, queue hygiene
 - [Labels](./labels.md) — single source of truth for every label and its automation status
+- [Label cleanup snapshot](./label-cleanup-2026-05.md) — May 2026 audit buckets for duplicate and legacy label cleanup
 - [Superseding PRs](./superseding.md) — when to supersede, attribution rules, PR and commit templates
 - [Release runbook](./release-runbook.md) — verification, tag cut, monitor, post-release validation, downstream publishers
 - [Changelog generation](./changelog-generation.md) — protocol for assembling `CHANGELOG-next.md` between stable releases
