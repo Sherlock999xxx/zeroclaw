@@ -22,6 +22,15 @@ pub struct SessionOverrides {
     pub temperature: Option<f64>,
 }
 
+/// An entry in the per-session upload index (content-addressed by SHA-256).
+#[derive(Clone, Debug)]
+pub struct UploadEntry {
+    pub ref_id: String,
+    pub marker: String,
+    pub workspace_path: String,
+    pub size_bytes: u64,
+}
+
 pub struct RpcSession {
     pub agent: Arc<Mutex<Agent>>,
     pub created_at: Instant,
@@ -29,6 +38,9 @@ pub struct RpcSession {
     pub agent_alias: String,
     pub workspace_dir: String,
     pub overrides: SessionOverrides,
+    /// Content-addressed upload index. Key is `sha256:<hex>`.
+    /// Evaporates with the session.
+    pub uploads: HashMap<String, UploadEntry>,
 }
 
 impl RpcSession {
@@ -40,6 +52,7 @@ impl RpcSession {
             agent_alias: alias.to_string(),
             workspace_dir: workspace.to_string(),
             overrides: SessionOverrides::default(),
+            uploads: HashMap::new(),
         }
     }
 }
@@ -115,6 +128,32 @@ impl SessionStore {
             .await
             .get(id)
             .map(|s| s.overrides.clone())
+    }
+
+    /// Look up an existing upload by ref_id. Returns `None` if the session
+    /// or entry doesn't exist.
+    pub async fn get_upload(&self, session_id: &str, ref_id: &str) -> Option<UploadEntry> {
+        self.sessions
+            .lock()
+            .await
+            .get(session_id)
+            .and_then(|s| s.uploads.get(ref_id).cloned())
+    }
+
+    /// Insert (or overwrite) an upload entry in the session's index.
+    pub async fn insert_upload(&self, session_id: &str, entry: UploadEntry) {
+        if let Some(s) = self.sessions.lock().await.get_mut(session_id) {
+            s.uploads.insert(entry.ref_id.clone(), entry);
+        }
+    }
+
+    /// Get the workspace directory for a session.
+    pub async fn get_workspace_dir(&self, session_id: &str) -> Option<String> {
+        self.sessions
+            .lock()
+            .await
+            .get(session_id)
+            .map(|s| s.workspace_dir.clone())
     }
 
     pub async fn seed_history(&self, id: &str, msgs: &[zeroclaw_api::model_provider::ChatMessage]) {

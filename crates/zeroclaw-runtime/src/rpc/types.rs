@@ -79,6 +79,9 @@ rpc_type! {
         /// HMAC signature for reconnection. Pass back in next initialize.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub tui_sig: Option<String>,
+        /// Supported RPC method names (e.g. "session/prompt", "memory/list").
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub capabilities: Vec<String>,
     }
 }
 
@@ -159,6 +162,10 @@ rpc_type! {
     pub struct SessionPromptParams {
         pub session_id: String,
         pub prompt: String,
+        /// Inline file attachments. Processed identically to `file/attach`
+        /// entries — markers are appended to the prompt before the turn runs.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub attachments: Vec<FileEntry>,
     }
 }
 
@@ -970,6 +977,66 @@ rpc_type! {
     pub struct SelectItemResponse {
         pub fields_prefix: String,
         pub created: bool,
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── File attachments ─────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+rpc_type! {
+    /// Source hint for how the client obtained the file.
+    pub enum FileSource {
+        Clipboard,
+        File,
+    }
+}
+
+impl Default for FileSource {
+    fn default() -> Self {
+        Self::File
+    }
+}
+
+rpc_type! {
+    /// A single file entry in a `file/attach` request. Either `path` (daemon
+    /// reads from local disk — Unix socket only) or `data_b64` (client sends
+    /// base64-encoded bytes) must be present.
+    pub struct FileEntry {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub data_b64: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub filename: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub mime_type: Option<String>,
+        #[serde(default)]
+        pub source: FileSource,
+    }
+}
+
+rpc_type! {
+    pub struct FileAttachParams {
+        pub session_id: String,
+        pub files: Vec<FileEntry>,
+    }
+}
+
+rpc_type! {
+    /// Result for a single file in a `file/attach` response.
+    pub struct FileEntryResult {
+        pub ref_id: String,
+        pub marker: String,
+        pub workspace_path: String,
+        pub size_bytes: u64,
+        pub deduplicated: bool,
+    }
+}
+
+rpc_type! {
+    pub struct FileAttachResult {
+        pub files: Vec<FileEntryResult>,
     }
 }
 

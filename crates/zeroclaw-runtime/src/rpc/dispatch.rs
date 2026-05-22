@@ -118,6 +118,9 @@ pub enum Method {
 
     // TUI
     TuiList,
+
+    // Files
+    FileAttach,
 }
 
 impl Method {
@@ -190,6 +193,8 @@ impl Method {
         (Method::LogsQuery, "logs/query"),
         // TUI
         (Method::TuiList, "tui/list"),
+        // Files
+        (Method::FileAttach, "file/attach"),
     ];
 
     /// Resolve a wire method name to a variant. Table scan, no hand-written
@@ -405,6 +410,9 @@ impl RpcDispatcher {
 
             // TUI
             Method::TuiList => self.handle_tui_list(),
+
+            // Files
+            Method::FileAttach => self.handle_file_attach(&req.params).await,
         };
 
         if is_notification {
@@ -472,11 +480,17 @@ impl RpcDispatcher {
 
         self.authenticated = true;
 
+        let capabilities: Vec<String> = Method::ALL
+            .iter()
+            .map(|(_, name)| (*name).to_string())
+            .collect();
+
         to_result(InitializeResult {
             protocol_version: RPC_PROTOCOL_VERSION,
             server_version: env!("CARGO_PKG_VERSION").to_string(),
             tui_id: Some(tui_id),
             tui_sig,
+            capabilities,
         })
     }
 
@@ -607,6 +621,28 @@ impl RpcDispatcher {
             .await
             .ok_or_else(|| rpc_err(SESSION_NOT_FOUND, "Session not found"))?;
 
+        // Process inline attachments: upload each, append markers to prompt.
+        let mut prompt = req.prompt.clone();
+        if !req.attachments.is_empty() {
+            use super::attachments::process_file_entry;
+
+            let workspace_dir = self
+                .ctx
+                .sessions
+                .get_workspace_dir(sid)
+                .await
+                .ok_or_else(|| rpc_err(SESSION_NOT_FOUND, "Session not found"))?;
+            let is_wss = self.peer_label.starts_with("wss:");
+            prompt.push('\n');
+            for entry in &req.attachments {
+                let result =
+                    process_file_entry(entry, sid, &workspace_dir, is_wss, &self.ctx.sessions)
+                        .await?;
+                prompt.push_str(&result.marker);
+                prompt.push('\n');
+            }
+        }
+
         let _guard = self
             .ctx
             .sessions
@@ -623,7 +659,7 @@ impl RpcDispatcher {
         let sid_owned = sid.to_string();
         let outcome = execute_turn(
             agent,
-            req.prompt.clone(),
+            prompt.clone(),
             cancel,
             Some(format!("rpc_{sid}")),
             move |event| {
@@ -643,7 +679,7 @@ impl RpcDispatcher {
         // Persist.
         if let Some(ref backend) = self.ctx.session_backend {
             let key = format!("rpc_{sid}");
-            let _ = backend.append(&key, &ChatMessage::user(&req.prompt));
+            let _ = backend.append(&key, &ChatMessage::user(&prompt));
             match &outcome {
                 Ok(TurnOutcome::Completed { text, .. }) => {
                     let _ = backend.append(&key, &ChatMessage::assistant(text));
@@ -1818,6 +1854,45 @@ impl RpcDispatcher {
         })
     }
 
+    // ── File attachment handler ────────────────────────────────
+
+    async fn handle_file_attach(&self, params: &Value) -> RpcResult {
+        use super::attachments::{MAX_REQUEST_BYTES, process_file_entry};
+
+        let req: FileAttachParams = parse_params(params)?;
+        let sid = &req.session_id;
+
+        let workspace_dir = self
+            .ctx
+            .sessions
+            .get_workspace_dir(sid)
+            .await
+            .ok_or_else(|| rpc_err(SESSION_NOT_FOUND, "Session not found"))?;
+
+        let is_wss = self.peer_label.starts_with("wss:");
+
+        let mut total_bytes: u64 = 0;
+        let mut results = Vec::with_capacity(req.files.len());
+
+        for entry in &req.files {
+            let result =
+                process_file_entry(entry, sid, &workspace_dir, is_wss, &self.ctx.sessions).await?;
+            total_bytes += result.size_bytes;
+            if total_bytes > MAX_REQUEST_BYTES {
+                return Err(rpc_err(
+                    INVALID_PARAMS,
+                    format!(
+                        "Total attachment size exceeds {} MB limit",
+                        MAX_REQUEST_BYTES / (1024 * 1024)
+                    ),
+                ));
+            }
+            results.push(result);
+        }
+
+        to_result(FileAttachResult { files: results })
+    }
+
     // ── Wire helpers ─────────────────────────────────────────────
 
     async fn send_result(&self, id: Value, result: Value) {
@@ -2051,6 +2126,7 @@ mod tests {
             server_version: "0.1.0".into(),
             tui_id: None,
             tui_sig: None,
+            capabilities: vec![],
         };
         let val = to_result(r).unwrap();
         assert_eq!(val["protocol_version"], 1);

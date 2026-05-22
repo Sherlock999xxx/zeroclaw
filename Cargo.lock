@@ -13550,6 +13550,7 @@ dependencies = [
  "landlock",
  "libc",
  "lru",
+ "mime_guess",
  "nanohtml2text",
  "opentelemetry",
  "opentelemetry-otlp",
