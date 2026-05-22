@@ -261,6 +261,19 @@ impl RpcDispatcher {
         self.tui_id.as_deref()
     }
 
+    /// Construct a pre-authenticated dispatcher sharing the same context and
+    /// RPC outbound as `self`. Used to run long-lived methods (e.g.
+    /// `session/prompt`) in a spawned task so the read loop remains live.
+    fn spawn_handle(&self) -> Self {
+        Self {
+            ctx: Arc::clone(&self.ctx),
+            rpc: Arc::clone(&self.rpc),
+            authenticated: true,
+            tui_id: self.tui_id.clone(),
+            peer_label: self.peer_label.clone(),
+        }
+    }
+
     /// Flush dirty config paths to disk. Clone the config out of the
     /// lock (parking_lot guards are !Send), save to disk, then write
     /// the clone (with cleared dirty set) back.
@@ -339,7 +352,23 @@ impl RpcDispatcher {
             // Sessions
             Method::SessionNew => self.handle_session_new(&req.params).await,
             Method::SessionClose => self.handle_session_close(&req.params).await,
-            Method::SessionPrompt => self.handle_session_prompt(&req.params).await,
+            Method::SessionPrompt => {
+                // Spawn so the read loop stays live for session/approve while
+                // the turn is in flight — serial dispatch would deadlock.
+                if !is_notification {
+                    let handle = self.spawn_handle();
+                    let id_clone = id;
+                    let params_clone = req.params.clone();
+                    tokio::spawn(async move {
+                        let result = handle.handle_session_prompt(&params_clone).await;
+                        match result {
+                            Ok(v) => handle.send_result(id_clone, v).await,
+                            Err(e) => handle.send_error(id_clone, e.code, &e.message).await,
+                        }
+                    });
+                }
+                return;
+            }
             Method::SessionConfigure => self.handle_session_configure(&req.params).await,
             Method::SessionCancel => self.handle_session_cancel(&req.params),
             Method::SessionList => self.handle_session_list(&req.params).await,
