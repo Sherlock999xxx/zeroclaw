@@ -124,5 +124,7 @@ The dispatch layer lives in `crates/zeroclaw-runtime/src/rpc/`:
 | `session.rs` | `RpcSession`, `SessionStore` |
 | `dispatch.rs` | `RpcDispatcher` method routing |
 | `unix.rs` | `UnixSocketTransport` + listener |
+| `wss.rs` | WSS (WebSocket Secure) transport + TLS acceptor |
+| `attachments.rs` | File upload processing, dedup, marker generation |
 
-The `RpcTransport` trait is designed so that future transports (WebSocket, vsock) slot in without touching the dispatch or session logic.
+The `RpcTransport` trait is designed so that additional transports (WSS, vsock) slot in without touching the dispatch or session logic.
