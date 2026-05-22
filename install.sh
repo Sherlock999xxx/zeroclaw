@@ -836,10 +836,10 @@ echo
 
 if [ "$DRY_RUN" = true ]; then
   # shellcheck disable=SC2086
-  info "[dry-run] Would run: cargo install --release --path . --locked --force $CARGO_FLAGS"
+  info "[dry-run] Would run: cargo install --path . --locked --force $CARGO_FLAGS"
 else
   # shellcheck disable=SC2086
-  cargo install --release --path . --locked --force $CARGO_FLAGS
+  cargo install --path . --locked --force $CARGO_FLAGS
 fi
 
 # ── Web dashboard (gateway feature only) ──────────────────────────
@@ -884,12 +884,12 @@ fi
 
 if [ "$WANT_TUI" = true ]; then
   if [ "$DRY_RUN" = true ]; then
-    info "[dry-run] Would run: cargo install --release --path apps/tui --locked --force"
+    info "[dry-run] Would run: cargo install --path apps/tui --locked --force"
   else
     echo
     printf "%s\n" "$(bold "Building $TUI_BIN_NAME")"
     echo
-    cargo install --release --path apps/tui --locked --force
+    cargo install --path apps/tui --locked --force
   fi
 fi
 
