@@ -77,6 +77,11 @@ pub struct Agent {
     /// `start_channels`; this is the alternate path for environments that
     /// build an Agent directly without `start_channels`.
     channel_handles: AgentChannelHandles,
+    /// When `true`, the agent was constructed without persistent memory.
+    /// Memory backend is `NoneMemory`, auto-save is off, and memory tools
+    /// are stripped from the tool set. Used by ACP sessions.
+    #[allow(dead_code)]
+    exclude_memory: bool,
 }
 
 /// Bundle of late-bound channel-map handles owned by an Agent. Cloning is
@@ -160,6 +165,7 @@ pub struct AgentBuilder {
     activated_tools: Option<Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>>,
     hook_runner: Option<Arc<crate::hooks::HookRunner>>,
     approval_manager: Option<Arc<ApprovalManager>>,
+    exclude_memory: bool,
 }
 
 impl Default for AgentBuilder {
@@ -200,6 +206,7 @@ impl AgentBuilder {
             activated_tools: None,
             hook_runner: None,
             approval_manager: None,
+            exclude_memory: false,
         }
     }
 
@@ -366,6 +373,16 @@ impl AgentBuilder {
         self
     }
 
+    /// Exclude persistent memory from this agent. When set, the memory
+    /// backend is replaced with `NoneMemory`, auto-save is forced off, and
+    /// all `memory_*` tools are stripped from the tool set. Used by ACP
+    /// sessions, which rely on session history for context rather than the
+    /// agent's long-term memory.
+    pub fn exclude_memory(mut self, exclude: bool) -> Self {
+        self.exclude_memory = exclude;
+        self
+    }
+
     pub fn build(self) -> Result<Agent> {
         let mut tools = self.tools.ok_or_else(|| {
             ::zeroclaw_log::record!(
@@ -381,7 +398,37 @@ impl AgentBuilder {
         if let Some(ref allow_list) = allowed {
             tools.retain(|t| allow_list.iter().any(|name| name == t.name()));
         }
+
+        // ACP sessions exclude persistent memory: strip memory tools,
+        // replace the backend with NoneMemory, and force auto_save off.
+        let exclude_memory = self.exclude_memory;
+        if exclude_memory {
+            const MEMORY_TOOLS: &[&str] = &[
+                "memory_recall",
+                "memory_store",
+                "memory_forget",
+                "memory_export",
+                "memory_purge",
+            ];
+            tools.retain(|t| !MEMORY_TOOLS.contains(&t.name()));
+        }
+
         let tool_specs = tools.iter().map(|tool| tool.spec()).collect();
+
+        let memory: Arc<dyn Memory> = if exclude_memory {
+            Arc::new(zeroclaw_memory::NoneMemory::new("none"))
+        } else {
+            self.memory.ok_or_else(|| {
+                ::zeroclaw_log::record!(
+                    ERROR,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                        .with_attrs(::serde_json::json!({"missing_field": "memory"})),
+                    "AgentBuilder::build missing required field"
+                );
+                anyhow::Error::msg("memory is required")
+            })?
+        };
 
         Ok(Agent {
             model_provider: self.model_provider.ok_or_else(|| {
@@ -396,16 +443,7 @@ impl AgentBuilder {
             })?,
             tools,
             tool_specs,
-            memory: self.memory.ok_or_else(|| {
-                ::zeroclaw_log::record!(
-                    ERROR,
-                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
-                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
-                        .with_attrs(::serde_json::json!({"missing_field": "memory"})),
-                    "AgentBuilder::build missing required field"
-                );
-                anyhow::Error::msg("memory is required")
-            })?,
+            memory,
             observer: self.observer.ok_or_else(|| {
                 ::zeroclaw_log::record!(
                     ERROR,
@@ -456,7 +494,11 @@ impl AgentBuilder {
             identity_config: self.identity_config.unwrap_or_default(),
             skills: self.skills.unwrap_or_default(),
             skills_prompt_mode: self.skills_prompt_mode.unwrap_or_default(),
-            auto_save: self.auto_save.unwrap_or(false),
+            auto_save: if exclude_memory {
+                false
+            } else {
+                self.auto_save.unwrap_or(false)
+            },
             memory_session_id: self.memory_session_id,
             history: Vec::new(),
             classification_config: self.classification_config.unwrap_or_default(),
@@ -472,6 +514,7 @@ impl AgentBuilder {
             hook_runner: self.hook_runner,
             approval_manager: self.approval_manager,
             channel_handles: AgentChannelHandles::default(),
+            exclude_memory,
         })
     }
 }
@@ -611,17 +654,23 @@ impl Agent {
             session_cwd,
             initialize_mcp,
             false,
+            false,
         )
         .await
     }
 
     /// Build an Agent for direct ACP/WS sessions that have a client approval
     /// back-channel. This keeps shell approval on the runtime-controlled path.
+    ///
+    /// When `exclude_memory` is `true`, the agent is constructed without
+    /// persistent memory: `NoneMemory` backend, auto-save off, and all
+    /// `memory_*` tools stripped. ACP sessions pass `true`.
     pub async fn from_config_with_session_cwd_and_mcp_backchannel(
         config: &Config,
         agent_alias: &str,
         session_cwd: Option<&Path>,
         initialize_mcp: bool,
+        exclude_memory: bool,
     ) -> Result<Self> {
         Self::from_config_with_session_cwd_and_mcp_approval_mode(
             config,
@@ -629,6 +678,7 @@ impl Agent {
             session_cwd,
             initialize_mcp,
             true,
+            exclude_memory,
         )
         .await
     }
@@ -639,6 +689,7 @@ impl Agent {
         session_cwd: Option<&Path>,
         initialize_mcp: bool,
         approval_backchannel: bool,
+        exclude_memory: bool,
     ) -> Result<Self> {
         let agent_cfg = config
             .agent(agent_alias)
@@ -950,6 +1001,7 @@ impl Agent {
             .skills(skills)
             .skills_prompt_mode(config.skills.prompt_injection_mode)
             .auto_save(config.memory.auto_save)
+            .exclude_memory(exclude_memory)
             .security_summary(Some(security.prompt_summary()))
             .autonomy_level(risk_profile.level)
             .activated_tools(activated_tools)
@@ -4259,6 +4311,121 @@ mod tests {
         assert_eq!(
             names,
             &["file_read", "web_fetch", "ops__deploy", "ops__rollback"]
+        );
+    }
+
+    #[test]
+    fn exclude_memory_strips_memory_tools() {
+        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
+        let mem: Arc<dyn Memory> = Arc::new(zeroclaw_memory::NoneMemory::new("none"));
+
+        let agent = Agent::builder()
+            .model_provider(Box::new(MockModelProvider {
+                responses: Mutex::new(vec![]),
+            }))
+            .tools(vec![
+                Box::new(NamedMockTool::new("shell")),
+                Box::new(NamedMockTool::new("memory_recall")),
+                Box::new(NamedMockTool::new("memory_store")),
+                Box::new(NamedMockTool::new("memory_forget")),
+                Box::new(NamedMockTool::new("memory_export")),
+                Box::new(NamedMockTool::new("memory_purge")),
+                Box::new(NamedMockTool::new("file_read")),
+            ])
+            .memory(mem)
+            .observer(observer)
+            .tool_dispatcher(Box::new(XmlToolDispatcher))
+            .workspace_dir(std::path::PathBuf::from("/tmp"))
+            .exclude_memory(true)
+            .build()
+            .expect("agent builder should succeed");
+
+        let names: Vec<&str> = agent.tools.iter().map(|t| t.name()).collect();
+        assert_eq!(names, &["shell", "file_read"]);
+    }
+
+    #[test]
+    fn exclude_memory_forces_none_backend_and_no_autosave() {
+        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
+        // Provide a real memory backend — exclude_memory should override it.
+        let workspace = tempfile::TempDir::new().expect("temp dir");
+        let mem: Arc<dyn Memory> = Arc::from(
+            zeroclaw_memory::create_memory(
+                &zeroclaw_config::schema::MemoryConfig {
+                    backend: "sqlite".into(),
+                    ..Default::default()
+                },
+                workspace.path(),
+                None,
+            )
+            .expect("memory creation should succeed"),
+        );
+
+        let agent = Agent::builder()
+            .model_provider(Box::new(MockModelProvider {
+                responses: Mutex::new(vec![]),
+            }))
+            .tools(vec![Box::new(NamedMockTool::new("shell"))])
+            .memory(mem)
+            .observer(observer)
+            .tool_dispatcher(Box::new(XmlToolDispatcher))
+            .workspace_dir(workspace.path().to_path_buf())
+            .auto_save(true)
+            .exclude_memory(true)
+            .build()
+            .expect("agent builder should succeed");
+
+        assert_eq!(
+            agent.memory.name(),
+            "none",
+            "memory backend must be NoneMemory"
+        );
+        assert!(!agent.auto_save, "auto_save must be forced off");
+    }
+
+    #[test]
+    fn exclude_memory_false_preserves_memory() {
+        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
+        let workspace = tempfile::TempDir::new().expect("temp dir");
+        let mem: Arc<dyn Memory> = Arc::from(
+            zeroclaw_memory::create_memory(
+                &zeroclaw_config::schema::MemoryConfig {
+                    backend: "sqlite".into(),
+                    ..Default::default()
+                },
+                workspace.path(),
+                None,
+            )
+            .expect("memory creation should succeed"),
+        );
+
+        let agent = Agent::builder()
+            .model_provider(Box::new(MockModelProvider {
+                responses: Mutex::new(vec![]),
+            }))
+            .tools(vec![
+                Box::new(NamedMockTool::new("shell")),
+                Box::new(NamedMockTool::new("memory_recall")),
+            ])
+            .memory(mem)
+            .observer(observer)
+            .tool_dispatcher(Box::new(XmlToolDispatcher))
+            .workspace_dir(workspace.path().to_path_buf())
+            .auto_save(true)
+            .exclude_memory(false)
+            .build()
+            .expect("agent builder should succeed");
+
+        assert_ne!(
+            agent.memory.name(),
+            "none",
+            "memory backend must be preserved"
+        );
+        assert!(agent.auto_save, "auto_save must be preserved");
+        let names: Vec<&str> = agent.tools.iter().map(|t| t.name()).collect();
+        assert!(
+            names.contains(&"memory_recall"),
+            "memory tools must be preserved"
         );
     }
 }

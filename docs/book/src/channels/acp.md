@@ -322,6 +322,22 @@ ACP inherits the running config's autonomy level. When `[autonomy] level = "supe
 
 The `cwd` from `session/new` becomes the `SecurityPolicy` workspace boundary used by all file and shell tools for that session. Note: the agent's system prompt currently reflects the daemon's global `workspace_dir` rather than the session `cwd` — this does not affect enforcement, only the directory the model believes it is working in.
 
+## Memory
+
+ACP sessions do not interact with the agent's persistent memory system. This is a deliberate design choice: ACP is for IDE-driven coding tasks, not long-term relationship building.
+
+**What ACP sessions inherit** from the agent config: personality, skills, risk profile, runtime profile, model provider, and all non-memory tools.
+
+**What ACP sessions exclude:**
+
+- Memory tools (`memory_recall`, `memory_store`, `memory_forget`, `memory_export`, `memory_purge`) are not available
+- Automatic memory recall (the context preamble built from long-term memory at each turn) is disabled
+- Automatic conversation auto-save to the agent's memory store is disabled
+
+**Session context** comes from the persisted conversation history in `acp-sessions.db`. Sessions are persistent, resumable, and deleteable — the session history serves as the working context, not the agent's long-term memory.
+
+This separation ensures that ephemeral coding-assist conversations do not pollute the agent's long-term memory, and that unrelated knowledge from chat channels does not bleed into ACP sessions.
+
 ## Code reference
 
 - ACP server: `crates/zeroclaw-channels/src/orchestrator/acp_server.rs`

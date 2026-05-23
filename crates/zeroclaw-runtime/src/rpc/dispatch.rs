@@ -587,6 +587,7 @@ impl RpcDispatcher {
             &req.agent_alias,
             cwd_path,
             false,
+            false,
         )
         .await
         .map_err(|e| rpc_err(INTERNAL_ERROR, format!("Failed to create agent: {e}")))?;

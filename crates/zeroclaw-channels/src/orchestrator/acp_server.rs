@@ -472,13 +472,15 @@ impl AcpServer {
 
         // Build agent from global config, with the session's cwd pinned as
         // the file/shell sandbox boundary. The agent's data directory
-        // (memory DB, identity, scheduled tasks) still lives under
-        // `config.data_dir`.
+        // (identity, scheduled tasks) still lives under `config.data_dir`.
+        // ACP sessions exclude persistent memory — context comes from the
+        // persisted session history, not the agent's long-term memory store.
         let agent = Agent::from_config_with_session_cwd_and_mcp_backchannel(
             &self.config,
             &agent_alias,
             Some(std::path::Path::new(&workspace_dir)),
             false,
+            true,
         )
         .await
         .map_err(|e| RpcError {
@@ -628,6 +630,7 @@ impl AcpServer {
             &restore_alias,
             Some(&workspace_dir),
             false,
+            true,
         )
         .await
         .map_err(|e| RpcError {
@@ -776,6 +779,7 @@ impl AcpServer {
             &restore_alias,
             Some(&workspace_dir),
             false,
+            true,
         )
         .await
         .map_err(|e| RpcError {
