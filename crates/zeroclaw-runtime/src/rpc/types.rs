@@ -148,6 +148,7 @@ rpc_type! {
         pub session_id: String,
         pub agent_alias: String,
         pub message_count: usize,
+        pub workspace_dir: String,
     }
 }
 

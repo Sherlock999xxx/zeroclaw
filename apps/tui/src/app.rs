@@ -21,13 +21,13 @@ use crate::theme;
 /// How often the UI redraws when no input arrives (for live panes).
 const TICK: Duration = Duration::from_millis(200);
 
-/// Mode bar label table. Shared between drawing and click detection.
-const MODE_LABELS: [(&str, &str, Mode); 5] = [
-    ("F1", " Dashboard ", Mode::Dashboard),
-    ("F2", " Config ", Mode::Config),
-    ("F3", " ACP ", Mode::Acp),
-    ("F4", " Chat ", Mode::Chat),
-    ("F5", " Logs ", Mode::Logs),
+/// Mode bar entries. Shared between drawing and click detection.
+const MODES: [Mode; 5] = [
+    Mode::Dashboard,
+    Mode::Config,
+    Mode::Acp,
+    Mode::Chat,
+    Mode::Logs,
 ];
 
 // ── Mode enum ────────────────────────────────────────────────────
@@ -39,6 +39,28 @@ enum Mode {
     Acp,
     Chat,
     Logs,
+}
+
+impl Mode {
+    fn name(self) -> &'static str {
+        match self {
+            Mode::Dashboard => "Dashboard",
+            Mode::Config => "Config",
+            Mode::Acp => "ACP",
+            Mode::Chat => "Chat",
+            Mode::Logs => "Logs",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Mode::Dashboard => "F1",
+            Mode::Config => "F2",
+            Mode::Acp => "F3",
+            Mode::Chat => "F4",
+            Mode::Logs => "F5",
+        }
+    }
 }
 
 // ── Top-level entry point ────────────────────────────────────────
@@ -62,7 +84,7 @@ pub async fn run(
     config_app.init().await?;
     let mut acp_pane = acp::Acp::new(rpc);
     acp_pane.init().await?;
-    let mut chat_pane = chat::Chat::new(rpc, " Chat ");
+    let mut chat_pane = chat::Chat::new(rpc, chat::PaneKind::Chat);
     chat_pane.init().await?;
     let mut logs_pane = logs::Logs::new(rpc);
     logs_pane.init().await?;
@@ -134,7 +156,7 @@ pub async fn run(
 
         match event::read()? {
             Event::Key(key) => {
-                if key.kind != KeyEventKind::Press {
+                if key.kind == KeyEventKind::Release {
                     continue;
                 }
 
@@ -216,12 +238,16 @@ pub async fn run(
                 }
                 // Mode bar clicks
                 if matches!(mouse.kind, MouseEventKind::Down(_)) {
-                    let labels: Vec<(&str, &str)> =
-                        MODE_LABELS.iter().map(|(k, l, _)| (*k, *l)).collect();
+                    let labels: Vec<(&str, String)> = MODES
+                        .iter()
+                        .map(|m| (m.key(), format!(" {} ", m.name())))
+                        .collect();
+                    let label_refs: Vec<(&str, &str)> =
+                        labels.iter().map(|(k, l)| (*k, l.as_str())).collect();
                     if let Some(n) =
-                        mouse::mode_bar_click(mouse.column, mouse.row, bar_area, &labels)
+                        mouse::mode_bar_click(mouse.column, mouse.row, bar_area, &label_refs)
                     {
-                        mode = MODE_LABELS[(n - 1) as usize].2;
+                        mode = MODES[(n - 1) as usize];
                         continue;
                     }
                 }
@@ -264,15 +290,15 @@ pub async fn run(
 
 fn draw_mode_bar(frame: &mut ratatui::Frame, area: Rect, active: Mode) {
     let mut spans = Vec::new();
-    for (key, label, m) in &MODE_LABELS {
+    for m in &MODES {
         let key_style = theme::dim_style();
         let label_style = if *m == active {
             theme::selected_style().add_modifier(Modifier::BOLD)
         } else {
             theme::body_style()
         };
-        spans.push(Span::styled(*key, key_style));
-        spans.push(Span::styled(*label, label_style));
+        spans.push(Span::styled(m.key(), key_style));
+        spans.push(Span::styled(format!(" {} ", m.name()), label_style));
         spans.push(Span::raw(" "));
     }
 

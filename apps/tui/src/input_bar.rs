@@ -562,19 +562,14 @@ impl InputBarState {
             KeyCode::Enter => self.handle_enter(),
 
             // ── Up/Down: move cursor in wrapped text ─────────
+            // Always consumed — cursor stays in the input box.
             KeyCode::Up => {
-                if self.move_cursor_up() {
-                    InputBarAction::Consumed
-                } else {
-                    InputBarAction::NotHandled
-                }
+                self.move_cursor_up();
+                InputBarAction::Consumed
             }
             KeyCode::Down => {
-                if self.move_cursor_down() {
-                    InputBarAction::Consumed
-                } else {
-                    InputBarAction::NotHandled
-                }
+                self.move_cursor_down();
+                InputBarAction::Consumed
             }
 
             // ── Home/End: start/end of visual line ───────────
@@ -614,8 +609,10 @@ impl InputBarState {
                 InputBarAction::Consumed
             }
 
-            // ── Character input ──────────────────────────────
-            KeyCode::Char(c) => {
+            // ── Character input (plain keys only) ────────────
+            // Ctrl+key combos fall through so chat-level handlers
+            // (Ctrl+S session picker, Ctrl+N new session, etc.) work.
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.push_input_char(c);
                 InputBarAction::Consumed
             }
@@ -708,15 +705,11 @@ impl InputBarState {
                 true
             }
             MouseEventKind::ScrollUp => {
-                self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                self.move_cursor_up();
                 true
             }
             MouseEventKind::ScrollDown => {
-                if width > 0 {
-                    let total = wrapped_line_count(&self.input, width);
-                    let max_scroll = total.saturating_sub(MAX_INPUT_ROWS);
-                    self.scroll_offset = (self.scroll_offset + 1).min(max_scroll);
-                }
+                self.move_cursor_down();
                 true
             }
             _ => false,
@@ -944,29 +937,22 @@ impl InputBarState {
         } else {
             " > "
         };
-        let block = Block::default().borders(Borders::ALL).title(label);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(label)
+            .title_bottom(Span::styled("?=help", Style::default().fg(Color::DarkGray)));
 
         if self.input.is_empty() && !turn_in_flight {
-            // Placeholder help text.
-            let mut spans = Vec::new();
-            if self.file_explorer.is_none() {
-                spans.push(Span::styled(
-                    "Type to chat  ",
-                    Style::default().fg(Color::DarkGray),
-                ));
-            }
-            let entries = self.help_entries();
-            for (i, (key, desc)) in entries.iter().enumerate() {
-                if i > 0 {
-                    spans.push(Span::styled(" ", Style::default().fg(Color::DarkGray)));
-                }
-                spans.push(Span::styled(*key, Style::default().fg(Color::Yellow)));
-                spans.push(Span::styled(
-                    format!("={desc}"),
-                    Style::default().fg(Color::DarkGray),
-                ));
-            }
-            let p = Paragraph::new(Line::from(spans)).block(block);
+            let placeholder = if self.file_explorer.is_some() {
+                ""
+            } else {
+                "Type to chat"
+            };
+            let p = Paragraph::new(Span::styled(
+                placeholder,
+                Style::default().fg(Color::DarkGray),
+            ))
+            .block(block);
             f.render_widget(p, input_area);
         } else {
             // Wrapped input content with optional selection highlighting.
@@ -1105,12 +1091,8 @@ impl InputBarState {
                 ("Esc", "Cancel"),
             ]
         } else {
-            vec![
-                ("Enter", "Send message"),
-                ("/attach", "Attach file"),
-                ("Ctrl+A", "File browser"),
-                ("Ctrl+V", "Paste"),
-            ]
+            // Input hints are part of the chat-level help modal.
+            vec![]
         }
     }
 }

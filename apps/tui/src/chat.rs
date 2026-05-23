@@ -43,6 +43,23 @@ enum ChatPhase {
     Error(String),
 }
 
+/// Distinguishes which kind of chat pane this is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PaneKind {
+    Chat,
+    Acp,
+}
+
+impl PaneKind {
+    /// Short name for this pane (no padding — callers format as needed).
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            PaneKind::Chat => "Chat",
+            PaneKind::Acp => "ACP",
+        }
+    }
+}
+
 pub(crate) struct Chat<'a> {
     rpc: &'a RpcClient,
     rpc_out: Arc<RpcOutbound>,
@@ -50,11 +67,11 @@ pub(crate) struct Chat<'a> {
     turn_result_tx: mpsc::Sender<anyhow::Result<SessionPromptResult>>,
     turn_result_rx: mpsc::Receiver<anyhow::Result<SessionPromptResult>>,
     phase: ChatPhase,
-    tab_title: &'static str,
+    pane_kind: PaneKind,
 }
 
 impl<'a> Chat<'a> {
-    pub(crate) fn new(rpc: &'a RpcClient, tab_title: &'static str) -> Self {
+    pub(crate) fn new(rpc: &'a RpcClient, pane_kind: PaneKind) -> Self {
         let (turn_result_tx, turn_result_rx) = mpsc::channel(4);
         Self {
             rpc,
@@ -67,7 +84,7 @@ impl<'a> Chat<'a> {
                 list_state: ListState::default(),
                 loading: true,
             },
-            tab_title,
+            pane_kind,
         }
     }
 
@@ -109,12 +126,23 @@ impl<'a> Chat<'a> {
     }
 
     async fn start_session(&mut self, agent_alias: &str) {
-        match self.rpc.session_new(agent_alias, None).await {
+        // Over Unix socket, pass local CWD so the agent works in the
+        // directory the TUI was launched from.  Over WSS the server
+        // ignores this and uses the agent's workspace dir.
+        let local_cwd = if self.rpc.transport() == crate::client::Transport::Unix {
+            std::env::current_dir().ok()
+        } else {
+            None
+        };
+        let cwd_str = local_cwd.as_deref().and_then(|p| p.to_str());
+        match self.rpc.session_new(agent_alias, cwd_str).await {
             Ok(session) => {
-                self.phase = ChatPhase::Active(Box::new(ChatState::new(
-                    session.session_id,
-                    agent_alias.to_string(),
-                )));
+                let mut state = ChatState::new(session.session_id, agent_alias.to_string());
+                // Only ACP shows the working directory above the input bar.
+                if self.pane_kind == PaneKind::Acp {
+                    state.cwd = session.workspace_dir;
+                }
+                self.phase = ChatPhase::Active(Box::new(state));
             }
             Err(e) => {
                 self.phase = ChatPhase::Error(format!("Failed to create session: {e}"));
@@ -163,13 +191,20 @@ impl<'a> Chat<'a> {
                 list_state,
                 loading,
             } => {
-                draw_agent_picker(frame, area, agents, list_state, *loading, self.tab_title);
+                draw_agent_picker(
+                    frame,
+                    area,
+                    agents,
+                    list_state,
+                    *loading,
+                    self.pane_kind.name(),
+                );
             }
             ChatPhase::Active(state) => {
                 render(frame, state, area);
             }
             ChatPhase::Error(msg) => {
-                draw_error(frame, area, msg, self.tab_title);
+                draw_error(frame, area, msg, self.pane_kind.name());
             }
         }
     }
@@ -258,10 +293,14 @@ impl<'a> Chat<'a> {
                             state.reset_for_session(new_sid.clone(), new_name);
                             state.agent_alias = agent_alias.clone();
                             // Rehydrate the session in the daemon so prompts work.
-                            let _ = self
+                            if let Ok(rehydrated) = self
                                 .rpc
                                 .session_new_with_id(&agent_alias, None, Some(&new_sid))
-                                .await;
+                                .await
+                                && self.pane_kind == PaneKind::Acp
+                            {
+                                state.cwd = rehydrated.workspace_dir;
+                            }
                             // Load persisted message history.
                             if let Ok(msgs) = self.rpc.session_messages(&new_sid).await {
                                 for m in msgs.messages {
@@ -451,9 +490,18 @@ impl<'a> Chat<'a> {
             KeyCode::Char('n')
                 if key.modifiers.contains(KeyModifiers::CONTROL) && !state.turn_in_flight =>
             {
-                if let Ok(s) = self.rpc.session_new(&state.agent_alias, None).await {
+                let local_cwd = if self.rpc.transport() == crate::client::Transport::Unix {
+                    std::env::current_dir().ok()
+                } else {
+                    None
+                };
+                let cwd_str = local_cwd.as_deref().and_then(|p| p.to_str());
+                if let Ok(s) = self.rpc.session_new(&state.agent_alias, cwd_str).await {
                     let _ = self.rpc.session_close(&state.session_id).await;
                     state.reset_for_session(s.session_id, None);
+                    if self.pane_kind == PaneKind::Acp {
+                        state.cwd = s.workspace_dir;
+                    }
                 }
             }
             KeyCode::Char('s')
@@ -509,14 +557,9 @@ impl<'a> Chat<'a> {
                     });
                 }
             }
-            KeyCode::Up if state.pending_approval().is_none() && !state.turn_in_flight => {
-                let len = state.entries.len();
-                if len > 0 {
-                    state.selected_entry = Some(match state.selected_entry {
-                        Some(i) => i.saturating_sub(1),
-                        None => len - 1,
-                    });
-                }
+            // ── Shift+Up/Down: scroll conversation ───────────
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                state.scroll_up(1);
             }
             KeyCode::Char('j')
                 if state.input_bar.input().is_empty()
@@ -532,15 +575,8 @@ impl<'a> Chat<'a> {
                     });
                 }
             }
-            KeyCode::Down if state.pending_approval().is_none() && !state.turn_in_flight => {
-                let len = state.entries.len();
-                if len > 0 {
-                    state.selected_entry = Some(match state.selected_entry {
-                        Some(i) if i + 1 < len => i + 1,
-                        Some(_) => len - 1,
-                        None => 0,
-                    });
-                }
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                state.scroll_down(1);
             }
             _ => {}
         }
@@ -653,10 +689,13 @@ impl<'a> Chat<'a> {
                 } else {
                     vec![
                         ("Enter", "Send message"),
+                        ("Shift+Enter", "Insert newline"),
                         ("/attach", "Attach file"),
                         ("Ctrl+A", "File browser"),
                         ("Ctrl+V", "Paste"),
+                        ("Shift+\u{2191}/\u{2193}", "Scroll conversation"),
                         ("j / k", "Select entry"),
+                        ("y", "Yank selected entry"),
                         ("t", "Toggle thoughts"),
                         ("Ctrl+N", "New session"),
                         ("Ctrl+S", "Session list"),
@@ -680,7 +719,7 @@ fn draw_agent_picker(
     tab_title: &str,
 ) {
     let block = Block::default()
-        .title(Span::styled(tab_title.to_string(), theme::title_style()))
+        .title(Span::styled(format!(" {tab_title} "), theme::title_style()))
         .borders(Borders::ALL)
         .border_style(theme::dim_style());
 
@@ -734,7 +773,7 @@ fn draw_agent_picker(
 
 fn draw_error(frame: &mut Frame, area: Rect, msg: &str, tab_title: &str) {
     let block = Block::default()
-        .title(Span::styled(tab_title.to_string(), theme::title_style()))
+        .title(Span::styled(format!(" {tab_title} "), theme::title_style()))
         .borders(Borders::ALL)
         .border_style(theme::dim_style());
 
@@ -766,7 +805,36 @@ fn render(f: &mut Frame, state: &mut ChatState, area: Rect) {
         .input_bar
         .render(f, area, state.turn_in_flight, show_cursor);
 
-    render_conversation(f, state, conv_area);
+    // Optional CWD line just above the input bar (bottom of conv_area).
+    let actual_conv = if let Some(ref cwd) = state.cwd {
+        if conv_area.height > 1 {
+            let cwd_row = Rect::new(
+                conv_area.x,
+                conv_area.y + conv_area.height - 1,
+                conv_area.width,
+                1,
+            );
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    format!(" {} ", cwd),
+                    Style::default().fg(Color::DarkGray),
+                ))),
+                cwd_row,
+            );
+            Rect::new(
+                conv_area.x,
+                conv_area.y,
+                conv_area.width,
+                conv_area.height - 1,
+            )
+        } else {
+            conv_area
+        }
+    } else {
+        conv_area
+    };
+
+    render_conversation(f, state, actual_conv);
     state.input_bar.render_autocomplete_popup(f);
 
     if state.pending_approval().is_some() {
@@ -1339,6 +1407,8 @@ pub struct ChatState {
     pub session_id: String,
     pub agent_alias: String,
     session_name: Option<String>,
+    /// Working directory for this session (shown above input bar).
+    pub cwd: Option<String>,
     pub input_bar: InputBarState,
     entries: Vec<ChatEntry>,
     streaming_text: String,
@@ -1360,6 +1430,7 @@ impl ChatState {
             session_id,
             agent_alias,
             session_name: None,
+            cwd: None,
             input_bar: InputBarState::new(),
             entries: Vec::new(),
             streaming_text: String::new(),

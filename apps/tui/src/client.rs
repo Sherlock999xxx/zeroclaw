@@ -1106,6 +1106,8 @@ pub struct LogsQueryResult {
 #[serde(rename_all = "snake_case")]
 pub struct SessionNewResult {
     pub session_id: String,
+    #[serde(default)]
+    pub workspace_dir: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]

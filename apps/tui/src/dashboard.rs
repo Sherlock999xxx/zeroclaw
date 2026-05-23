@@ -269,6 +269,7 @@ impl<'a> Dashboard<'a> {
                 Constraint::Length(1), // tab bar
                 Constraint::Length(1), // status line
                 Constraint::Min(0),    // content
+                Constraint::Length(1), // footer
             ])
             .split(area);
 
@@ -285,6 +286,12 @@ impl<'a> Dashboard<'a> {
             Tab::Cost => self.draw_cost(frame, chunks[2]),
             Tab::Cron => self.draw_cron(frame, chunks[2]),
         }
+
+        // Footer: ?=help hint at bottom-left.
+        frame.render_widget(
+            Paragraph::new(Span::styled(" ?=help", theme::dim_style())),
+            chunks[3],
+        );
     }
 
     fn draw_tab_bar(&self, frame: &mut ratatui::Frame, area: Rect) {
@@ -313,7 +320,7 @@ impl<'a> Dashboard<'a> {
         let help = if self.search_active {
             "Enter:apply  Esc:cancel"
         } else {
-            "?:help"
+            ""
         };
 
         // Process stats from health

@@ -602,12 +602,17 @@ impl RpcDispatcher {
         ));
         agent.channel_handles().register_channel("rpc", approval_ch);
 
-        let cwd = req.cwd.as_deref().unwrap_or(".");
+        let cwd = req.cwd.clone().unwrap_or_else(|| {
+            config
+                .agent_workspace_dir(&req.agent_alias)
+                .to_string_lossy()
+                .to_string()
+        });
         self.ctx
             .sessions
             .insert(
                 session_id.clone(),
-                super::session::RpcSession::new(agent, &req.agent_alias, cwd),
+                super::session::RpcSession::new(agent, &req.agent_alias, &cwd),
             )
             .await
             .map_err(|_| rpc_err(SESSION_LIMIT_REACHED, "Session limit reached"))?;
@@ -629,6 +634,7 @@ impl RpcDispatcher {
             session_id,
             agent_alias: req.agent_alias,
             message_count,
+            workspace_dir: cwd,
         })
     }
 

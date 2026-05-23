@@ -11,7 +11,7 @@ pub(crate) struct Acp<'a> {
 impl<'a> Acp<'a> {
     pub(crate) fn new(rpc: &'a RpcClient) -> Self {
         Self {
-            inner: chat::Chat::new(rpc, " ACP "),
+            inner: chat::Chat::new(rpc, chat::PaneKind::Acp),
         }
     }
 

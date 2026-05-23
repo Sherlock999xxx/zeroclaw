@@ -514,13 +514,14 @@ impl<'a> Logs<'a> {
             self.list_state.select(Some(filtered.len() - 1));
         }
 
-        // Layout: status bar (1) + filter bar (1) + content
+        // Layout: status bar (1) + filter bar (1) + content + footer (1)
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Min(0),
+                Constraint::Length(1),
             ])
             .split(area);
 
@@ -528,7 +529,7 @@ impl<'a> Logs<'a> {
         let help = if self.search_active {
             "Enter:apply  Esc:cancel"
         } else {
-            "?:help"
+            ""
         };
 
         let status = Line::from(vec![
@@ -603,6 +604,12 @@ impl<'a> Logs<'a> {
             self.last_detail_area = None;
             self.draw_list(frame, content_chunk, &filtered);
         }
+
+        // Footer: ?=help hint at bottom-left.
+        frame.render_widget(
+            Paragraph::new(Span::styled(" ?=help", theme::dim_style())),
+            chunks[3],
+        );
     }
 
     fn draw_list(&mut self, frame: &mut ratatui::Frame, area: Rect, filtered: &[usize]) {
