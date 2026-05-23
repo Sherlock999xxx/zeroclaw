@@ -159,7 +159,9 @@ impl HasPropKind for Vec<crate::schema::ToolFilterGroup> {
 /// annotations on schema structs. Composite tabs (`Personality`, `Skills`,
 /// `PeerGroups`, `Costs`) are rendered by dedicated UI components but share
 /// the same enum so both frontends speak one vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum ConfigTab {
     #[default]
     /// No tab grouping — field appears in a flat list.
@@ -235,7 +237,6 @@ impl ConfigTab {
         matches!(self, Self::None)
     }
 }
-
 
 impl std::fmt::Display for ConfigTab {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

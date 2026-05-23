@@ -1000,7 +1000,9 @@ fn render_entry_into(
                     line = Line::from(
                         line.spans
                             .into_iter()
-                            .map(|s| s.patch_style(Style::default().add_modifier(Modifier::REVERSED)))
+                            .map(|s| {
+                                s.patch_style(Style::default().add_modifier(Modifier::REVERSED))
+                            })
                             .collect::<Vec<_>>(),
                     );
                 }

@@ -731,8 +731,8 @@ impl Agent {
             // shell_timeout_secs, etc.) is applied — from_risk_profile passes
             // None for the runtime profile and silently falls back to the
             // schema default of 20 actions/hour regardless of config.
-            let mut policy = SecurityPolicy::for_agent(&config, agent_alias)
-                .with_context(|| {
+            let mut policy =
+                SecurityPolicy::for_agent(&config, agent_alias).with_context(|| {
                     format!("agents.{agent_alias}: failed to build security policy")
                 })?;
             // When a per-session cwd overrides the sandbox root, ensure

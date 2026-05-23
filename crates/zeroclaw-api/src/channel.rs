@@ -459,9 +459,13 @@ mod tests {
 
     #[test]
     fn deny_with_edit_round_trips_through_serde() {
-        let r = ChannelApprovalResponse::DenyWithEdit { replacement: "new content".to_string() };
+        let r = ChannelApprovalResponse::DenyWithEdit {
+            replacement: "new content".to_string(),
+        };
         let json = serde_json::to_string(&r).unwrap();
         let back: ChannelApprovalResponse = serde_json::from_str(&json).unwrap();
-        assert!(matches!(back, ChannelApprovalResponse::DenyWithEdit { replacement } if replacement == "new content"));
+        assert!(
+            matches!(back, ChannelApprovalResponse::DenyWithEdit { replacement } if replacement == "new content")
+        );
     }
 }

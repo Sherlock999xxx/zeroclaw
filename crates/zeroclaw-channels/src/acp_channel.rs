@@ -796,7 +796,10 @@ mod tests {
 
         let options = req["params"]["options"].as_array().unwrap();
         let has_reject_edit = options.iter().any(|o| o["optionId"] == "reject-with-edit");
-        assert!(has_reject_edit, "file_edit approval must offer reject-with-edit");
+        assert!(
+            has_reject_edit,
+            "file_edit approval must offer reject-with-edit"
+        );
 
         let id = req["id"].as_str().unwrap().to_string();
         rpc_for_resp.dispatch_response(
@@ -838,7 +841,9 @@ mod tests {
 
         let result = task.await.unwrap().unwrap();
         // Absent replacementContent defaults to empty string — caller must guard.
-        assert!(matches!(result, Some(ChannelApprovalResponse::DenyWithEdit { replacement }) if replacement.is_empty()));
+        assert!(
+            matches!(result, Some(ChannelApprovalResponse::DenyWithEdit { replacement }) if replacement.is_empty())
+        );
     }
 
     #[tokio::test]
@@ -859,7 +864,10 @@ mod tests {
 
         let options = req["params"]["options"].as_array().unwrap();
         let has_reject_edit = options.iter().any(|o| o["optionId"] == "reject-with-edit");
-        assert!(has_reject_edit, "file_write approval must offer reject-with-edit");
+        assert!(
+            has_reject_edit,
+            "file_write approval must offer reject-with-edit"
+        );
 
         let id = req["id"].as_str().unwrap().to_string();
         rpc_for_resp.dispatch_response(

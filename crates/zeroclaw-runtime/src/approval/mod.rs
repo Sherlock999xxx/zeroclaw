@@ -633,7 +633,8 @@ mod tests {
         assert_eq!(json, "\"always\"");
         let parsed: ApprovalResponse = serde_json::from_str("\"no\"").unwrap();
         assert_eq!(parsed, ApprovalResponse::No);
-        let json = serde_json::to_string(&ApprovalResponse::ReplaceWith("foo".to_string())).unwrap();
+        let json =
+            serde_json::to_string(&ApprovalResponse::ReplaceWith("foo".to_string())).unwrap();
         let parsed: ApprovalResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, ApprovalResponse::ReplaceWith("foo".to_string()));
     }
@@ -746,7 +747,9 @@ mod tests {
     #[test]
     fn channel_deny_with_edit_maps_to_replace_with() {
         use zeroclaw_api::channel::ChannelApprovalResponse;
-        let mapped = match (ChannelApprovalResponse::DenyWithEdit { replacement: "x".to_string() }) {
+        let mapped = match (ChannelApprovalResponse::DenyWithEdit {
+            replacement: "x".to_string(),
+        }) {
             ChannelApprovalResponse::Approve => ApprovalResponse::Yes,
             ChannelApprovalResponse::AlwaysApprove => ApprovalResponse::Always,
             ChannelApprovalResponse::Deny => ApprovalResponse::No,
