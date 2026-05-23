@@ -1380,11 +1380,24 @@ impl ChatState {
 
     /// Rebuild the cached rendered lines from committed entries.
     fn rebuild_lines(&mut self) {
+        // Cap the render window so cached_lines (and its per-frame clone) stays
+        // bounded regardless of conversation length.  Selected entries are always
+        // included even if they fall before the window.
+        const MAX_RENDERED_ENTRIES: usize = 1_000;
+        let total = self.entries.len();
+        let natural_start = total.saturating_sub(MAX_RENDERED_ENTRIES);
+        let start = if let Some(sel) = self.selected_entry {
+            natural_start.min(sel)
+        } else {
+            natural_start
+        };
+
         let mut lines: Vec<Line<'static>> = Vec::new();
         let selected = self.selected_entry;
 
-        for (idx, entry) in self.entries.iter().enumerate() {
-            let is_selected = selected == Some(idx);
+        for (rel_idx, entry) in self.entries[start..].iter().enumerate() {
+            let abs_idx = start + rel_idx;
+            let is_selected = selected == Some(abs_idx);
             let sel_mod = if is_selected {
                 Modifier::REVERSED
             } else {
@@ -1583,6 +1596,15 @@ impl ChatState {
                 raw_output,
                 ..
             } => {
+                // Cap stored output so large tool responses (bash, file reads) don't
+                // accumulate unboundedly.  The renderer already truncates to 200 chars
+                // for display; 16 KB gives clipboard users a generous but bounded copy.
+                const MAX_RAW_OUTPUT: usize = 16 * 1024;
+                let raw_output = if raw_output.len() > MAX_RAW_OUTPUT {
+                    format!("{}…[truncated]", truncate_utf8(&raw_output, MAX_RAW_OUTPUT))
+                } else {
+                    raw_output
+                };
                 for entry in self.entries.iter_mut().rev() {
                     if let ChatEntry::Tool {
                         tool_call_id: id,
