@@ -3,8 +3,8 @@ use std::io::{self, Stdout};
 use anyhow::Result;
 use crossterm::{
     event::{
-        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -270,43 +270,42 @@ impl<'a> App<'a> {
         match mouse.kind {
             MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                 // Tab bar click (FieldList only).
-                if let Some(tab_rect) = self.last_tab_area {
-                    if mouse::in_rect(mouse.column, mouse.row, tab_rect) {
-                        let labels: Vec<&str> = self.tab_names.iter().map(|t| t.label()).collect();
-                        // Each rendered label is "▸ <label>" (active, +2 chars) or
-                        // "<label>" (inactive). For hit testing we use the plain
-                        // label width + 2 for the active tab's prefix. However
-                        // `tab_click_index` just walks fixed widths, so build
-                        // display labels matching what draw_field_list renders.
-                        let display: Vec<String> = labels
-                            .iter()
-                            .enumerate()
-                            .map(|(i, l)| {
-                                if i == self.active_tab {
-                                    format!("▸ {l}")
-                                } else {
-                                    l.to_string()
-                                }
-                            })
-                            .collect();
-                        let display_refs: Vec<&str> = display.iter().map(|s| s.as_str()).collect();
-                        if let Some(idx) = mouse::tab_click_index(
-                            mouse.column,
-                            mouse.row,
-                            tab_rect,
-                            &display_refs,
-                            3, // " │ " separator
-                        ) {
-                            if idx != self.active_tab && idx < self.tab_names.len() {
-                                self.active_tab = idx;
-                                self.field_cursor =
-                                    self.tab_field_indices().first().copied().unwrap_or(0);
-                                self.deactivate_filter();
-                                self.on_tab_switched(term).await?;
+                if let Some(tab_rect) = self.last_tab_area
+                    && mouse::in_rect(mouse.column, mouse.row, tab_rect)
+                {
+                    let labels: Vec<&str> = self.tab_names.iter().map(|t| t.label()).collect();
+                    // Each rendered label is "▸ <label>" (active, +2 chars) or
+                    // "<label>" (inactive). For hit testing we use the plain
+                    // label width + 2 for the active tab's prefix. However
+                    // `tab_click_index` just walks fixed widths, so build
+                    // display labels matching what draw_field_list renders.
+                    let display: Vec<String> = labels
+                        .iter()
+                        .enumerate()
+                        .map(|(i, l)| {
+                            if i == self.active_tab {
+                                format!("▸ {l}")
+                            } else {
+                                l.to_string()
                             }
-                        }
-                        return Ok(());
+                        })
+                        .collect();
+                    let display_refs: Vec<&str> = display.iter().map(|s| s.as_str()).collect();
+                    if let Some(idx) = mouse::tab_click_index(
+                        mouse.column,
+                        mouse.row,
+                        tab_rect,
+                        &display_refs,
+                        3, // " │ " separator
+                    ) && idx != self.active_tab
+                        && idx < self.tab_names.len()
+                    {
+                        self.active_tab = idx;
+                        self.field_cursor = self.tab_field_indices().first().copied().unwrap_or(0);
+                        self.deactivate_filter();
+                        self.on_tab_switched(term).await?;
                     }
+                    return Ok(());
                 }
 
                 // List area click.
@@ -327,22 +326,22 @@ impl<'a> App<'a> {
                 }
             }
 
-            MouseEventKind::ScrollUp => {
-                if mouse::in_rect(mouse.column, mouse.row, self.last_main_area) {
-                    let cur = self.visible_cursor();
-                    let count = self.visible_count();
-                    let next = mouse::list_scroll(cur, count, true, 3);
-                    self.set_visible_cursor(next);
-                }
+            MouseEventKind::ScrollUp
+                if mouse::in_rect(mouse.column, mouse.row, self.last_main_area) =>
+            {
+                let cur = self.visible_cursor();
+                let count = self.visible_count();
+                let next = mouse::list_scroll(cur, count, true, 3);
+                self.set_visible_cursor(next);
             }
 
-            MouseEventKind::ScrollDown => {
-                if mouse::in_rect(mouse.column, mouse.row, self.last_main_area) {
-                    let cur = self.visible_cursor();
-                    let count = self.visible_count();
-                    let next = mouse::list_scroll(cur, count, false, 3);
-                    self.set_visible_cursor(next);
-                }
+            MouseEventKind::ScrollDown
+                if mouse::in_rect(mouse.column, mouse.row, self.last_main_area) =>
+            {
+                let cur = self.visible_cursor();
+                let count = self.visible_count();
+                let next = mouse::list_scroll(cur, count, false, 3);
+                self.set_visible_cursor(next);
             }
 
             _ => {}
@@ -852,10 +851,8 @@ impl<'a> App<'a> {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.section_cursor = self.section_cursor.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.section_cursor + 1 < self.sections.len() {
-                    self.section_cursor += 1;
-                }
+            KeyCode::Down | KeyCode::Char('j') if self.section_cursor + 1 < self.sections.len() => {
+                self.section_cursor += 1;
             }
             KeyCode::Enter => {
                 return self.enter_section(self.section_cursor).await;
@@ -927,10 +924,8 @@ impl<'a> App<'a> {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.type_cursor = self.type_cursor.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.type_cursor + 1 < self.types.len() {
-                    self.type_cursor += 1;
-                }
+            KeyCode::Down | KeyCode::Char('j') if self.type_cursor + 1 < self.types.len() => {
+                self.type_cursor += 1;
             }
             KeyCode::Enter => {
                 self.enter_type(self.type_cursor).await?;
@@ -992,21 +987,18 @@ impl<'a> App<'a> {
                     breadcrumb,
                     ..
                 } = screen
+                    && breadcrumb.len() >= 2
                 {
-                    if breadcrumb.len() >= 2 {
-                        self.types = self.types_for_section(&self.sections[section_idx].key);
-                        self.screen = Screen::TypeList { section_idx };
-                    }
+                    self.types = self.types_for_section(&self.sections[section_idx].key);
+                    self.screen = Screen::TypeList { section_idx };
                 }
                 self.status_msg = None;
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.alias_cursor = self.alias_cursor.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.alias_cursor + 1 < visible_total {
-                    self.alias_cursor += 1;
-                }
+            KeyCode::Down | KeyCode::Char('j') if self.alias_cursor + 1 < visible_total => {
+                self.alias_cursor += 1;
             }
             KeyCode::Enter => {
                 if has_add && self.alias_cursor == add_pos {
@@ -1028,22 +1020,19 @@ impl<'a> App<'a> {
                     self.enter_alias(self.alias_cursor).await?;
                 }
             }
-            KeyCode::Char('x') => {
-                if self.alias_cursor < self.aliases.len() {
-                    if let Screen::AliasList { map_path, .. } = &self.screen {
-                        let alias = self.aliases[self.alias_cursor].clone();
-                        let map_path = map_path.clone();
-                        match self.rpc.config_map_key_delete(&map_path, &alias).await {
-                            Ok(()) => {
-                                self.status_msg = Some(format!("Deleted {alias}"));
-                                self.load_aliases(&map_path).await?;
-                                if self.alias_cursor > 0 && self.alias_cursor >= self.aliases.len()
-                                {
-                                    self.alias_cursor = self.aliases.len().saturating_sub(1);
-                                }
+            KeyCode::Char('x') if self.alias_cursor < self.aliases.len() => {
+                if let Screen::AliasList { map_path, .. } = &self.screen {
+                    let alias = self.aliases[self.alias_cursor].clone();
+                    let map_path = map_path.clone();
+                    match self.rpc.config_map_key_delete(&map_path, &alias).await {
+                        Ok(()) => {
+                            self.status_msg = Some(format!("Deleted {alias}"));
+                            self.load_aliases(&map_path).await?;
+                            if self.alias_cursor > 0 && self.alias_cursor >= self.aliases.len() {
+                                self.alias_cursor = self.aliases.len().saturating_sub(1);
                             }
-                            Err(e) => self.status_msg = Some(format!("Delete failed: {e}")),
                         }
+                        Err(e) => self.status_msg = Some(format!("Delete failed: {e}")),
                     }
                 }
             }
@@ -1053,26 +1042,25 @@ impl<'a> App<'a> {
     }
 
     async fn enter_alias(&mut self, orig_idx: usize) -> Result<()> {
-        if let Some(alias) = self.aliases.get(orig_idx) {
-            if let Screen::AliasList {
+        if let Some(alias) = self.aliases.get(orig_idx)
+            && let Screen::AliasList {
                 section_idx,
                 map_path,
                 breadcrumb,
                 ..
             } = &self.screen
-            {
-                let prefix = format!("{}.{}", map_path, alias);
-                let mut bc = breadcrumb.clone();
-                bc.push(alias.clone());
-                let si = *section_idx;
-                self.load_fields(&prefix).await?;
-                self.screen = Screen::FieldList {
-                    section_idx: si,
-                    prefix,
-                    breadcrumb: bc,
-                };
-                self.status_msg = None;
-            }
+        {
+            let prefix = format!("{}.{}", map_path, alias);
+            let mut bc = breadcrumb.clone();
+            bc.push(alias.clone());
+            let si = *section_idx;
+            self.load_fields(&prefix).await?;
+            self.screen = Screen::FieldList {
+                section_idx: si,
+                prefix,
+                breadcrumb: bc,
+            };
+            self.status_msg = None;
         }
         Ok(())
     }
@@ -1212,23 +1200,22 @@ impl<'a> App<'a> {
                     breadcrumb,
                     ..
                 } = screen
+                    && breadcrumb.len() >= 2
                 {
-                    if breadcrumb.len() >= 2 {
-                        let mut bc = breadcrumb;
-                        bc.pop();
-                        let section_key = &self.sections[section_idx].key;
-                        let map_path = if bc.len() == 1 {
-                            section_key.clone()
-                        } else {
-                            format!("{}.{}", section_key, bc[1..].join("."))
-                        };
-                        self.load_aliases(&map_path).await?;
-                        self.screen = Screen::AliasList {
-                            section_idx,
-                            map_path,
-                            breadcrumb: bc,
-                        };
-                    }
+                    let mut bc = breadcrumb;
+                    bc.pop();
+                    let section_key = &self.sections[section_idx].key;
+                    let map_path = if bc.len() == 1 {
+                        section_key.clone()
+                    } else {
+                        format!("{}.{}", section_key, bc[1..].join("."))
+                    };
+                    self.load_aliases(&map_path).await?;
+                    self.screen = Screen::AliasList {
+                        section_idx,
+                        map_path,
+                        breadcrumb: bc,
+                    };
                 }
                 self.status_msg = None;
             }
@@ -1250,10 +1237,8 @@ impl<'a> App<'a> {
                     self.field_cursor = first;
                 }
             }
-            KeyCode::Enter => {
-                if visible.contains(&self.field_cursor) {
-                    self.enter_field_edit(self.field_cursor, term).await;
-                }
+            KeyCode::Enter if visible.contains(&self.field_cursor) => {
+                self.enter_field_edit(self.field_cursor, term).await;
             }
             KeyCode::Char('d') => {
                 if let Some(field) = self.fields.get(self.field_cursor) {
@@ -1286,24 +1271,20 @@ impl<'a> App<'a> {
             return Ok(());
         }
         match self.tab_names[self.active_tab] {
-            ConfigTab::Personality => {
-                if self.personality_files.is_empty() {
-                    self.status_msg = Some("Loading personality files...".into());
-                    let _ = self.draw(term);
-                    match self.load_personality_files().await {
-                        Ok(()) => self.status_msg = None,
-                        Err(e) => self.status_msg = Some(format!("Load failed: {e}")),
-                    }
+            ConfigTab::Personality if self.personality_files.is_empty() => {
+                self.status_msg = Some("Loading personality files...".into());
+                let _ = self.draw(term);
+                match self.load_personality_files().await {
+                    Ok(()) => self.status_msg = None,
+                    Err(e) => self.status_msg = Some(format!("Load failed: {e}")),
                 }
             }
-            ConfigTab::Skills => {
-                if self.skills_list.is_empty() {
-                    self.status_msg = Some("Loading skills...".into());
-                    let _ = self.draw(term);
-                    match self.load_skills_list().await {
-                        Ok(()) => self.status_msg = None,
-                        Err(e) => self.status_msg = Some(format!("Load failed: {e}")),
-                    }
+            ConfigTab::Skills if self.skills_list.is_empty() => {
+                self.status_msg = Some("Loading skills...".into());
+                let _ = self.draw(term);
+                match self.load_skills_list().await {
+                    Ok(()) => self.status_msg = None,
+                    Err(e) => self.status_msg = Some(format!("Load failed: {e}")),
                 }
             }
             _ => {}
@@ -1327,10 +1308,8 @@ impl<'a> App<'a> {
                 self.on_tab_switched(term).await?;
                 return Ok(());
             }
-            KeyCode::Right | KeyCode::Char('l') => {
-                if self.active_tab + 1 < self.tab_names.len() {
-                    self.active_tab += 1;
-                }
+            KeyCode::Right | KeyCode::Char('l') if self.active_tab + 1 < self.tab_names.len() => {
+                self.active_tab += 1;
                 self.deactivate_filter();
                 self.on_tab_switched(term).await?;
                 return Ok(());
@@ -1343,23 +1322,22 @@ impl<'a> App<'a> {
                     breadcrumb,
                     ..
                 } = screen
+                    && breadcrumb.len() >= 2
                 {
-                    if breadcrumb.len() >= 2 {
-                        let mut bc = breadcrumb;
-                        bc.pop();
-                        let section_key = &self.sections[section_idx].key;
-                        let map_path = if bc.len() == 1 {
-                            section_key.clone()
-                        } else {
-                            format!("{}.{}", section_key, bc[1..].join("."))
-                        };
-                        self.load_aliases(&map_path).await?;
-                        self.screen = Screen::AliasList {
-                            section_idx,
-                            map_path,
-                            breadcrumb: bc,
-                        };
-                    }
+                    let mut bc = breadcrumb;
+                    bc.pop();
+                    let section_key = &self.sections[section_idx].key;
+                    let map_path = if bc.len() == 1 {
+                        section_key.clone()
+                    } else {
+                        format!("{}.{}", section_key, bc[1..].join("."))
+                    };
+                    self.load_aliases(&map_path).await?;
+                    self.screen = Screen::AliasList {
+                        section_idx,
+                        map_path,
+                        breadcrumb: bc,
+                    };
                 }
                 self.status_msg = None;
                 return Ok(());
@@ -1367,10 +1345,10 @@ impl<'a> App<'a> {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.personality_cursor = self.personality_cursor.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.personality_cursor + 1 < self.personality_files.len() {
-                    self.personality_cursor += 1;
-                }
+            KeyCode::Down | KeyCode::Char('j')
+                if self.personality_cursor + 1 < self.personality_files.len() =>
+            {
+                self.personality_cursor += 1;
             }
             KeyCode::Enter => {
                 if let Some(file) = self.personality_files.get(self.personality_cursor) {
@@ -1570,23 +1548,22 @@ impl<'a> App<'a> {
                     breadcrumb,
                     ..
                 } = screen
+                    && breadcrumb.len() >= 2
                 {
-                    if breadcrumb.len() >= 2 {
-                        let mut bc = breadcrumb;
-                        bc.pop();
-                        let section_key = &self.sections[section_idx].key;
-                        let map_path = if bc.len() == 1 {
-                            section_key.clone()
-                        } else {
-                            format!("{}.{}", section_key, bc[1..].join("."))
-                        };
-                        self.load_aliases(&map_path).await?;
-                        self.screen = Screen::AliasList {
-                            section_idx,
-                            map_path,
-                            breadcrumb: bc,
-                        };
-                    }
+                    let mut bc = breadcrumb;
+                    bc.pop();
+                    let section_key = &self.sections[section_idx].key;
+                    let map_path = if bc.len() == 1 {
+                        section_key.clone()
+                    } else {
+                        format!("{}.{}", section_key, bc[1..].join("."))
+                    };
+                    self.load_aliases(&map_path).await?;
+                    self.screen = Screen::AliasList {
+                        section_idx,
+                        map_path,
+                        breadcrumb: bc,
+                    };
                 }
                 self.status_msg = None;
                 return Ok(());
@@ -1594,10 +1571,10 @@ impl<'a> App<'a> {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.skills_cursor = self.skills_cursor.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.skills_cursor + 1 < self.skills_list.len() {
-                    self.skills_cursor += 1;
-                }
+            KeyCode::Down | KeyCode::Char('j')
+                if self.skills_cursor + 1 < self.skills_list.len() =>
+            {
+                self.skills_cursor += 1;
             }
             KeyCode::Enter => {
                 if let Some(skill) = self.skills_list.get(self.skills_cursor) {
@@ -1932,10 +1909,8 @@ impl<'a> App<'a> {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.select_cursor = self.select_cursor.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.select_cursor + 1 < visible.len() {
-                    self.select_cursor += 1;
-                }
+            KeyCode::Down | KeyCode::Char('j') if self.select_cursor + 1 < visible.len() => {
+                self.select_cursor += 1;
             }
             KeyCode::Enter => {
                 if let Some(&orig) = visible.get(self.select_cursor) {
@@ -1948,22 +1923,21 @@ impl<'a> App<'a> {
     }
 
     async fn commit_select(&mut self, orig_idx: usize) -> Result<()> {
-        if let Some(chosen) = self.select_items.get(orig_idx) {
-            if let Screen::FieldEdit {
+        if let Some(chosen) = self.select_items.get(orig_idx)
+            && let Screen::FieldEdit {
                 prefix, field_idx, ..
             } = &self.screen
-            {
-                let prop = self.fields[*field_idx].path.clone();
-                let value = serde_json::Value::String(chosen.clone());
-                let prefix = prefix.clone();
-                match self.rpc.config_set(&prop, value).await {
-                    Ok(()) => {
-                        self.status_msg = Some(format!("Set {prop}"));
-                        self.load_fields(&prefix).await?;
-                        self.pop_to_field_list_keep_cursor().await?;
-                    }
-                    Err(e) => self.status_msg = Some(format!("Set failed: {e}")),
+        {
+            let prop = self.fields[*field_idx].path.clone();
+            let value = serde_json::Value::String(chosen.clone());
+            let prefix = prefix.clone();
+            match self.rpc.config_set(&prop, value).await {
+                Ok(()) => {
+                    self.status_msg = Some(format!("Set {prop}"));
+                    self.load_fields(&prefix).await?;
+                    self.pop_to_field_list_keep_cursor().await?;
                 }
+                Err(e) => self.status_msg = Some(format!("Set failed: {e}")),
             }
         }
         Ok(())
@@ -3033,26 +3007,6 @@ fn edit_in_external_editor(
         Err(e) => {
             let _ = std::fs::remove_file(&tmp_path);
             Err(format!("failed to launch {editor}: {e}"))
-        }
-    }
-}
-
-// ── Input ────────────────────────────────────────────────────────
-
-pub(crate) fn wait_key() -> Result<Option<KeyEvent>> {
-    loop {
-        match event::read()? {
-            Event::Key(key) => {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    return Ok(Some(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
-                }
-                return Ok(Some(key));
-            }
-            Event::Resize(..) => return Ok(None),
-            _ => continue,
         }
     }
 }

@@ -15,7 +15,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use zeroclaw_api::jsonrpc::{self, JsonRpcError, RpcOutbound, field};
 use zeroclaw_config::sections::SectionShape;
-use zeroclaw_config::traits::{ConfigFieldEntry, MapKeyKind};
+use zeroclaw_config::traits::ConfigFieldEntry;
 
 // ── Wire method names used by the TUI ────────────────────────────
 
@@ -27,11 +27,8 @@ pub mod method {
     pub const CONFIG_MAP_KEYS: &str = "config/map-keys";
     pub const CONFIG_MAP_KEY_CREATE: &str = "config/map-key-create";
     pub const CONFIG_MAP_KEY_DELETE: &str = "config/map-key-delete";
-    pub const CONFIG_MAP_KEY_RENAME: &str = "config/map-key-rename";
     pub const CONFIG_TEMPLATES: &str = "config/templates";
-    pub const CONFIG_VALIDATE: &str = "config/validate";
     pub const CONFIG_SECTIONS: &str = "config/sections";
-    pub const CONFIG_STATUS: &str = "config/status";
     pub const CONFIG_CATALOG_MODELS: &str = "config/catalog-models";
     // Personality
     pub const PERSONALITY_LIST: &str = "personality/list";
@@ -42,13 +39,11 @@ pub mod method {
     pub const SKILLS_LIST: &str = "skills/list";
     pub const SKILLS_READ: &str = "skills/read";
     pub const SKILLS_WRITE: &str = "skills/write";
-    pub const SKILLS_CREATE: &str = "skills/write";
     pub const SKILLS_DELETE: &str = "skills/delete";
     // Session
     pub const SESSION_NEW: &str = "session/new";
     pub const SESSION_PROMPT: &str = "session/prompt";
     pub const SESSION_CANCEL: &str = "session/cancel";
-    pub const SESSION_CLOSE: &str = "session/close";
     pub const SESSION_APPROVE: &str = "session/approve";
     pub const SESSION_RENAME: &str = "session/rename";
     // Dashboard
@@ -124,7 +119,6 @@ pub enum SessionUpdate {
     ToolResult {
         session_id: String,
         tool_call_id: String,
-        name: String,
         raw_output: String,
     },
     ApprovalRequest {
@@ -157,7 +151,6 @@ pub fn parse_session_update(params: &serde_json::Value) -> Option<SessionUpdate>
         "tool_result" => Some(SessionUpdate::ToolResult {
             session_id: sid,
             tool_call_id: params.get("tool_call_id")?.as_str()?.to_string(),
-            name: params.get("name")?.as_str()?.to_string(),
             raw_output: params.get("raw_output")?.as_str()?.to_string(),
         }),
         "approval_request" => Some(SessionUpdate::ApprovalRequest {
@@ -182,10 +175,10 @@ pub fn spawn_notification_router(
                     if notif.method != "session/update" {
                         continue;
                     }
-                    if let Some(update) = parse_session_update(&notif.params) {
-                        if update_tx.send(update).await.is_err() {
-                            break;
-                        }
+                    if let Some(update) = parse_session_update(&notif.params)
+                        && update_tx.send(update).await.is_err()
+                    {
+                        break;
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
@@ -222,7 +215,6 @@ pub struct RpcClient {
     _router_task: tokio::task::JoinHandle<()>,
     pub server_version: String,
     notifications_bcast: broadcast::Sender<RpcNotification>,
-    pub notifications: mpsc::Receiver<SessionUpdate>,
     connection_state: Arc<Mutex<ConnectionState>>,
     /// TUI session UID assigned by the daemon during initialize.
     pub tui_id: Option<String>,
@@ -335,7 +327,7 @@ impl RpcClient {
             .map(String::from);
 
         let bcast_rx = notif_tx.subscribe();
-        let (update_tx, update_rx) = mpsc::channel::<SessionUpdate>(64);
+        let (update_tx, _update_rx) = mpsc::channel::<SessionUpdate>(64);
         let router_task = spawn_notification_router(bcast_rx, update_tx);
 
         Ok(Self {
@@ -344,7 +336,6 @@ impl RpcClient {
             _router_task: router_task,
             server_version,
             notifications_bcast: notif_tx,
-            notifications: update_rx,
             connection_state: conn_state,
             tui_id,
             tui_sig,
@@ -478,7 +469,7 @@ impl RpcClient {
             .map(String::from);
 
         let bcast_rx = notif_tx.subscribe();
-        let (update_tx, update_rx) = mpsc::channel::<SessionUpdate>(64);
+        let (update_tx, _update_rx) = mpsc::channel::<SessionUpdate>(64);
         let router_task = spawn_notification_router(bcast_rx, update_tx);
 
         Ok(Self {
@@ -487,7 +478,6 @@ impl RpcClient {
             _router_task: router_task,
             server_version,
             notifications_bcast: notif_tx,
-            notifications: update_rx,
             connection_state: conn_state,
             tui_id,
             tui_sig,
@@ -809,30 +799,17 @@ impl RpcClient {
         .await
     }
 
-    pub async fn session_close(&self, session_id: &str) -> Result<()> {
-        let _: serde_json::Value = self
-            .call(
-                method::SESSION_CLOSE,
-                serde_json::json!({ "session_id": session_id }),
-            )
-            .await?;
-        Ok(())
-    }
-
     pub async fn session_approve(
         &self,
         session_id: &str,
         request_id: &str,
         decision: ApprovalDecision,
     ) -> Result<SessionApproveResult> {
-        let mut params = serde_json::json!({
+        let params = serde_json::json!({
             "session_id": session_id,
             "request_id": request_id,
             "decision": decision.kind(),
         });
-        if let ApprovalDecision::RejectWithEdit { ref replacement } = decision {
-            params["replacement"] = serde_json::Value::String(replacement.clone());
-        }
         self.call(method::SESSION_APPROVE, params).await
     }
 
@@ -923,7 +900,6 @@ impl RpcClient {
     /// Test-only constructor that skips the Unix socket connect + initialize handshake.
     #[cfg(test)]
     pub fn with_rpc(rpc: Arc<RpcOutbound>) -> Self {
-        let (_tx, rx) = tokio::sync::mpsc::channel(1);
         let (notif_tx, _) = tokio::sync::broadcast::channel(1);
         Self {
             rpc,
@@ -931,7 +907,6 @@ impl RpcClient {
             _router_task: tokio::spawn(async {}),
             server_version: "test".to_string(),
             notifications_bcast: notif_tx,
-            notifications: rx,
             connection_state: Arc::new(Mutex::new(ConnectionState::Connected)),
             tui_id: None,
             tui_sig: None,
@@ -955,22 +930,15 @@ pub struct ConfigListResult {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct ConfigSetResult {
-    pub prop: String,
-    pub set: bool,
-}
+pub struct ConfigSetResult {}
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct ConfigDeleteResult {
-    pub prop: String,
-    pub deleted: bool,
-}
+pub struct ConfigDeleteResult {}
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ConfigMapKeysResult {
-    pub path: String,
     pub keys: Vec<String>,
 }
 
@@ -986,7 +954,6 @@ pub struct ConfigSectionEntry {
     pub key: String,
     pub label: String,
     pub help: String,
-    pub has_picker: bool,
     pub completed: bool,
     #[serde(default)]
     pub shape: Option<SectionShape>,
@@ -1008,9 +975,6 @@ pub struct CatalogModelsResult {
 #[serde(rename_all = "snake_case")]
 pub struct ConfigTemplateEntry {
     pub path: String,
-    pub kind: MapKeyKind,
-    pub value_type: String,
-    pub description: String,
 }
 
 // ── Personality types ────────────────────────────────────────────
@@ -1031,18 +995,12 @@ pub struct PersonalityListResult {
 
 #[derive(Debug, serde::Deserialize)]
 pub struct PersonalityGetResult {
-    pub filename: String,
     #[serde(default)]
     pub content: Option<String>,
-    pub exists: bool,
-    #[serde(default)]
-    pub truncated: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
-pub struct PersonalityPutResult {
-    pub bytes_written: u64,
-}
+pub struct PersonalityPutResult {}
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct TemplateFileEntry {
@@ -1073,7 +1031,6 @@ pub struct SkillFrontmatter {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct SkillListEntry {
-    pub bundle: String,
     pub name: String,
 }
 
@@ -1084,25 +1041,15 @@ pub struct SkillsListResult {
 
 #[derive(Debug, serde::Deserialize)]
 pub struct SkillsReadResult {
-    pub bundle: String,
-    pub name: String,
     pub frontmatter: SkillFrontmatter,
     pub body: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
-pub struct SkillsWriteResult {
-    pub bundle: String,
-    pub name: String,
-    pub written: bool,
-}
+pub struct SkillsWriteResult {}
 
 #[derive(Debug, serde::Deserialize)]
-pub struct SkillsDeleteResult {
-    pub bundle: String,
-    pub name: String,
-    pub deleted: bool,
-}
+pub struct SkillsDeleteResult {}
 
 // ── Logs types ───────────────────────────────────────────────────
 
@@ -1147,46 +1094,31 @@ pub struct LogsQueryResult {
 #[serde(rename_all = "snake_case")]
 pub struct SessionNewResult {
     pub session_id: String,
-    pub agent_alias: String,
-    pub message_count: usize,
 }
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionPromptResult {
-    pub session_id: String,
-    pub stop_reason: String,
     pub content: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct SessionCancelResult {
-    pub session_id: String,
-    pub cancelled: bool,
-}
+pub struct SessionCancelResult {}
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct SessionApproveResult {
-    pub session_id: String,
-    pub request_id: String,
-    pub acknowledged: bool,
-}
+pub struct SessionApproveResult {}
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct SessionRenameResult {
-    pub session_id: String,
-    pub name: String,
-}
+pub struct SessionRenameResult {}
 
 #[derive(Debug, Clone)]
 pub enum ApprovalDecision {
     AllowOnce,
     AllowAlways,
     Reject,
-    RejectWithEdit { replacement: String },
 }
 
 impl ApprovalDecision {
@@ -1195,7 +1127,6 @@ impl ApprovalDecision {
             Self::AllowOnce => "allow_once",
             Self::AllowAlways => "allow_always",
             Self::Reject => "reject",
-            Self::RejectWithEdit { .. } => "reject_with_edit",
         }
     }
 }
@@ -1208,7 +1139,6 @@ pub struct StatusResult {
     pub server_version: String,
     pub protocol_version: u64,
     pub active_sessions: usize,
-    pub session_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1255,12 +1185,6 @@ pub struct ModelStats {
     pub model: String,
     pub cost_usd: f64,
     pub total_tokens: u64,
-    #[serde(default)]
-    pub input_tokens: u64,
-    #[serde(default)]
-    pub output_tokens: u64,
-    #[serde(default)]
-    pub cached_input_tokens: u64,
     pub request_count: usize,
 }
 
@@ -1270,12 +1194,6 @@ pub struct AgentCostStats {
     pub agent_alias: String,
     pub cost_usd: f64,
     pub total_tokens: u64,
-    #[serde(default)]
-    pub input_tokens: u64,
-    #[serde(default)]
-    pub output_tokens: u64,
-    #[serde(default)]
-    pub cached_input_tokens: u64,
     pub request_count: usize,
 }
 
@@ -1311,7 +1229,6 @@ pub enum CronSchedule {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct CronJobEntry {
     pub id: String,
-    pub expression: String,
     pub schedule: CronSchedule,
     pub command: String,
     #[serde(default)]
@@ -1340,13 +1257,10 @@ pub struct CronListResult {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct MemoryEntryResult {
-    pub id: String,
     pub key: String,
     pub content: String,
     pub category: String,
     pub timestamp: String,
-    #[serde(default)]
-    pub session_id: Option<String>,
     #[serde(default)]
     pub score: Option<f64>,
     #[serde(default)]
@@ -1361,20 +1275,17 @@ pub struct MemoryEntryResult {
 #[serde(rename_all = "snake_case")]
 pub struct MemoryListResult {
     pub entries: Vec<MemoryEntryResult>,
-    pub count: usize,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct MemorySearchResult {
     pub entries: Vec<MemoryEntryResult>,
-    pub count: usize,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionMessagesResult {
-    pub session_id: String,
     pub messages: Vec<MessageEntry>,
 }
 
@@ -1391,7 +1302,6 @@ pub struct MessageEntry {
 #[serde(rename_all = "snake_case")]
 pub struct TuiListEntry {
     pub tui_id: String,
-    pub connected_at: String,
     pub connected_at_unix: i64,
     pub peer_label: String,
     /// Transport protocol: `"unix"` or `"wss"`.
@@ -1481,38 +1391,6 @@ mod session_method_tests {
         rpc.dispatch_response(
             &id,
             Some(json!({"session_id":"s1","request_id":"req-1","acknowledged":true})),
-            None,
-        );
-        let result = task.await.unwrap().unwrap();
-        assert!(result.acknowledged);
-    }
-
-    #[tokio::test]
-    async fn session_approve_reject_with_edit_sends_replacement() {
-        let (rpc, mut write_rx) = make_rpc();
-        let client = RpcClient::with_rpc(rpc.clone());
-
-        let task = tokio::spawn(async move {
-            client
-                .session_approve(
-                    "s1",
-                    "req-2",
-                    ApprovalDecision::RejectWithEdit {
-                        replacement: "let x = 99;".to_string(),
-                    },
-                )
-                .await
-        });
-
-        let line = write_rx.recv().await.unwrap();
-        let req: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(req["params"]["decision"], "reject_with_edit");
-        assert_eq!(req["params"]["replacement"], "let x = 99;");
-
-        let id = req["id"].as_str().unwrap().to_string();
-        rpc.dispatch_response(
-            &id,
-            Some(serde_json::json!({"session_id":"s1","request_id":"req-2","acknowledged":true})),
             None,
         );
         task.await.unwrap().unwrap();

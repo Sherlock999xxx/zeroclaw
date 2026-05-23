@@ -201,10 +201,10 @@ impl FileExplorerState {
                         self.selected.insert(path);
                     }
                     // Advance cursor after toggling.
-                    if let Some(i) = self.selected_idx() {
-                        if i + 1 < vis_len {
-                            self.list_state.select(Some(i + 1));
-                        }
+                    if let Some(i) = self.selected_idx()
+                        && i + 1 < vis_len
+                    {
+                        self.list_state.select(Some(i + 1));
                     }
                 }
                 ExplorerAction::None

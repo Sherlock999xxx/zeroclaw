@@ -558,6 +558,14 @@ impl<'a> Chat<'a> {
         }
     }
 
+    pub(crate) fn handle_mouse(
+        &mut self,
+        _mouse: crossterm::event::MouseEvent,
+        _content_area: Rect,
+    ) {
+        // No mouse handling for chat pane yet.
+    }
+
     pub(crate) fn help_lines(&self) -> Vec<(&str, &str)> {
         match &self.phase {
             ChatPhase::PickAgent { loading, .. } => {
@@ -1032,8 +1040,7 @@ fn strip_content_fields(summary: &str) -> String {
             s = "";
         }
     }
-    s.trim_end_matches(|c: char| c == ',' || c == ' ')
-        .to_string()
+    s.trim_end_matches([',', ' ']).to_string()
 }
 
 // ── Session overlay rendering ─────────────────────────────────────
@@ -1308,6 +1315,7 @@ impl ChatState {
         &self.streaming_text
     }
 
+    #[cfg(test)]
     pub fn current_thought_text(&self) -> &str {
         &self.streaming_thought
     }
@@ -1464,229 +1472,10 @@ fn clipboard_text(entry: &ChatEntry) -> String {
     }
 }
 
-// ── Standalone run() entry point (used by --agent CLI flag) ──────
-
-use std::io::Stdout;
-
-use crossterm::{
-    event::{DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
-use ratatui::{Terminal, backend::CrosstermBackend};
-
-type Term = Terminal<CrosstermBackend<Stdout>>;
-
-pub async fn run(rpc: &mut RpcClient, agent_alias: &str) -> anyhow::Result<()> {
-    let session = rpc
-        .session_new(agent_alias, None)
-        .await
-        .map_err(|e| anyhow::Error::msg(format!("failed to create session: {e}")))?;
-
-    let mut term = init_terminal()?;
-    let result = chat_loop(rpc, session.session_id.clone(), agent_alias, &mut term).await;
-    restore_terminal(&mut term)?;
-    let _ = rpc.session_close(&session.session_id).await;
-    result
-}
-
-fn init_terminal() -> anyhow::Result<Term> {
-    enable_raw_mode()?;
-    let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
-    Ok(Terminal::new(CrosstermBackend::new(stdout))?)
-}
-
-fn restore_terminal(term: &mut Term) -> anyhow::Result<()> {
-    disable_raw_mode()?;
-    execute!(
-        term.backend_mut(),
-        DisableBracketedPaste,
-        LeaveAlternateScreen
-    )?;
-    Ok(())
-}
-
-async fn chat_loop(
-    rpc: &mut RpcClient,
-    session_id: String,
-    agent_alias: &str,
-    term: &mut Term,
-) -> anyhow::Result<()> {
-    let mut state = ChatState::new(session_id.clone(), agent_alias.to_string());
-
-    let (turn_result_tx, mut turn_result_rx) =
-        tokio::sync::mpsc::channel::<anyhow::Result<SessionPromptResult>>(2);
-
-    loop {
-        term.draw(|f| {
-            let area = f.area();
-            render(f, &state, area);
-        })?;
-
-        tokio::select! {
-            maybe_event = async {
-                if crossterm::event::poll(std::time::Duration::from_millis(50))? {
-                    crossterm::event::read()
-                } else {
-                    Ok(Event::FocusLost)
-                }
-            } => {
-                match maybe_event? {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        // Let the input bar handle keys first (file explorer,
-                        // text input, slash commands, Ctrl+A, Ctrl+V, etc.)
-                        if state.pending_approval().is_none() {
-                            let action = state.input_bar.handle_key(key, state.turn_in_flight);
-                            match action {
-                                InputBarAction::Submit { text, attachments } => {
-                                    let prompt = text.as_deref().unwrap_or("").to_string();
-                                    let att_names: Vec<String> = attachments.iter().map(|a| a.filename.clone()).collect();
-                                    state.push_user_message(text, att_names);
-                                    let sid = session_id.clone();
-                                    let rpc_arc = rpc.rpc.clone();
-                                    let tx = turn_result_tx.clone();
-                                    let transport = rpc.transport();
-                                    tokio::spawn(async move {
-                                        let mut params = serde_json::json!({
-                                            "session_id": sid,
-                                            "prompt": prompt,
-                                        });
-                                        if !attachments.is_empty() {
-                                            match build_attachments_json(&attachments, transport) {
-                                                Ok(att_json) => {
-                                                    params["attachments"] = serde_json::Value::Array(att_json);
-                                                }
-                                                Err(e) => {
-                                                    let _ = tx.send(Err(e)).await;
-                                                    return;
-                                                }
-                                            }
-                                        }
-                                        let result = RpcClient::call_static::<SessionPromptResult>(
-                                            &rpc_arc,
-                                            method::SESSION_PROMPT,
-                                            params,
-                                        )
-                                        .await;
-                                        let _ = tx.send(result).await;
-                                    });
-                                    continue;
-                                }
-                                InputBarAction::StatusMessage(msg) => {
-                                    state.entries.push(ChatEntry::AgentMessage(msg));
-                                    continue;
-                                }
-                                InputBarAction::Consumed => continue,
-                                InputBarAction::NotHandled => {} // fall through
-                            }
-                        }
-
-                        // Keys not handled by the input bar.
-                        match key.code {
-                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                if state.turn_in_flight {
-                                    let _ = rpc.session_cancel(&session_id).await;
-                                }
-                                break;
-                            }
-                            KeyCode::Enter => {
-                                if let Some(pa) = state.take_pending_approval() {
-                                    let _ = rpc
-                                        .session_approve(
-                                            &session_id,
-                                            &pa.request_id,
-                                            ApprovalDecision::AllowOnce,
-                                        )
-                                        .await;
-                                }
-                            }
-                            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                if let Some(pa) = state.take_pending_approval() {
-                                    let _ = rpc
-                                        .session_approve(
-                                            &session_id,
-                                            &pa.request_id,
-                                            ApprovalDecision::Reject,
-                                        )
-                                        .await;
-                                }
-                            }
-                            KeyCode::Char('a') => {
-                                if let Some(pa) = state.take_pending_approval() {
-                                    let _ = rpc
-                                        .session_approve(
-                                            &session_id,
-                                            &pa.request_id,
-                                            ApprovalDecision::AllowAlways,
-                                        )
-                                        .await;
-                                }
-                            }
-                            KeyCode::Char('e') => {
-                                let is_edit_tool = state
-                                    .pending_approval()
-                                    .map(|pa| {
-                                        matches!(
-                                            pa.tool_name.as_str(),
-                                            "file_edit" | "file_write"
-                                        )
-                                    })
-                                    .unwrap_or(false);
-                                if is_edit_tool {
-                                    if let Some(pa) = state.take_pending_approval() {
-                                        let initial = pa.arguments_summary.clone();
-                                        let edited = open_editor_for_content(&initial).await;
-                                        term.clear()?;
-                                        let _ = rpc
-                                            .session_approve(
-                                                &session_id,
-                                                &pa.request_id,
-                                                ApprovalDecision::RejectWithEdit {
-                                                    replacement: edited,
-                                                },
-                                            )
-                                            .await;
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    Event::Paste(text) => {
-                        if !state.turn_in_flight {
-                            let action = state.input_bar.handle_paste(&text);
-                            if let InputBarAction::StatusMessage(msg) = action {
-                                state.entries.push(ChatEntry::AgentMessage(msg));
-                            }
-                        }
-                    }
-                    Event::Resize(_, _) => {
-                        term.autoresize()?;
-                    }
-                    _ => {}
-                }
-            }
-
-            Some(update) = rpc.notifications.recv() => {
-                state.apply_update(update);
-            }
-
-            Some(result) = turn_result_rx.recv() => {
-                match result {
-                    Ok(r) => state.commit_turn(r.content),
-                    Err(e) => state.commit_turn(format!("[error: {e}]")),
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Suspend the TUI, open `$EDITOR` with `content`, return the edited text.
 /// Restores raw mode and alternate screen before returning.
 /// Falls back to `content` unchanged if `$EDITOR` is unset or the process fails.
+#[cfg(test)]
 pub async fn open_editor_for_content(content: &str) -> String {
     let editor = std::env::var("EDITOR")
         .or_else(|_| std::env::var("VISUAL"))
@@ -1776,7 +1565,6 @@ mod tests {
         s.apply_update(SessionUpdate::ToolResult {
             session_id: "sess-1".to_string(),
             tool_call_id: "tc1".to_string(),
-            name: "shell".to_string(),
             raw_output: "file.txt\n".to_string(),
         });
         let entries = s.entries();

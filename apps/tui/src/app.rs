@@ -25,7 +25,7 @@ const TICK: Duration = Duration::from_millis(200);
 const MODE_LABELS: [(&str, &str, Mode); 5] = [
     ("F1", " Dashboard ", Mode::Dashboard),
     ("F2", " Config ", Mode::Config),
-    ("F3", " ACP ", Mode::ACP),
+    ("F3", " ACP ", Mode::Acp),
     ("F4", " Chat ", Mode::Chat),
     ("F5", " Logs ", Mode::Logs),
 ];
@@ -36,7 +36,7 @@ const MODE_LABELS: [(&str, &str, Mode); 5] = [
 enum Mode {
     Dashboard,
     Config,
-    ACP,
+    Acp,
     Chat,
     Logs,
 }
@@ -47,7 +47,7 @@ enum Mode {
 /// (caller should attempt reconnection), `false` if the user quit normally.
 pub async fn run(
     rpc: &RpcClient,
-    mut term: &mut config_manager::Term,
+    term: &mut config_manager::Term,
     connect_label: &str,
 ) -> Result<bool> {
     let mut mode = Mode::Dashboard;
@@ -87,7 +87,7 @@ pub async fn run(
             match mode {
                 Mode::Dashboard => dashboard_pane.draw(frame, chunks[1]),
                 Mode::Config => config_app.draw_into(frame, chunks[1]),
-                Mode::ACP => acp_pane.draw(frame, chunks[1]),
+                Mode::Acp => acp_pane.draw(frame, chunks[1]),
                 Mode::Chat => chat_pane.draw(frame, chunks[1]),
                 Mode::Logs => logs_pane.draw(frame, chunks[1]),
             }
@@ -99,7 +99,7 @@ pub async fn run(
                 let help = match mode {
                     Mode::Dashboard => dashboard_pane.help_lines(),
                     Mode::Config => config_app.help_lines(),
-                    Mode::ACP => acp_pane.help_lines(),
+                    Mode::Acp => acp_pane.help_lines(),
                     Mode::Chat => chat_pane.help_lines(),
                     Mode::Logs => logs_pane.help_lines(),
                 };
@@ -160,7 +160,7 @@ pub async fn run(
                         continue;
                     }
                     KeyCode::F(3) => {
-                        mode = Mode::ACP;
+                        mode = Mode::Acp;
                         continue;
                     }
                     KeyCode::F(4) => {
@@ -179,7 +179,7 @@ pub async fn run(
                     let in_text_input = match mode {
                         Mode::Dashboard => dashboard_pane.wants_text_input(),
                         Mode::Config => config_app.wants_text_input(),
-                        Mode::ACP => acp_pane.wants_text_input(),
+                        Mode::Acp => acp_pane.wants_text_input(),
                         Mode::Chat => chat_pane.wants_text_input(),
                         Mode::Logs => logs_pane.wants_text_input(),
                     };
@@ -197,8 +197,8 @@ pub async fn run(
 
                 let quit = match mode {
                     Mode::Dashboard => dashboard_pane.handle_key(key).await,
-                    Mode::Config => config_app.handle_key(key, &mut term).await?,
-                    Mode::ACP => acp_pane.handle_key(key).await,
+                    Mode::Config => config_app.handle_key(key, term).await?,
+                    Mode::Acp => acp_pane.handle_key(key).await,
                     Mode::Chat => chat_pane.handle_key(key).await,
                     Mode::Logs => logs_pane.handle_key(key).await,
                 };
@@ -232,14 +232,12 @@ pub async fn run(
                             dashboard_pane.handle_mouse(mouse, content_area);
                         }
                         Mode::Config => {
-                            config_app
-                                .handle_mouse(mouse, content_area, &mut term)
-                                .await?;
+                            config_app.handle_mouse(mouse, content_area, term).await?;
                         }
                         Mode::Logs => {
                             logs_pane.handle_mouse(mouse, content_area);
                         }
-                        Mode::ACP => {
+                        Mode::Acp => {
                             acp_pane.handle_mouse(mouse, content_area);
                         }
                         Mode::Chat => {
@@ -248,13 +246,11 @@ pub async fn run(
                     }
                 }
             }
-            Event::Paste(text) => {
-                if !matches!(conn_state, ConnectionState::Disconnected { .. }) {
-                    match mode {
-                        Mode::Chat => chat_pane.handle_paste(&text),
-                        Mode::ACP => acp_pane.handle_paste(&text),
-                        _ => {}
-                    }
+            Event::Paste(text) if !matches!(conn_state, ConnectionState::Disconnected { .. }) => {
+                match mode {
+                    Mode::Chat => chat_pane.handle_paste(&text),
+                    Mode::Acp => acp_pane.handle_paste(&text),
+                    _ => {}
                 }
             }
             _ => {} // Resize, etc. — just redraw on next iteration

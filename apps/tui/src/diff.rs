@@ -72,30 +72,28 @@ fn highlight_all(text: &str, ext: &str, bg: Color, plain_fg: Color) -> Vec<Vec<S
     let mut hl = HighlightLines::new(syntax, theme);
 
     LinesWithEndings::from(text)
-        .map(|line| {
-            match hl.highlight_line(line, ss) {
-                Ok(regions) => {
-                    let spans: Vec<Span<'static>> = regions
-                        .into_iter()
-                        .map(|(style, token)| {
-                            Span::styled(
-                                token.trim_end_matches('\n').to_string(),
-                                hl_style(style, bg),
-                            )
-                        })
-                        .filter(|s| !s.content.is_empty())
-                        .collect();
-                    if spans.is_empty() {
-                        vec![Span::styled(String::new(), Style::default().bg(bg))]
-                    } else {
-                        spans
-                    }
+        .map(|line| match hl.highlight_line(line, ss) {
+            Ok(regions) => {
+                let spans: Vec<Span<'static>> = regions
+                    .into_iter()
+                    .map(|(style, token)| {
+                        Span::styled(
+                            token.trim_end_matches('\n').to_string(),
+                            hl_style(style, bg),
+                        )
+                    })
+                    .filter(|s| !s.content.is_empty())
+                    .collect();
+                if spans.is_empty() {
+                    vec![Span::styled(String::new(), Style::default().bg(bg))]
+                } else {
+                    spans
                 }
-                Err(_) => vec![Span::styled(
-                    line.trim_end_matches('\n').to_string(),
-                    Style::default().bg(bg).fg(plain_fg),
-                )],
             }
+            Err(_) => vec![Span::styled(
+                line.trim_end_matches('\n').to_string(),
+                Style::default().bg(bg).fg(plain_fg),
+            )],
         })
         .collect()
 }
@@ -142,10 +140,7 @@ pub fn diff_lines(old: &str, new: &str, lang: Option<&str>) -> Vec<Line<'static>
                             .and_then(|v| change.old_index().and_then(|i| v.get(i)))
                             .cloned()
                             .unwrap_or_else(|| {
-                                vec![Span::styled(
-                                    text,
-                                    Style::default().bg(DEL_BG).fg(DEL_FG),
-                                )]
+                                vec![Span::styled(text, Style::default().bg(DEL_BG).fg(DEL_FG))]
                             });
                         let mut spans = vec![Span::styled(
                             "- ".to_string(),
@@ -163,10 +158,7 @@ pub fn diff_lines(old: &str, new: &str, lang: Option<&str>) -> Vec<Line<'static>
                             .and_then(|v| change.new_index().and_then(|i| v.get(i)))
                             .cloned()
                             .unwrap_or_else(|| {
-                                vec![Span::styled(
-                                    text,
-                                    Style::default().bg(ADD_BG).fg(ADD_FG),
-                                )]
+                                vec![Span::styled(text, Style::default().bg(ADD_BG).fg(ADD_FG))]
                             });
                         let mut spans = vec![Span::styled(
                             "+ ".to_string(),
@@ -210,14 +202,14 @@ pub fn write_lines(content: &str, lang: Option<&str>) -> Vec<Line<'static>> {
     let hl = lang.map(|ext| highlight_all(content, ext, ADD_BG, ADD_FG));
     let mut out: Vec<Line<'static>> = Vec::with_capacity(show + 1);
 
-    for i in 0..show {
+    for (i, item) in all.iter().enumerate().take(show) {
         let content_spans = hl
             .as_ref()
             .and_then(|v| v.get(i))
             .cloned()
             .unwrap_or_else(|| {
                 vec![Span::styled(
-                    all[i].to_string(),
+                    item.to_string(),
                     Style::default().bg(ADD_BG).fg(ADD_FG),
                 )]
             });
@@ -253,8 +245,16 @@ mod tests {
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
             .collect();
-        assert!(rendered.iter().any(|s| s.contains("- ") && s.contains("bar")));
-        assert!(rendered.iter().any(|s| s.contains("+ ") && s.contains("baz")));
+        assert!(
+            rendered
+                .iter()
+                .any(|s| s.contains("- ") && s.contains("bar"))
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|s| s.contains("+ ") && s.contains("baz"))
+        );
     }
 
     #[test]

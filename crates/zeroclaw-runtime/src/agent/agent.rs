@@ -1970,15 +1970,14 @@ pub async fn run(
         }
     }
     // Apply model/temperature overrides to the agent's resolved provider entry.
-    if let Some(agent_cfg) = effective_config.agents.get(agent_alias) {
-        if let Some((fam, ali)) = agent_cfg.model_provider.split_once('.') {
-            if let Some(entry) = effective_config.providers.models.ensure(fam, ali) {
-                if let Some(m) = model_override {
-                    entry.model = Some(m);
-                }
-                entry.temperature = Some(temperature);
-            }
+    if let Some(agent_cfg) = effective_config.agents.get(agent_alias)
+        && let Some((fam, ali)) = agent_cfg.model_provider.split_once('.')
+        && let Some(entry) = effective_config.providers.models.ensure(fam, ali)
+    {
+        if let Some(m) = model_override {
+            entry.model = Some(m);
         }
+        entry.temperature = Some(temperature);
     }
 
     let mut agent = Agent::from_config(&effective_config, agent_alias).await?;

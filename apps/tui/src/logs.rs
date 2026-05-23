@@ -393,7 +393,7 @@ impl<'a> Logs<'a> {
                     .events
                     .iter()
                     .rev()
-                    .filter_map(|v| LogEntry::from_value(v))
+                    .filter_map(LogEntry::from_value)
                     .collect();
                 let prepended = new_entries.len();
                 if cursor.is_some() && prepended > 0 {
@@ -706,19 +706,16 @@ impl<'a> Logs<'a> {
                 self.detail_open = false;
                 self.detail_scroll = 0;
             }
-            KeyCode::Char('c') => {
-                if !self.search_query.is_empty() {
-                    let anchor = self.cursor_anchor();
-                    self.search_query.clear();
-                    self.search_buf.clear();
-                    self.refilter(anchor);
-                }
+            KeyCode::Char('c') if !self.search_query.is_empty() => {
+                let anchor = self.cursor_anchor();
+                self.search_query.clear();
+                self.search_buf.clear();
+                self.refilter(anchor);
             }
-            KeyCode::Char('y') => {
-                if let Some(idx) = self.selected_event_idx() {
-                    let text = self.events[idx].clipboard_text();
-                    crate::mouse::copy_osc52(&text);
-                }
+            KeyCode::Char('y') if self.selected_event_idx().is_some() => {
+                let idx = self.selected_event_idx().unwrap();
+                let text = self.events[idx].clipboard_text();
+                crate::mouse::copy_osc52(&text);
             }
             KeyCode::Char('/') => {
                 self.search_active = true;
@@ -767,24 +764,20 @@ impl<'a> Logs<'a> {
         let filtered_len = self.filtered_indices().len();
 
         match key.code {
-            KeyCode::Char('c') => {
-                if !self.search_query.is_empty() {
-                    let anchor = self.cursor_anchor();
-                    self.search_query.clear();
-                    self.search_buf.clear();
-                    self.refilter(anchor);
-                }
+            KeyCode::Char('c') if !self.search_query.is_empty() => {
+                let anchor = self.cursor_anchor();
+                self.search_query.clear();
+                self.search_buf.clear();
+                self.refilter(anchor);
             }
             KeyCode::Char('/') => {
                 self.search_active = true;
                 self.search_buf = self.search_query.clone();
             }
-            KeyCode::Enter => {
-                if self.selected_event_idx().is_some() {
-                    self.detail_open = true;
-                    self.detail_scroll = 0;
-                    self.detail_pct = 50;
-                }
+            KeyCode::Enter if self.selected_event_idx().is_some() => {
+                self.detail_open = true;
+                self.detail_scroll = 0;
+                self.detail_pct = 50;
             }
             KeyCode::Char('j') | KeyCode::Down => self.move_selection_down(),
             KeyCode::Char('k') | KeyCode::Up => {
@@ -833,10 +826,12 @@ impl<'a> Logs<'a> {
     /// Load older events if the selection is near the top and more are available.
     async fn maybe_load_older(&mut self) {
         let sel = self.list_state.selected().unwrap_or(0);
-        if sel == 0 && !self.at_end && !self.loading {
-            if let Some(cursor) = self.next_cursor.clone() {
-                self.load_page(Some(cursor)).await;
-            }
+        if sel == 0
+            && !self.at_end
+            && !self.loading
+            && let Some(cursor) = self.next_cursor.clone()
+        {
+            self.load_page(Some(cursor)).await;
         }
     }
 
@@ -856,24 +851,22 @@ impl<'a> Logs<'a> {
             .is_some_and(|r| mouse::in_rect(col, row, r));
 
         match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                if in_list {
-                    if let Some(idx) = mouse::list_click_index(
-                        row,
-                        self.last_list_area,
-                        self.list_state.offset(),
-                        filtered_len,
-                    ) {
-                        self.follow = false;
-                        self.list_state.select(Some(idx));
-                        if self.detail_open {
-                            self.detail_scroll = 0;
-                        }
-                        if self.double_click.click(col, row) {
-                            self.detail_open = true;
-                            self.detail_scroll = 0;
-                            self.detail_pct = 50;
-                        }
+            MouseEventKind::Down(MouseButton::Left) if in_list => {
+                if let Some(idx) = mouse::list_click_index(
+                    row,
+                    self.last_list_area,
+                    self.list_state.offset(),
+                    filtered_len,
+                ) {
+                    self.follow = false;
+                    self.list_state.select(Some(idx));
+                    if self.detail_open {
+                        self.detail_scroll = 0;
+                    }
+                    if self.double_click.click(col, row) {
+                        self.detail_open = true;
+                        self.detail_scroll = 0;
+                        self.detail_pct = 50;
                     }
                 }
                 // Clicks in detail area are ignored (no selection there).
@@ -920,18 +913,18 @@ impl<'a> Logs<'a> {
     }
 
     fn cycle_severity_up(&mut self) {
-        if let Some(pos) = SEV_LEVELS.iter().position(|&l| l == self.min_severity) {
-            if pos + 1 < SEV_LEVELS.len() {
-                self.min_severity = SEV_LEVELS[pos + 1];
-            }
+        if let Some(pos) = SEV_LEVELS.iter().position(|&l| l == self.min_severity)
+            && pos + 1 < SEV_LEVELS.len()
+        {
+            self.min_severity = SEV_LEVELS[pos + 1];
         }
     }
 
     fn cycle_severity_down(&mut self) {
-        if let Some(pos) = SEV_LEVELS.iter().position(|&l| l == self.min_severity) {
-            if pos > 0 {
-                self.min_severity = SEV_LEVELS[pos - 1];
-            }
+        if let Some(pos) = SEV_LEVELS.iter().position(|&l| l == self.min_severity)
+            && pos > 0
+        {
+            self.min_severity = SEV_LEVELS[pos - 1];
         }
     }
 

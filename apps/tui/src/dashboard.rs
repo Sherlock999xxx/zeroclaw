@@ -355,19 +355,19 @@ impl<'a> Dashboard<'a> {
             return String::new();
         };
         let mut parts = Vec::new();
-        if let Some(rss) = process.get("rss_bytes").and_then(|v| v.as_u64()) {
-            if rss > 0 {
-                let total = process
-                    .get("system_ram_total_bytes")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                let rss_str = format_bytes(rss);
-                if total > 0 {
-                    let pct = (rss as f64 / total as f64) * 100.0;
-                    parts.push(format!(" ram:{rss_str}({pct:.0}%)"));
-                } else {
-                    parts.push(format!(" ram:{rss_str}"));
-                }
+        if let Some(rss) = process.get("rss_bytes").and_then(|v| v.as_u64())
+            && rss > 0
+        {
+            let total = process
+                .get("system_ram_total_bytes")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let rss_str = format_bytes(rss);
+            if total > 0 {
+                let pct = (rss as f64 / total as f64) * 100.0;
+                parts.push(format!(" ram:{rss_str}({pct:.0}%)"));
+            } else {
+                parts.push(format!(" ram:{rss_str}"));
             }
         }
         if let Some(cpu) = process.get("cpu_percent").and_then(|v| v.as_f64()) {
@@ -417,42 +417,42 @@ impl<'a> Dashboard<'a> {
             ];
 
             // Process stats from health
-            if let Some(ref h) = self.health {
-                if let Some(process) = h.get("process") {
-                    if let Some(rss) = process.get("rss_bytes").and_then(|v| v.as_u64()) {
-                        if rss > 0 {
-                            let total = process
-                                .get("system_ram_total_bytes")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0);
-                            let rss_str = format_bytes(rss);
-                            let val = if total > 0 {
-                                let pct = (rss as f64 / total as f64) * 100.0;
-                                format!("{rss_str} / {} ({pct:.1}%)", format_bytes(total))
-                            } else {
-                                rss_str
-                            };
-                            lines.push(Line::from(vec![
-                                Span::styled("Memory     ", theme::dim_style()),
-                                Span::styled(val, theme::body_style()),
-                            ]));
-                        }
-                    }
-                    if let Some(cpu) = process.get("cpu_percent").and_then(|v| v.as_f64()) {
-                        let ncpu = process
-                            .get("num_cpus")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        let val = if ncpu > 0 {
-                            format!("{cpu:.1}% ({ncpu} cores)")
-                        } else {
-                            format!("{cpu:.1}%")
-                        };
-                        lines.push(Line::from(vec![
-                            Span::styled("CPU        ", theme::dim_style()),
-                            Span::styled(val, theme::body_style()),
-                        ]));
-                    }
+            if let Some(ref h) = self.health
+                && let Some(process) = h.get("process")
+            {
+                if let Some(rss) = process.get("rss_bytes").and_then(|v| v.as_u64())
+                    && rss > 0
+                {
+                    let total = process
+                        .get("system_ram_total_bytes")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let rss_str = format_bytes(rss);
+                    let val = if total > 0 {
+                        let pct = (rss as f64 / total as f64) * 100.0;
+                        format!("{rss_str} / {} ({pct:.1}%)", format_bytes(total))
+                    } else {
+                        rss_str
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled("Memory     ", theme::dim_style()),
+                        Span::styled(val, theme::body_style()),
+                    ]));
+                }
+                if let Some(cpu) = process.get("cpu_percent").and_then(|v| v.as_f64()) {
+                    let ncpu = process
+                        .get("num_cpus")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let val = if ncpu > 0 {
+                        format!("{cpu:.1}% ({ncpu} cores)")
+                    } else {
+                        format!("{cpu:.1}%")
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled("CPU        ", theme::dim_style()),
+                        Span::styled(val, theme::body_style()),
+                    ]));
                 }
             }
 
@@ -999,24 +999,24 @@ impl<'a> Dashboard<'a> {
             if let Some(process) = obj.get("process") {
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled("Process", theme::heading_style())));
-                if let Some(rss) = process.get("rss_bytes").and_then(|v| v.as_u64()) {
-                    if rss > 0 {
-                        let total = process
-                            .get("system_ram_total_bytes")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        let rss_str = format_bytes(rss);
-                        let val = if total > 0 {
-                            let pct = (rss as f64 / total as f64) * 100.0;
-                            format!("{rss_str} / {} ({pct:.1}%)", format_bytes(total))
-                        } else {
-                            rss_str
-                        };
-                        lines.push(Line::from(vec![
-                            Span::styled("  RAM      ", theme::dim_style()),
-                            Span::styled(val, theme::body_style()),
-                        ]));
-                    }
+                if let Some(rss) = process.get("rss_bytes").and_then(|v| v.as_u64())
+                    && rss > 0
+                {
+                    let total = process
+                        .get("system_ram_total_bytes")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let rss_str = format_bytes(rss);
+                    let val = if total > 0 {
+                        let pct = (rss as f64 / total as f64) * 100.0;
+                        format!("{rss_str} / {} ({pct:.1}%)", format_bytes(total))
+                    } else {
+                        rss_str
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled("  RAM      ", theme::dim_style()),
+                        Span::styled(val, theme::body_style()),
+                    ]));
                 }
                 if let Some(cpu) = process.get("cpu_percent").and_then(|v| v.as_f64()) {
                     let ncpu = process
@@ -1474,13 +1474,11 @@ impl<'a> Dashboard<'a> {
             KeyCode::Char('7') => self.tab = Tab::Cron,
             KeyCode::Char('j') | KeyCode::Down => self.move_list_down(),
             KeyCode::Char('k') | KeyCode::Up => self.move_list_up(),
-            KeyCode::Enter => {
-                if self.has_detail_pane() {
-                    self.detail_open = true;
-                    self.detail_scroll = 0;
-                    self.detail_pct = 50;
-                    self.on_selection_change().await;
-                }
+            KeyCode::Enter if self.has_detail_pane() => {
+                self.detail_open = true;
+                self.detail_scroll = 0;
+                self.detail_pct = 50;
+                self.on_selection_change().await;
             }
             KeyCode::Char('/') => {
                 self.search_query_saved = self.search_query.clone();
@@ -1578,13 +1576,13 @@ impl<'a> Dashboard<'a> {
                     let i = state.selected().unwrap_or(0);
                     let new_i = mouse::list_scroll(i, count, up, 3);
                     state.select(Some(new_i));
-                } else if let Some(detail) = self.detail_area {
-                    if mouse::in_rect(col, row, detail) {
-                        if up {
-                            self.detail_scroll = self.detail_scroll.saturating_sub(3);
-                        } else {
-                            self.detail_scroll = self.detail_scroll.saturating_add(3);
-                        }
+                } else if let Some(detail) = self.detail_area
+                    && mouse::in_rect(col, row, detail)
+                {
+                    if up {
+                        self.detail_scroll = self.detail_scroll.saturating_sub(3);
+                    } else {
+                        self.detail_scroll = self.detail_scroll.saturating_add(3);
                     }
                 }
             }

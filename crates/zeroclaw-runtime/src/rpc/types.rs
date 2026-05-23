@@ -984,18 +984,13 @@ rpc_type! {
 // ── File attachments ─────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════
 
-rpc_type! {
-    /// Source hint for how the client obtained the file.
-    pub enum FileSource {
-        Clipboard,
-        File,
-    }
-}
-
-impl Default for FileSource {
-    fn default() -> Self {
-        Self::File
-    }
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+/// Source hint for how the client obtained the file.
+pub enum FileSource {
+    Clipboard,
+    #[default]
+    File,
 }
 
 rpc_type! {

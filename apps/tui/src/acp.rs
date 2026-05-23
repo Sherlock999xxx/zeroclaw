@@ -31,6 +31,14 @@ impl<'a> Acp<'a> {
         self.inner.wants_text_input()
     }
 
+    pub(crate) fn handle_mouse(
+        &mut self,
+        mouse: crossterm::event::MouseEvent,
+        content_area: ratatui::layout::Rect,
+    ) {
+        self.inner.handle_mouse(mouse, content_area);
+    }
+
     pub(crate) fn handle_paste(&mut self, text: &str) {
         self.inner.handle_paste(text);
     }

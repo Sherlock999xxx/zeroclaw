@@ -25,7 +25,85 @@ use ratatui::{
 use zeroclaw_config::traits::{Answer, OnboardUi, SelectItem};
 
 use crate::theme;
-use crate::widgets::{BANNER_HEIGHT, Banner, InputPrompt};
+
+// ── Inline widgets (Banner + InputPrompt) ────────────────────────
+// Previously lived in `widgets.rs`, moved here as the only consumer.
+
+/// ZeroClaw ASCII banner rendered at the top of the TUI onboarding session.
+struct Banner;
+
+const BANNER_ART: &str = r"
+ ███████╗███████╗██████╗  ██████╗  ██████╗██╗      █████╗ ██╗    ██╗
+ ╚══███╔╝██╔════╝██╔══██╗██╔═══██╗██╔════╝██║     ██╔══██╗██║    ██║
+   ███╔╝ █████╗  ██████╔╝██║   ██║██║     ██║     ███████║██║ █╗ ██║
+  ███╔╝  ██╔══╝  ██╔══██╗██║   ██║██║     ██║     ██╔══██║██║███╗██║
+ ███████╗███████╗██║  ██║╚██████╔╝╚██████╗███████╗██║  ██║╚███╔███╔╝
+ ╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+";
+
+impl ratatui::widgets::Widget for Banner {
+    fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        let mut lines: Vec<Line<'_>> = Vec::new();
+        for art_line in BANNER_ART.lines() {
+            if art_line.is_empty() {
+                continue;
+            }
+            lines.push(Line::from(Span::styled(art_line, theme::title_style())));
+        }
+        lines.push(Line::from(Span::styled(
+            "\u{1f980} ZEROCLAW \u{1f980}",
+            theme::accent_style(),
+        )));
+
+        Paragraph::new(lines)
+            .alignment(ratatui::layout::Alignment::Center)
+            .render(area, buf);
+    }
+}
+
+/// Fixed height the banner widget wants (7 ASCII-art rows + 1 tagline).
+const BANNER_HEIGHT: u16 = 7;
+
+/// Single-line prompt with a label and the current input buffer.
+struct InputPrompt<'a> {
+    label: &'a str,
+    input: &'a str,
+    masked: bool,
+    placeholder: Option<&'a str>,
+}
+
+impl ratatui::widgets::Widget for InputPrompt<'_> {
+    fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        let mut spans = vec![
+            Span::styled("\u{25c6}  ", theme::accent_style()),
+            Span::styled(self.label, theme::heading_style()),
+            Span::raw("  "),
+        ];
+
+        if self.input.is_empty()
+            && let Some(ph) = self.placeholder.filter(|s| !s.is_empty())
+        {
+            spans.push(Span::styled(ph, placeholder_style()));
+        } else {
+            let display = if self.masked {
+                "\u{2022}".repeat(self.input.len())
+            } else {
+                self.input.to_string()
+            };
+            spans.push(Span::styled(display, theme::input_style()));
+        }
+        spans.push(Span::styled("\u{2588}", theme::accent_style()));
+
+        Paragraph::new(Line::from(spans)).render(area, buf);
+    }
+}
+
+/// Dim, italic style used for ghost-text default values in input prompts.
+fn placeholder_style() -> ratatui::style::Style {
+    ratatui::style::Style::default()
+        .fg(ratatui::style::Color::Rgb(80, 130, 170))
+        .add_modifier(ratatui::style::Modifier::ITALIC)
+}
 
 type Term = Terminal<CrosstermBackend<Stdout>>;
 
