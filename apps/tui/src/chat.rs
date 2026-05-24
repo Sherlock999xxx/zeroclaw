@@ -958,17 +958,11 @@ fn render_tool_entry(
                 .unwrap_or("");
             let ext = file_ext(input);
             lines.extend(diff::diff_lines(old, new, ext));
-            for _ in 0..APPROVAL_OVERLAY_HEIGHT {
-                lines.push(Line::default());
-            }
         }
         "file_write" => {
             let content = input.get("content").and_then(|v| v.as_str()).unwrap_or("");
             let ext = file_ext(input);
             lines.extend(diff::write_lines(content, ext));
-            for _ in 0..APPROVAL_OVERLAY_HEIGHT {
-                lines.push(Line::default());
-            }
         }
         _ => {
             let summary = serde_json::to_string(input).unwrap_or_default();
@@ -1116,6 +1110,15 @@ fn render_conversation(f: &mut Frame, state: &mut ChatState, area: Rect) {
                 theme::dim_style(),
             ),
         ]));
+    }
+
+    // When the approval overlay is visible it covers the bottom
+    // APPROVAL_OVERLAY_HEIGHT rows.  Push blank lines so the diff/content
+    // above it stays readable and the user can scroll to see it.
+    if state.pending_approval().is_some() {
+        for _ in 0..APPROVAL_OVERLAY_HEIGHT {
+            lines.push(Line::default());
+        }
     }
 
     let inner_width = area.width.saturating_sub(2);
