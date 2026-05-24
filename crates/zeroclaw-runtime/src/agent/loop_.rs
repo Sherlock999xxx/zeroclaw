@@ -2927,6 +2927,16 @@ pub async fn run(
     );
     let __zc_body = async move {
         let agent_alias: &str = __zc_alias.as_str();
+        // ── Effective per-agent runtime tunables ──────────────────────
+        // Profile values (when set) override the agent's inline fields.
+        // See `Config::effective_*` helpers for precedence rules.
+        let eff_max_tool_iterations = config.effective_max_tool_iterations(agent_alias);
+        let eff_max_history_messages = config.effective_max_history_messages(agent_alias);
+        let eff_max_context_tokens = config.effective_max_context_tokens(agent_alias);
+        let eff_compact_context = config.effective_compact_context(agent_alias);
+        let eff_max_system_prompt_chars = config.effective_max_system_prompt_chars(agent_alias);
+        let eff_max_tool_result_chars = config.effective_max_tool_result_chars(agent_alias);
+        let eff_tool_call_dedup_exempt = config.effective_tool_call_dedup_exempt(agent_alias);
         // ── Wire up agnostic subsystems ──────────────────────────────
         let base_observer = observability::create_observer(&config.observability);
         let observer: Arc<dyn Observer> = Arc::from(base_observer);
@@ -3383,7 +3393,7 @@ pub async fn run(
         ));
         }
         retain_registered_tool_descriptions(&mut tool_descs, &tools_registry);
-        let bootstrap_max_chars = if agent.compact_context {
+        let bootstrap_max_chars = if eff_compact_context {
             Some(6000)
         } else {
             None
@@ -3407,8 +3417,8 @@ pub async fn run(
                 Some(&risk_profile),
                 native_tools,
                 config.skills.prompt_injection_mode,
-                agent.compact_context,
-                agent.max_system_prompt_chars,
+                eff_compact_context,
+                eff_max_system_prompt_chars,
             );
 
         // Append structured tool-use instructions with schemas (only for non-native model_providers)
@@ -3542,7 +3552,7 @@ pub async fn run(
                 !interactive,
             )
             .await;
-            let rag_limit = if agent.compact_context { 2 } else { 5 };
+            let rag_limit = if eff_compact_context { 2 } else { 5 };
             let hw_context = hardware_rag
                 .as_ref()
                 .map(|r| build_hardware_context(r, &effective_msg, &board_names, rag_limit))
@@ -3594,18 +3604,18 @@ pub async fn run(
                             channel_name,
                             None,
                             &config.multimodal,
-                            agent.max_tool_iterations,
+                            eff_max_tool_iterations,
                             None,
                             None,
                             None,
                             &excluded_tools,
-                            &agent.tool_call_dedup_exempt,
+                            &eff_tool_call_dedup_exempt,
                             activated_handle.as_ref(),
                             Some(model_switch_callback.clone()),
                             &config.pacing,
                             agent.strict_tool_parsing,
-                            agent.max_tool_result_chars,
-                            agent.max_context_tokens,
+                            eff_max_tool_result_chars,
+                            eff_max_context_tokens,
                             None, // shared_budget
                             None, // channel: CLI mode — uses prompt_cli
                             None, // receipt_generator
@@ -3901,7 +3911,7 @@ pub async fn run(
                     false,
                 )
                 .await;
-                let rag_limit = if agent.compact_context { 2 } else { 5 };
+                let rag_limit = if eff_compact_context { 2 } else { 5 };
                 let hw_context = hardware_rag
                     .as_ref()
                     .map(|r| build_hardware_context(r, &effective_input, &board_names, rag_limit))
@@ -3979,18 +3989,18 @@ pub async fn run(
                                 channel_name,
                                 None,
                                 &config.multimodal,
-                                agent.max_tool_iterations,
+                                eff_max_tool_iterations,
                                 Some(cancel_token.clone()),
                                 Some(delta_tx.clone()),
                                 None,
                                 &excluded_tools,
-                                &agent.tool_call_dedup_exempt,
+                                &eff_tool_call_dedup_exempt,
                                 activated_handle.as_ref(),
                                 Some(model_switch_callback.clone()),
                                 &config.pacing,
                                 agent.strict_tool_parsing,
-                                agent.max_tool_result_chars,
-                                agent.max_context_tokens,
+                                eff_max_tool_result_chars,
+                                eff_max_context_tokens,
                                 None, // shared_budget
                                 None, // channel: interactive CLI — uses prompt_cli
                                 None, // receipt_generator
@@ -4058,7 +4068,7 @@ pub async fn run(
                                 let mut compressor =
                                     crate::agent::context_compressor::ContextCompressor::new(
                                         agent.context_compression.clone(),
-                                        agent.max_context_tokens,
+                                        eff_max_context_tokens,
                                     )
                                     .with_memory(mem.clone());
                                 let error_msg = format!("{e}");
@@ -4128,7 +4138,7 @@ pub async fn run(
                 {
                     let compressor = crate::agent::context_compressor::ContextCompressor::new(
                         agent.context_compression.clone(),
-                        agent.max_context_tokens,
+                        eff_max_context_tokens,
                     )
                     .with_memory(mem.clone());
                     match compressor
@@ -4155,13 +4165,13 @@ pub async fn run(
                                 .with_attrs(::serde_json::json!({"error": format!("{}", e)})),
                                 "Context compression failed, falling back to history trim"
                             );
-                            trim_history(&mut history, agent.max_history_messages / 2);
+                            trim_history(&mut history, eff_max_history_messages / 2);
                         }
                     }
                 }
 
                 // Hard cap as a safety net.
-                trim_history(&mut history, agent.max_history_messages);
+                trim_history(&mut history, eff_max_history_messages);
 
                 // Restore base system prompt (remove per-turn thinking prefix).
                 if thinking_params.system_prompt_prefix.is_some()
@@ -4247,6 +4257,17 @@ pub async fn process_message(
         let agent_alias: &str = __zc_alias.as_str();
         let message: &str = __zc_message.as_str();
         let session_id: Option<&str> = __zc_session_id.as_deref();
+
+        // ── Effective per-agent runtime tunables ──────────────────────
+        // Profile values (when set) override the agent's inline fields.
+        // See `Config::effective_*` helpers for precedence rules.
+        let eff_max_tool_iterations = config.effective_max_tool_iterations(agent_alias);
+        let _eff_max_history_messages = config.effective_max_history_messages(agent_alias);
+        let _eff_max_context_tokens = config.effective_max_context_tokens(agent_alias);
+        let eff_compact_context = config.effective_compact_context(agent_alias);
+        let eff_max_system_prompt_chars = config.effective_max_system_prompt_chars(agent_alias);
+        let _eff_max_tool_result_chars = config.effective_max_tool_result_chars(agent_alias);
+        let eff_tool_call_dedup_exempt = config.effective_tool_call_dedup_exempt(agent_alias);
 
         let observer: Arc<dyn Observer> =
             Arc::from(observability::create_observer(&config.observability));
@@ -4551,7 +4572,7 @@ pub async fn process_message(
             tools_registry.iter().map(|tool| tool.name()).collect();
         tool_descs.retain(|(name, _)| effective_tool_names.contains(name));
 
-        let bootstrap_max_chars = if agent.compact_context {
+        let bootstrap_max_chars = if eff_compact_context {
             Some(6000)
         } else {
             None
@@ -4575,8 +4596,8 @@ pub async fn process_message(
                 Some(&risk_profile),
                 native_tools,
                 config.skills.prompt_injection_mode,
-                agent.compact_context,
-                agent.max_system_prompt_chars,
+                eff_compact_context,
+                eff_max_system_prompt_chars,
             );
         if expose_text_tool_protocol {
             system_prompt.push_str(&build_tool_instructions_for_names(
@@ -4644,7 +4665,7 @@ pub async fn process_message(
             false,
         )
         .await;
-        let rag_limit = if agent.compact_context { 2 } else { 5 };
+        let rag_limit = if eff_compact_context { 2 } else { 5 };
         let hw_context = hardware_rag
             .as_ref()
             .map(|r| build_hardware_context(r, effective_msg_ref, &board_names, rag_limit))
@@ -4685,10 +4706,10 @@ pub async fn process_message(
             "daemon",
             None,
             &config.multimodal,
-            agent.max_tool_iterations,
+            eff_max_tool_iterations,
             Some(&approval_manager),
             &excluded_tools,
-            &agent.tool_call_dedup_exempt,
+            &eff_tool_call_dedup_exempt,
             activated_handle_pm.as_ref(),
             None,
             agent.strict_tool_parsing,

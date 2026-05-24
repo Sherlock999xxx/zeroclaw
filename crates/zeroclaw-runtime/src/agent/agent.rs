@@ -989,7 +989,11 @@ impl Agent {
                 config.memory.min_relevance_score,
             )))
             .prompt_builder(SystemPromptBuilder::with_defaults())
-            .config(agent_cfg.clone())
+            .config(
+                config
+                    .resolved_agent_config(agent_alias)
+                    .unwrap_or_else(|| agent_cfg.clone()),
+            )
             .multimodal_config(config.multimodal.clone())
             .model_name(model_name)
             .model_provider_name(provider_name.to_string())

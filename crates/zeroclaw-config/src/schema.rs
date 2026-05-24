@@ -3069,6 +3069,212 @@ impl Config {
         self.runtime_profiles.get(profile_alias)
     }
 
+    // ── Effective per-agent runtime tunables ──────────────────────────
+    //
+    // Precedence: `[runtime_profiles.<profile>].<field>` (when explicitly
+    // set / non-sentinel) wins over `[agents.<alias>].<field>`. This
+    // matches the documented "None inherits" semantics on
+    // `RuntimeProfileConfig` and the precedence that
+    // `crates/zeroclaw-runtime/src/tools/delegate.rs` already applies for
+    // subagent dispatch. The agent inline field remains the fallback so
+    // configs that only set the agent value keep working unchanged.
+
+    /// Effective `max_tool_iterations` for the main agent loop.
+    /// Profile value wins when > 0; otherwise the agent value (default 10).
+    /// Falls back to 10 if both are 0/missing.
+    #[must_use]
+    pub fn effective_max_tool_iterations(&self, agent_alias: &str) -> usize {
+        let profile = self
+            .runtime_profile_for_agent(agent_alias)
+            .map(|p| p.max_tool_iterations)
+            .filter(|&v| v > 0);
+        if let Some(v) = profile {
+            return v;
+        }
+        let agent = self
+            .agents
+            .get(agent_alias)
+            .map(|a| a.max_tool_iterations)
+            .filter(|&v| v > 0);
+        agent.unwrap_or(10)
+    }
+
+    /// Effective `max_history_messages`. Profile `Some` wins over agent field.
+    #[must_use]
+    pub fn effective_max_history_messages(&self, agent_alias: &str) -> usize {
+        if let Some(v) = self
+            .runtime_profile_for_agent(agent_alias)
+            .and_then(|p| p.max_history_messages)
+        {
+            return v;
+        }
+        self.agents
+            .get(agent_alias)
+            .map_or(50, |a| a.max_history_messages)
+    }
+
+    /// Effective `max_context_tokens`. Profile `Some` wins over agent field.
+    #[must_use]
+    pub fn effective_max_context_tokens(&self, agent_alias: &str) -> usize {
+        if let Some(v) = self
+            .runtime_profile_for_agent(agent_alias)
+            .and_then(|p| p.max_context_tokens)
+        {
+            return v;
+        }
+        self.agents
+            .get(agent_alias)
+            .map_or(32_000, |a| a.max_context_tokens)
+    }
+
+    /// Effective `compact_context`. Profile `Some` wins over agent field.
+    #[must_use]
+    pub fn effective_compact_context(&self, agent_alias: &str) -> bool {
+        if let Some(v) = self
+            .runtime_profile_for_agent(agent_alias)
+            .and_then(|p| p.compact_context)
+        {
+            return v;
+        }
+        self.agents
+            .get(agent_alias)
+            .map_or(default_agent_compact_context(), |a| a.compact_context)
+    }
+
+    /// Effective `parallel_tools`. Profile `Some` wins over agent field.
+    #[must_use]
+    pub fn effective_parallel_tools(&self, agent_alias: &str) -> bool {
+        if let Some(v) = self
+            .runtime_profile_for_agent(agent_alias)
+            .and_then(|p| p.parallel_tools)
+        {
+            return v;
+        }
+        self.agents
+            .get(agent_alias)
+            .map_or(false, |a| a.parallel_tools)
+    }
+
+    /// Effective `tool_dispatcher`. Profile `Some` (non-empty) wins over agent field.
+    #[must_use]
+    pub fn effective_tool_dispatcher(&self, agent_alias: &str) -> String {
+        if let Some(v) = self
+            .runtime_profile_for_agent(agent_alias)
+            .and_then(|p| p.tool_dispatcher.as_ref())
+            .filter(|s| !s.trim().is_empty())
+        {
+            return v.clone();
+        }
+        self.agents
+            .get(agent_alias)
+            .map_or_else(default_agent_tool_dispatcher, |a| a.tool_dispatcher.clone())
+    }
+
+    /// Effective `tool_call_dedup_exempt`. Profile entries are appended to
+    /// the agent's list (additive — both are allowlists), deduplicated.
+    #[must_use]
+    pub fn effective_tool_call_dedup_exempt(&self, agent_alias: &str) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .agents
+            .get(agent_alias)
+            .map(|a| a.tool_call_dedup_exempt.clone())
+            .unwrap_or_default();
+        if let Some(profile) = self.runtime_profile_for_agent(agent_alias) {
+            for entry in &profile.tool_call_dedup_exempt {
+                if !out.iter().any(|existing| existing == entry) {
+                    out.push(entry.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Effective `max_system_prompt_chars`. Profile `Some` wins over agent field.
+    #[must_use]
+    pub fn effective_max_system_prompt_chars(&self, agent_alias: &str) -> usize {
+        if let Some(v) = self
+            .runtime_profile_for_agent(agent_alias)
+            .and_then(|p| p.max_system_prompt_chars)
+        {
+            return v;
+        }
+        self.agents
+            .get(agent_alias)
+            .map_or_else(default_max_system_prompt_chars, |a| a.max_system_prompt_chars)
+    }
+
+    /// Effective `context_aware_tools`. Profile `Some` wins over agent field.
+    #[must_use]
+    pub fn effective_context_aware_tools(&self, agent_alias: &str) -> bool {
+        if let Some(v) = self
+            .runtime_profile_for_agent(agent_alias)
+            .and_then(|p| p.context_aware_tools)
+        {
+            return v;
+        }
+        self.agents
+            .get(agent_alias)
+            .map_or(false, |a| a.context_aware_tools)
+    }
+
+    /// Effective `max_tool_result_chars`. Profile `Some` wins over agent field.
+    #[must_use]
+    pub fn effective_max_tool_result_chars(&self, agent_alias: &str) -> usize {
+        if let Some(v) = self
+            .runtime_profile_for_agent(agent_alias)
+            .and_then(|p| p.max_tool_result_chars)
+        {
+            return v;
+        }
+        self.agents
+            .get(agent_alias)
+            .map_or_else(default_max_tool_result_chars, |a| a.max_tool_result_chars)
+    }
+
+    /// Effective `keep_tool_context_turns`. Profile `Some` wins over agent field.
+    #[must_use]
+    pub fn effective_keep_tool_context_turns(&self, agent_alias: &str) -> usize {
+        if let Some(v) = self
+            .runtime_profile_for_agent(agent_alias)
+            .and_then(|p| p.keep_tool_context_turns)
+        {
+            return v;
+        }
+        self.agents
+            .get(agent_alias)
+            .map_or_else(default_keep_tool_context_turns, |a| a.keep_tool_context_turns)
+    }
+
+    /// Return a clone of the named agent's `AliasedAgentConfig` with all
+    /// runtime-profile overrides baked in. Use this when an `Agent` (or
+    /// any other struct) needs to own a self-contained, already-resolved
+    /// view of the agent's runtime knobs without holding a reference to
+    /// the full `Config`.
+    ///
+    /// Returns `None` when `agent_alias` is not present in `agents`.
+    ///
+    /// Semantics: every field touched here mirrors the matching
+    /// `effective_*` helper above. If you add a new runtime_profile knob,
+    /// add it both to an `effective_*` helper *and* to this function so
+    /// downstream consumers see consistent values regardless of which
+    /// surface they read from.
+    #[must_use]
+    pub fn resolved_agent_config(&self, agent_alias: &str) -> Option<AliasedAgentConfig> {
+        let mut out = self.agents.get(agent_alias)?.clone();
+        out.max_tool_iterations = self.effective_max_tool_iterations(agent_alias);
+        out.max_history_messages = self.effective_max_history_messages(agent_alias);
+        out.max_context_tokens = self.effective_max_context_tokens(agent_alias);
+        out.compact_context = self.effective_compact_context(agent_alias);
+        out.parallel_tools = self.effective_parallel_tools(agent_alias);
+        out.tool_dispatcher = self.effective_tool_dispatcher(agent_alias);
+        out.tool_call_dedup_exempt = self.effective_tool_call_dedup_exempt(agent_alias);
+        out.max_system_prompt_chars = self.effective_max_system_prompt_chars(agent_alias);
+        out.context_aware_tools = self.effective_context_aware_tools(agent_alias);
+        out.max_tool_result_chars = self.effective_max_tool_result_chars(agent_alias);
+        out.keep_tool_context_turns = self.effective_keep_tool_context_turns(agent_alias);
+        Some(out)
+    }
+
     /// Resolve an agent's `model_provider` reference (`"<type>.<alias>"`) to
     /// its concrete `ModelProviderConfig` entry. Returns `None` when the
     /// agent doesn't exist, the reference is unparseable, or the
