@@ -7,6 +7,8 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use directories::UserDirs;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     Frame,
@@ -508,9 +510,15 @@ impl InputBarState {
 
             // ── Ctrl+A: open file explorer ───────────────────
             KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let start = std::env::var("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|_| PathBuf::from("/"));
+                let start = UserDirs::new()
+                    .map(|u| u.home_dir().to_path_buf())
+                    .unwrap_or_else(|| {
+                        if cfg!(windows) {
+                            PathBuf::from("C:\\")
+                        } else {
+                            PathBuf::from("/")
+                        }
+                    });
                 self.file_explorer = Some(FileExplorerState::new(start));
                 InputBarAction::Consumed
             }
@@ -729,9 +737,15 @@ impl InputBarState {
             match parse_slash_command(&msg) {
                 SlashCommand::Attach(path) => {
                     if path.is_empty() {
-                        let start = std::env::var("HOME")
-                            .map(PathBuf::from)
-                            .unwrap_or_else(|_| PathBuf::from("/"));
+                        let start = UserDirs::new()
+                            .map(|u| u.home_dir().to_path_buf())
+                            .unwrap_or_else(|| {
+                                if cfg!(windows) {
+                                    PathBuf::from("C:\\")
+                                } else {
+                                    PathBuf::from("/")
+                                }
+                            });
                         self.file_explorer = Some(FileExplorerState::new(start));
                         InputBarAction::Consumed
                     } else {

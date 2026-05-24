@@ -13653,6 +13653,7 @@ dependencies = [
  "async-trait",
  "clap",
  "crossterm",
+ "directories",
  "futures-util",
  "libc",
  "mime_guess",
