@@ -1469,7 +1469,7 @@ impl<'a> Dashboard<'a> {
 
     async fn handle_normal_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => return true,
+            KeyCode::Char('q') => return true,
             KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => self.next_tab(),
             KeyCode::BackTab | KeyCode::Char('h') | KeyCode::Left => self.prev_tab(),
             KeyCode::Char('1') => self.tab = Tab::Overview,

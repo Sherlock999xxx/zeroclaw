@@ -245,13 +245,13 @@ impl<'a> Chat<'a> {
                             self.start_session(&alias).await;
                         }
                     }
-                    KeyCode::Char('q') | KeyCode::Esc => return true,
+                    KeyCode::Char('q') => return true,
                     _ => {}
                 }
                 return false;
             }
             ChatPhase::Error(_) => {
-                return matches!(key.code, KeyCode::Char('q') | KeyCode::Esc);
+                return matches!(key.code, KeyCode::Char('q'));
             }
             ChatPhase::Active(_) => { /* handled below to avoid borrow conflict */ }
         }
@@ -442,9 +442,8 @@ impl<'a> Chat<'a> {
                 } else if state.turn_in_flight {
                     let _ = self.rpc.session_cancel(&state.session_id).await;
                     state.turn_in_flight = false;
-                } else {
-                    return true;
                 }
+                // Esc never quits the TUI — use q or Ctrl+C for that.
             }
             KeyCode::Enter if state.pending_approval().is_some() => {
                 if let Some(pa) = state.take_pending_approval() {
@@ -668,11 +667,11 @@ impl<'a> Chat<'a> {
                     vec![
                         ("\u{2191}/\u{2193}", "Navigate"),
                         ("Enter", "Select agent"),
-                        ("Esc", "Quit"),
+                        ("q", "Quit"),
                     ]
                 }
             }
-            ChatPhase::Error(_) => vec![("Esc", "Quit")],
+            ChatPhase::Error(_) => vec![("q", "Quit")],
             ChatPhase::Active(state) => {
                 match &state.session_overlay {
                     SessionOverlay::List { .. } => {
