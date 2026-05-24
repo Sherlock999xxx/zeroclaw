@@ -3543,15 +3543,19 @@ pub async fn run(
             }
 
             // Inject memory + hardware RAG context into user message.
-            // For non-interactive runs (cron, daemon heartbeat), exclude
-            // Conversation-category memories so chat history does not leak
-            // into autonomous executions. / #5456.
+            // Exclude Conversation-category memories when:
+            //   - non-interactive (cron, daemon heartbeat): chat history must
+            //     not leak into autonomous executions / #5456, OR
+            //   - no session scope is available (memory_session_id is None):
+            //     without a session filter, Conversation entries from other
+            //     channels (Matrix, Discord, …) would bleed into this session.
+            let exclude_conv = !interactive || memory_session_id.is_none();
             let mem_context = build_context(
                 mem.as_ref(),
                 &effective_msg,
                 config.memory.min_relevance_score,
                 memory_session_id.as_deref(),
-                !interactive,
+                exclude_conv,
             )
             .await;
             let rag_limit = if eff_compact_context { 2 } else { 5 };
@@ -3903,14 +3907,15 @@ pub async fn run(
                 }
 
                 // Inject memory + hardware RAG context into user message.
-                // Interactive REPL: keep Conversation memories (user is actively
-                // chatting in this session and may want their own history recalled).
+                // Keep Conversation memories only when a session scope is
+                // available; without one, cross-channel entries (Matrix,
+                // Discord, …) would bleed into this interactive session.
                 let mem_context = build_context(
                     mem.as_ref(),
                     &effective_input,
                     config.memory.min_relevance_score,
                     memory_session_id.as_deref(),
-                    false,
+                    memory_session_id.is_none(),
                 )
                 .await;
                 let rag_limit = if eff_compact_context { 2 } else { 5 };
