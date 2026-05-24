@@ -145,6 +145,11 @@ rpc_type! {
         pub cwd: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub session_id: Option<String>,
+        /// Optional TUI identity token. When present the daemon looks up the
+        /// TUI's captured shell environment in `TuiRegistry` and passes it to
+        /// the agent so that tools inherit the user's real `PATH` etc.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub tui_id: Option<String>,
     }
 }
 

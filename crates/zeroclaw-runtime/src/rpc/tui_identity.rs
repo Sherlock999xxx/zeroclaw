@@ -149,6 +149,16 @@ impl TuiRegistry {
             .cloned()
             .collect()
     }
+
+    /// Return a clone of the environment captured from the TUI identified by
+    /// `tui_id`, or `None` if the TUI is not currently connected.
+    pub fn get_env(&self, tui_id: &str) -> Option<HashMap<String, String>> {
+        self.connected
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(tui_id)
+            .map(|e| e.env.clone())
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────
@@ -232,6 +242,7 @@ mod tests {
             connected_at: Utc::now(),
             peer_label: "test".to_string(),
             transport: "unix".to_string(),
+            env: HashMap::new(),
         });
         assert_eq!(registry.list().len(), 1);
         assert_eq!(registry.list()[0].tui_id, "tui_aabb0011");
@@ -255,6 +266,7 @@ mod tests {
             connected_at: Utc::now(),
             peer_label: "test".to_string(),
             transport: "unix".to_string(),
+            env: HashMap::new(),
         });
         // generate_unique should return something different
         let id = registry.generate_unique_tui_id();
@@ -341,5 +353,48 @@ mod tests {
             cloned.env.get("CLONED_VAR").map(|s| s.as_str()),
             Some("cloned_value")
         );
+    }
+
+    #[test]
+    fn get_env_returns_env_for_connected_tui() {
+        let registry = TuiRegistry::new_unsigned();
+        let mut env = HashMap::new();
+        env.insert("PATH".to_string(), "/usr/bin:/usr/local/bin".to_string());
+        env.insert("SSH_AUTH_SOCK".to_string(), "/tmp/ssh.sock".to_string());
+
+        registry.register(TuiEntry {
+            tui_id: "tui_getenv01".to_string(),
+            connected_at: Utc::now(),
+            peer_label: "test".to_string(),
+            transport: "unix".to_string(),
+            env,
+        });
+
+        let got = registry.get_env("tui_getenv01").expect("should find env");
+        assert_eq!(got.get("PATH").map(|s| s.as_str()), Some("/usr/bin:/usr/local/bin"));
+        assert_eq!(got.get("SSH_AUTH_SOCK").map(|s| s.as_str()), Some("/tmp/ssh.sock"));
+    }
+
+    #[test]
+    fn get_env_returns_none_for_unknown_tui() {
+        let registry = TuiRegistry::new_unsigned();
+        assert!(registry.get_env("tui_nothere").is_none());
+    }
+
+    #[test]
+    fn get_env_returns_none_after_unregister() {
+        let registry = TuiRegistry::new_unsigned();
+        let mut env = HashMap::new();
+        env.insert("SOME_VAR".to_string(), "val".to_string());
+        registry.register(TuiEntry {
+            tui_id: "tui_gone0001".to_string(),
+            connected_at: Utc::now(),
+            peer_label: "test".to_string(),
+            transport: "unix".to_string(),
+            env,
+        });
+        assert!(registry.get_env("tui_gone0001").is_some());
+        registry.unregister("tui_gone0001");
+        assert!(registry.get_env("tui_gone0001").is_none());
     }
 }

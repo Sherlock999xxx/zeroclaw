@@ -656,6 +656,7 @@ impl Agent {
             initialize_mcp,
             false,
             false,
+            None,
         )
         .await
     }
@@ -680,6 +681,31 @@ impl Agent {
             initialize_mcp,
             true,
             exclude_memory,
+            None,
+        )
+        .await
+    }
+
+    /// Like [`from_config_with_session_cwd_and_mcp_backchannel`] but also
+    /// injects the TUI's captured shell environment so that tools like
+    /// `ShellTool` inherit the user's real `PATH`, `SSH_AUTH_SOCK`, etc.
+    /// rather than the daemon's stripped-down process environment.
+    pub async fn from_config_with_tui_env(
+        config: &Config,
+        agent_alias: &str,
+        session_cwd: Option<&Path>,
+        initialize_mcp: bool,
+        exclude_memory: bool,
+        tui_env: Option<std::collections::HashMap<String, String>>,
+    ) -> Result<Self> {
+        Self::from_config_with_session_cwd_and_mcp_approval_mode(
+            config,
+            agent_alias,
+            session_cwd,
+            initialize_mcp,
+            true,
+            exclude_memory,
+            tui_env,
         )
         .await
     }
@@ -691,6 +717,7 @@ impl Agent {
         initialize_mcp: bool,
         approval_backchannel: bool,
         exclude_memory: bool,
+        tui_env: Option<std::collections::HashMap<String, String>>,
     ) -> Result<Self> {
         let agent_cfg = config
             .agent(agent_alias)
@@ -809,7 +836,7 @@ impl Agent {
             config,
             None,
             false,
-            None,
+            tui_env,
         );
 
         // ── Wire MCP tools (non-fatal) ─────────────────────────────

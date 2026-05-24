@@ -310,6 +310,14 @@ impl RpcClient {
         if let Some(sig) = prev_tui_sig {
             init_params["tui_sig"] = serde_json::Value::String(sig.to_string());
         }
+        // Forward the TUI's full shell environment to the daemon so that
+        // subprocesses spawned by agents inherit the user's real env
+        // (PATH, SSH_AUTH_SOCK, credential helpers, etc.).  This is safe
+        // on a local Unix-socket connection because the daemon is on the
+        // same machine and the socket paths / env values are meaningful.
+        let env_map: std::collections::HashMap<String, String> =
+            std::env::vars().collect();
+        init_params["env"] = serde_json::to_value(env_map).unwrap_or_default();
         let resp = rpc
             .request(method::INITIALIZE, init_params)
             .await
@@ -452,6 +460,13 @@ impl RpcClient {
         if let Some(sig) = prev_tui_sig {
             init_params["tui_sig"] = serde_json::Value::String(sig.to_string());
         }
+        // NOTE: We intentionally do NOT forward the TUI's environment here.
+        // In a WSS connection the daemon is on a remote machine, so env values
+        // like SSH_AUTH_SOCK, VIRTUAL_ENV, or any path-based socket/credential
+        // would refer to paths that don't exist on the remote host.  Forwarding
+        // them would be misleading at best and silently broken at worst.
+        // Env pass-through is only meaningful on a local Unix-socket connection
+        // (see `connect` above), where the TUI and daemon share the same filesystem.
         let resp = rpc
             .request(method::INITIALIZE, init_params)
             .await
@@ -785,9 +800,10 @@ impl RpcClient {
         cwd: Option<&str>,
         session_id: Option<&str>,
     ) -> Result<SessionNewResult> {
+        let tui_id = self.tui_id.as_deref();
         self.call(
             method::SESSION_NEW,
-            serde_json::json!({ "agent_alias": agent_alias, "cwd": cwd, "session_id": session_id }),
+            serde_json::json!({ "agent_alias": agent_alias, "cwd": cwd, "session_id": session_id, "tui_id": tui_id }),
         )
         .await
     }

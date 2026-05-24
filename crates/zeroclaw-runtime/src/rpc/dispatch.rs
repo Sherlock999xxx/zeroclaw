@@ -583,12 +583,19 @@ impl RpcDispatcher {
 
         let config = self.ctx.config.read().clone();
         let cwd_path = req.cwd.as_deref().map(std::path::Path::new);
-        let agent = crate::agent::agent::Agent::from_config_with_session_cwd_and_mcp_backchannel(
+        // If the client passed a tui_id, look up the TUI's captured shell env
+        // so that tools inherit the user's real PATH, SSH_AUTH_SOCK, etc.
+        let tui_env = req
+            .tui_id
+            .as_deref()
+            .and_then(|id| self.ctx.tui_registry.get_env(id));
+        let agent = crate::agent::agent::Agent::from_config_with_tui_env(
             &config,
             &req.agent_alias,
             cwd_path,
             false,
             false,
+            tui_env,
         )
         .await
         .map_err(|e| rpc_err(INTERNAL_ERROR, format!("Failed to create agent: {e}")))?;
