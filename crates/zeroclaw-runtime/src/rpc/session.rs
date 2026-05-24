@@ -156,6 +156,18 @@ impl SessionStore {
             .map(|s| s.workspace_dir.clone())
     }
 
+    /// Get the agent alias bound to a session, if known. Used by the
+    /// dispatcher to route uploads to the agent's own workspace dir
+    /// rather than to the user's session cwd (which is often a git
+    /// repo we shouldn't be writing into).
+    pub async fn get_agent_alias(&self, session_id: &str) -> Option<String> {
+        self.sessions
+            .lock()
+            .await
+            .get(session_id)
+            .map(|s| s.agent_alias.clone())
+    }
+
     pub async fn seed_history(&self, id: &str, msgs: &[zeroclaw_api::model_provider::ChatMessage]) {
         if let Some(s) = self.sessions.lock().await.get(id) {
             s.agent.lock().await.seed_history(msgs);

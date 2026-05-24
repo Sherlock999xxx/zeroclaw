@@ -665,17 +665,30 @@ impl RpcDispatcher {
         if !req.attachments.is_empty() {
             use super::attachments::process_file_entry;
 
-            let workspace_dir = self
+            // Uploads go to the AGENT's workspace dir, not the session cwd.
+            // The session cwd is often the user's project/git working tree
+            // (e.g. when the TUI is launched from inside a repo), and we
+            // don't want to splatter binary blobs into their source tree.
+            // The per-agent workspace (`<config_dir>/agents/<alias>/workspace`)
+            // is the canonical home for agent-owned files.
+            let agent_alias = self
                 .ctx
                 .sessions
-                .get_workspace_dir(sid)
+                .get_agent_alias(sid)
                 .await
                 .ok_or_else(|| rpc_err(SESSION_NOT_FOUND, "Session not found"))?;
+            let upload_root = self
+                .ctx
+                .config
+                .read()
+                .agent_workspace_dir(&agent_alias)
+                .to_string_lossy()
+                .to_string();
             let is_wss = self.peer_label.starts_with("wss:");
             prompt.push('\n');
             for entry in &req.attachments {
                 let result =
-                    process_file_entry(entry, sid, &workspace_dir, is_wss, &self.ctx.sessions)
+                    process_file_entry(entry, sid, &upload_root, is_wss, &self.ctx.sessions)
                         .await?;
                 prompt.push_str(&result.marker);
                 prompt.push('\n');
@@ -1901,12 +1914,21 @@ impl RpcDispatcher {
         let req: FileAttachParams = parse_params(params)?;
         let sid = &req.session_id;
 
-        let workspace_dir = self
+        // Uploads land in the per-agent workspace, not the session cwd.
+        // See `handle_send_message` for the rationale.
+        let agent_alias = self
             .ctx
             .sessions
-            .get_workspace_dir(sid)
+            .get_agent_alias(sid)
             .await
             .ok_or_else(|| rpc_err(SESSION_NOT_FOUND, "Session not found"))?;
+        let upload_root = self
+            .ctx
+            .config
+            .read()
+            .agent_workspace_dir(&agent_alias)
+            .to_string_lossy()
+            .to_string();
 
         let is_wss = self.peer_label.starts_with("wss:");
 
@@ -1915,7 +1937,7 @@ impl RpcDispatcher {
 
         for entry in &req.files {
             let result =
-                process_file_entry(entry, sid, &workspace_dir, is_wss, &self.ctx.sessions).await?;
+                process_file_entry(entry, sid, &upload_root, is_wss, &self.ctx.sessions).await?;
             total_bytes += result.size_bytes;
             if total_bytes > MAX_REQUEST_BYTES {
                 return Err(rpc_err(

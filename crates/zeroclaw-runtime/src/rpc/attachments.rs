@@ -6,6 +6,10 @@
 //! (inline attachments).
 
 use super::session::SessionStore;
+// FileSource is only referenced from the `#[cfg(test)] mod tests` below,
+// which re-imports via `use super::*;`. Quiet the non-test "unused" warning
+// without splitting the import into two cfg-gated lines.
+#[cfg_attr(not(test), allow(unused_imports))]
 use super::types::{FileEntry, FileEntryResult, FileSource};
 use zeroclaw_api::jsonrpc::JsonRpcError;
 use zeroclaw_api::jsonrpc::error_codes::*;
@@ -24,12 +28,17 @@ fn rpc_err(code: i32, msg: impl Into<String>) -> JsonRpcError {
     }
 }
 
-/// Process a single [`FileEntry`] — resolve bytes, dedup, write to workspace,
-/// and return a [`FileEntryResult`].
+/// Process a single [`FileEntry`] — resolve bytes, dedup, write to the
+/// upload root, and return a [`FileEntryResult`].
+///
+/// `upload_root` is the directory under which a `uploads/` subdir is
+/// created and bytes are written. Callers should pass the per-agent
+/// workspace dir, NOT the session cwd — uploads belong to the agent,
+/// not to whatever directory the user happened to launch the TUI from.
 pub async fn process_file_entry(
     entry: &FileEntry,
     session_id: &str,
-    workspace_dir: &str,
+    upload_root: &str,
     is_wss: bool,
     sessions: &SessionStore,
 ) -> Result<FileEntryResult, JsonRpcError> {
@@ -126,7 +135,7 @@ pub async fn process_file_entry(
     } else {
         format!("{}.{ext}", &hex[..16])
     };
-    let upload_dir = std::path::Path::new(workspace_dir).join("uploads");
+    let upload_dir = std::path::Path::new(upload_root).join("uploads");
     tokio::fs::create_dir_all(&upload_dir)
         .await
         .map_err(|e| rpc_err(INTERNAL_ERROR, format!("Cannot create upload dir: {e}")))?;
@@ -136,7 +145,7 @@ pub async fn process_file_entry(
         .map_err(|e| rpc_err(INTERNAL_ERROR, format!("Cannot write upload: {e}")))?;
 
     // Canonicalize so the marker always contains an absolute path —
-    // workspace_dir may be relative (e.g. ".") when no cwd was provided.
+    // upload_root may be relative (e.g. ".") when no path was provided.
     let canonical = tokio::fs::canonicalize(&dest)
         .await
         .unwrap_or_else(|_| dest.clone());
@@ -148,13 +157,27 @@ pub async fn process_file_entry(
     // as data URIs for vision models. Non-image files use a prose format
     // matching the channel attachment style (`[Document: name] path`) so the
     // LLM sees a readable path it can access with file-reading tools.
+    //
+    // Regardless of source (file pick vs clipboard paste) and regardless of
+    // transport (Unix path vs WSS base64), the canonical workspace path is
+    // ALWAYS a valid local file that the multimodal pipeline can load — the
+    // bytes were just written above. Emitting `[IMAGE:<workspace_path>]` for
+    // every source ensures vision models receive the actual image data.
+    //
+    // (A previous implementation emitted `[IMAGE from clipboard]` for the
+    // Clipboard source. That marker had no path, so the multimodal loader
+    // silently produced no inline image part and the model received text
+    // only — observed as the agent hallucinating about prior screenshots.)
+    //
+    // The `display_path` preference is the user's original path (file picks
+    // over Unix transport): the file lives at a stable location they chose,
+    // so referencing it directly is fine and avoids copying the path-string
+    // to the agent's view of the world. Clipboard pastes and WSS uploads
+    // both fall back to the workspace `/uploads/...` copy.
     let kind = attachment_kind(&mime_type);
     let display_path = original_path.as_deref().unwrap_or(&workspace_path);
     let marker = if kind == "IMAGE" {
-        match entry.source {
-            FileSource::Clipboard => format!("[IMAGE from clipboard]"),
-            FileSource::File => format!("[IMAGE:{display_path}]"),
-        }
+        format!("[IMAGE:{display_path}]")
     } else {
         // Non-image: prose format with workspace path so the agent can
         // read the file with its tools regardless of transport.
@@ -397,7 +420,20 @@ mod tests {
             .unwrap();
 
         assert!(r.ref_id.starts_with("sha256:"));
-        assert_eq!(r.marker, "[IMAGE from clipboard]");
+        // Clipboard images: marker must contain the workspace path so the
+        // multimodal pipeline can load and inline the image bytes. The
+        // previous `[IMAGE from clipboard]` marker had no path and silently
+        // produced text-only requests (model never saw the image).
+        assert!(
+            r.marker.starts_with("[IMAGE:") && r.marker.ends_with(']'),
+            "marker = {}",
+            r.marker
+        );
+        assert!(
+            r.marker.contains("/uploads/"),
+            "clipboard image marker should reference workspace uploads path: {}",
+            r.marker
+        );
         assert!(!r.deduplicated);
         assert_eq!(r.size_bytes, png_bytes.len() as u64);
         assert!(std::path::Path::new(&r.workspace_path).exists());
