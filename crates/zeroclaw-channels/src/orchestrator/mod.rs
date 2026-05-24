@@ -7124,6 +7124,7 @@ pub async fn start_channels(
             config.skills.prompt_injection_mode,
             agent.compact_context,
             agent.max_system_prompt_chars,
+            true,
         );
         if expose_text_tool_protocol {
             system_prompt.push_str(&build_tool_instructions_for_names(
@@ -12244,6 +12245,7 @@ BTC is currently around $65,000 based on latest tool output."#
             zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
             false,
             0,
+            false,
         );
         if expose_text_protocol {
             let tools_registry: Vec<Box<dyn Tool>> = vec![Box::new(MockPriceTool)];
@@ -12576,6 +12578,7 @@ BTC is currently around $65,000 based on latest tool output."#
             zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
             false,
             0,
+            false,
         );
 
         assert!(
@@ -12607,6 +12610,7 @@ BTC is currently around $65,000 based on latest tool output."#
             zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
             false,
             0,
+            false,
         );
 
         assert!(
