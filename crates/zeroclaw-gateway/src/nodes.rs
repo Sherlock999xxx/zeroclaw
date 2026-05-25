@@ -21,7 +21,6 @@ use axum::{
     },
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
-    routing::get,
 };
 use futures_util::{SinkExt, StreamExt};
 use parking_lot::RwLock;
