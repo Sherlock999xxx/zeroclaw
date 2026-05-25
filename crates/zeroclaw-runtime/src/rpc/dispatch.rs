@@ -2103,10 +2103,21 @@ fn notification_for_turn_event(
             arguments_summary: arguments_summary.clone(),
             timeout_secs: *timeout_secs,
         },
-        TurnEvent::Usage { input_tokens, .. } => SessionUpdateEvent::ContextUsage {
-            session_id: session_id.to_string(),
-            input_tokens: *input_tokens,
-            max_context_tokens,
+        TurnEvent::Usage { input_tokens, cached_input_tokens, .. } => {
+            // True context size = direct input tokens + prompt-cache reads.
+            // Both count against the context window; we must add them together
+            // so the TUI bar reflects the real usage.
+            let combined = match (*input_tokens, *cached_input_tokens) {
+                (Some(a), Some(b)) => Some(a.saturating_add(b)),
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(b),
+                (None, None) => None,
+            };
+            SessionUpdateEvent::ContextUsage {
+                session_id: session_id.to_string(),
+                input_tokens: combined,
+                max_context_tokens,
+            }
         },
     };
 
@@ -2223,6 +2234,7 @@ mod tests {
     fn usage_event_emits_context_usage_notification() {
         let event = TurnEvent::Usage {
             input_tokens: Some(100),
+            cached_input_tokens: None,
             output_tokens: Some(50),
             cost_usd: Some(0.01),
         };
@@ -2238,6 +2250,7 @@ mod tests {
     fn usage_event_without_input_tokens_still_emits() {
         let event = TurnEvent::Usage {
             input_tokens: None,
+            cached_input_tokens: None,
             output_tokens: Some(50),
             cost_usd: None,
         };
@@ -2246,6 +2259,40 @@ mod tests {
         let v = parse(&json);
         assert_eq!(v["params"]["type"], "context_usage");
         assert!(v["params"]["input_tokens"].is_null());
+    }
+
+    #[test]
+    fn usage_event_combines_cached_and_direct_input_tokens() {
+        // Anthropic sends input_tokens=5000 (non-cached) + cache_read_input_tokens=150000.
+        // The TUI bar must show 155000, not 5000.
+        let event = TurnEvent::Usage {
+            input_tokens: Some(5_000),
+            cached_input_tokens: Some(150_000),
+            output_tokens: Some(200),
+            cost_usd: None,
+        };
+        let json = notification_for_turn_event("s1", &event, Some(200_000)).unwrap();
+        let v = parse(&json);
+        assert_eq!(v["params"]["type"], "context_usage");
+        assert_eq!(
+            v["params"]["input_tokens"],
+            155_000,
+            "input_tokens must be direct + cached combined"
+        );
+    }
+
+    #[test]
+    fn usage_event_only_cached_tokens_still_emits_combined() {
+        // Edge case: provider reports only cached tokens (input_tokens = None).
+        let event = TurnEvent::Usage {
+            input_tokens: None,
+            cached_input_tokens: Some(80_000),
+            output_tokens: Some(100),
+            cost_usd: None,
+        };
+        let json = notification_for_turn_event("s1", &event, Some(100_000)).unwrap();
+        let v = parse(&json);
+        assert_eq!(v["params"]["input_tokens"], 80_000);
     }
 
     #[test]

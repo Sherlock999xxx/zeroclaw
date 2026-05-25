@@ -878,11 +878,16 @@ async fn process_chat_message(
                     let ws_msg = match event {
                         TurnEvent::Usage {
                             input_tokens,
+                            cached_input_tokens,
                             output_tokens,
                             cost_usd: _,
                         } => {
                             if let Some(it) = input_tokens {
                                 total_input_tokens = Some(total_input_tokens.unwrap_or(0) + it);
+                            }
+                            // Prompt-cache reads count against the context window.
+                            if let Some(ct) = cached_input_tokens {
+                                total_input_tokens = Some(total_input_tokens.unwrap_or(0) + ct);
                             }
                             if let Some(ot) = output_tokens {
                                 total_output_tokens = Some(total_output_tokens.unwrap_or(0) + ot);
