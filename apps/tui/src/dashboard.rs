@@ -1697,13 +1697,25 @@ impl<'a> Dashboard<'a> {
 impl crate::widgets::HelpContext for Dashboard<'_> {
     fn help_context(&self) -> crate::widgets::HelpNode {
         use crate::widgets::{HelpEntry as E, HelpNode};
+
+        // Global tab-switching always available.
+        let tab_nav = vec![
+            E::new(vec!["Tab", "l", "→"], "Next tab"),
+            E::new(vec!["Shift+Tab", "h", "←"], "Previous tab"),
+            E::key("1–7", "Jump to tab"),
+            E::key("r", "Refresh now"),
+            E::key("?", "This help"),
+        ];
+
         if self.search_active {
-            HelpNode::entries(vec![
+            return HelpNode::entries(vec![
                 E::key("Enter", "Apply search"),
                 E::key("Esc", "Cancel search"),
-            ])
-        } else if self.detail_open {
-            HelpNode::entries(vec![
+            ]);
+        }
+
+        if self.detail_open {
+            return HelpNode::entries(vec![
                 E::new(vec!["Esc", "Enter"], "Close detail"),
                 E::new(vec!["j", "k"], "Move list cursor"),
                 E::new(vec!["J", "K"], "Scroll detail"),
@@ -1711,22 +1723,26 @@ impl crate::widgets::HelpContext for Dashboard<'_> {
                 E::key("/", "Search"),
                 E::key("c", "Clear search"),
                 E::key("?", "This help"),
-            ])
-        } else {
-            HelpNode::entries(vec![
-                E::new(vec!["Tab", "l", "→"], "Next tab"),
-                E::new(vec!["Shift+Tab", "h", "←"], "Previous tab"),
-                E::key("1–7", "Jump to tab"),
-                E::new(vec!["j", "k", "↑↓"], "Move cursor"),
-                E::new(vec!["G", "End"], "Jump to bottom"),
-                E::new(vec!["g", "Home"], "Jump to top"),
-                E::key("Enter", "Open detail pane"),
-                E::key("/", "Search / filter"),
-                E::key("c", "Clear search"),
-                E::key("r", "Refresh now"),
-                E::key("?", "This help"),
-            ])
+            ]);
         }
+
+        // Per-tab bindings — only show what actually works on this tab.
+        let mut entries = tab_nav;
+        match self.tab {
+            Tab::Overview | Tab::Health | Tab::Cost => {
+                // Read-only display tabs — no list, no detail, no search.
+            }
+            Tab::Sessions | Tab::Agents | Tab::Memories | Tab::Cron => {
+                entries.push(E::spacer());
+                entries.push(E::new(vec!["j", "k", "↑↓"], "Move cursor"));
+                entries.push(E::new(vec!["G", "End"], "Jump to bottom"));
+                entries.push(E::new(vec!["g", "Home"], "Jump to top"));
+                entries.push(E::key("Enter", "Open detail pane"));
+                entries.push(E::key("/", "Search / filter"));
+                entries.push(E::key("c", "Clear search"));
+            }
+        }
+        HelpNode::entries(entries)
     }
 }
 
