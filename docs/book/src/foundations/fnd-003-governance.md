@@ -1,8 +1,9 @@
 # FND-003: Team Organization, Project Governance, and Contribution Pipeline
-### Starting v0.7.0 · Type: Governance · Rev. 4
+Starting v0.7.0 · Type: Governance · Rev. 5
 
-> **Canonical reference** · Ratified by the team · Rev. 4
-> Discussion thread and full revision history: [#5577](https://github.com/zeroclaw-labs/zeroclaw/issues/5577)
+> **Canonical reference** · Ratified by the team · Rev. 5
+> Original governance discussion: [#5577](https://github.com/zeroclaw-labs/zeroclaw/issues/5577)
+> Follow-up work-lane and label-governance policy: [#6808](https://github.com/zeroclaw-labs/zeroclaw/issues/6808)
 
 
 ---
@@ -22,6 +23,7 @@
 | 2 | 2026-04-09 | Added §6.4 Architectural Compliance: Human Review, AI Support; added Discussion Question on AI automation of architecture reviews |
 | 3 | 2026-05-24 | Added #6808 operational-label-policy pointers; current label behavior lives in maintainer docs |
 | 4 | 2026-05-24 | Added #6808 community-pickup and issue-risk/PR-risk operational pointers |
+| 5 | 2026-05-25 | Promoted #6808 feature-facing work-lane and label-governance policy into FND-003; clarified durable source boundaries, Discord-to-GitHub handoff, and where operational gate questions live |
 
 ---
 
@@ -30,7 +32,9 @@
 1. [The Coordination Problem](#1-the-coordination-problem)
 2. [The Three-Part System](#2-the-three-part-system)
 3. [GitHub Projects: The Work Pipeline](#3-github-projects-the-work-pipeline)
+   - [3.6 Work Lanes and State Ownership](#36-work-lanes-and-state-ownership)
 4. [GitHub Discussions: The Ideas Parking Lot](#4-github-discussions-the-ideas-parking-lot)
+   - [4.5 Discord-to-GitHub Handoff](#45-discord-to-github-handoff)
 5. [Team Tiers and Contribution Authority](#5-team-tiers-and-contribution-authority)
 6. [CODEOWNERS and Branch Protection](#6-codeowners-and-branch-protection)
    - [6.4 Architectural Compliance: Human Review, AI Support](#64-architectural-compliance-human-review-ai-support)
@@ -75,6 +79,21 @@ These are three distinct concerns. Conflating them — putting everything in one
 
 The key principle: **the Project board contains only work the team has committed to thinking about.** Ideas that have not been evaluated live in Discussions. Work that has been evaluated, accepted, and scoped lives in the Project. This distinction is what keeps the board useful.
 
+FND-003 is the durable governance source for work-lane and contribution-pipeline policy. RFC #6808 was the staging discussion for feature-facing work lanes, label governance, issue triage, and maintainer routing; after its policy slices are promoted, their durable rules live in this foundation document plus the maintainer operational pages linked below. Do not treat the RFC issue as a competing governance document after its policy has been promoted here.
+
+Operational details intentionally live close to the workflow that uses them:
+
+| Durable decision | Operational home |
+|---|---|
+| Project board purpose and stage gates | This document |
+| PR lanes and merge/review queue discipline | [Maintainer PR workflow](../maintainers/pr-workflow.md) |
+| Label definitions, ownership boundaries, and cleanup protocol | [Maintainer labels guide](../maintainers/labels.md) |
+| Reviewer intake, risk depth, issue triage, and queue hygiene | [Reviewer playbook](../maintainers/reviewer-playbook.md) |
+| Mechanical issue-triage procedure and stale pass details | [Maintainer skills guide](../maintainers/skills.md#issue-triage-workflow), [Reviewer playbook](../maintainers/reviewer-playbook.md#issue-triage), and the `github-issue-triage` skill protocol |
+| Contributor-facing filing and PR mechanics | Issue templates, PR template, and [How to contribute](../contributing/how-to.md) |
+| Contributor communication and Discord-to-GitHub handoff | [Communication](../contributing/communication.md) and §4.5 below |
+| RFC-shaped contribution routing before implementation | [Architecture and contribution map](../contributing/architecture-map.md) and [RFC process](../contributing/rfcs.md) |
+
 ---
 
 ## 3. GitHub Projects: The Work Pipeline
@@ -117,6 +136,16 @@ Every transition has a gate question. The question must be answered "yes" before
 | Any → Won't Do | Has the decision not to pursue been explained in the item's comments? | Core Team |
 
 **Why explicit gates matter for a student team:** Without gates, cards move because someone feels done, not because done has a definition. This is the single most common source of "done" work that is not actually done. The gates make the definition visible and shared.
+
+These gate questions are governance prompts, not another checklist to duplicate in every PR body or issue comment. The operational forms live in the artifacts that maintainers already touch:
+
+- issue templates collect the report, user value, reproduction, architecture impact, and risk hints needed for first triage;
+- the PR template collects scope boundary, validation evidence, security/privacy impact, compatibility, rollback, labels, and linked issues;
+- the maintainer PR workflow defines Definition of Ready, Definition of Done, PR lanes, and merge checks;
+- the labels guide defines durable classification, stale-policy labels, and cleanup sequence;
+- the reviewer playbook defines intake, review depth, issue triage, automation override, and queue hygiene.
+
+If an old FND-003 gate question seems missing, first check those operational homes before adding another copy here.
 
 ### 3.3 Custom Fields
 
@@ -184,6 +213,21 @@ GitHub allows up to six pinned issues per repository. Use them for high-signal, 
 
 Pinned issues are a promise to the community: these are the things that matter most right now. Update them when priorities shift.
 
+### 3.6 Work Lanes and State Ownership
+
+Work-lane policy keeps the board, labels, PRs, and issues from trying to answer the same question in different places.
+
+Use this split:
+
+| Surface | Owns | Does not own |
+|---|---|---|
+| Labels | durable classification: type, scope, risk, size, contributor tier, stale/triage policy | per-push review state, active CI status, personal task lists |
+| Project board | planning state: readiness, active owner, roadmap grouping, dependency/blocker state, stale-exemption reason when a field exists | authoritative PR review queue, mergeability, required checks |
+| Native PR state | review decision, required checks, branch freshness, conflicts, mergeability, draft/ready state | long-term roadmap ownership |
+| Issues/RFCs | durable discussion record, acceptance state, user need, linked implementation trail | live replacement for maintainer docs after policy promotion |
+
+PR lanes, contributor-pickup labels, stale-exemption labels, and label migration are durable governance concepts, but their exact operational criteria live in maintainer docs. FND-003 owns the split: labels classify durable work, project boards plan work, native PR state owns live review and merge state, and issues/RFCs preserve decisions. The [Maintainer PR workflow](../maintainers/pr-workflow.md#pr-lanes) owns PR lane definitions, the [Labels guide](../maintainers/labels.md) owns exact label meanings and cleanup rules, and the [Reviewer playbook](../maintainers/reviewer-playbook.md#issue-triage) owns how reviewers apply those signals during triage and review. Treat live label migration as a separate maintainer-approved cleanup, not ordinary PR review.
+
 ---
 
 ## 4. GitHub Discussions: The Ideas Parking Lot
@@ -240,6 +284,14 @@ The **Architecture** Discussions category is specifically for questions and prop
 
 If an Architecture discussion develops sufficient detail and consensus, a Core Team member can promote it to a formal RFC by moving the content to `docs/proposals/` and opening an RFC issue.
 
+### 4.5 Discord-to-GitHub Handoff
+
+Discord is for fast conversation. GitHub is the durable record.
+
+When Discord produces a decision, evidence, owner, blocker, support pattern, or user-impact claim that the project needs later, promote it to the appropriate GitHub surface: issue, discussion, PR comment, or maintainer doc. The contributor-facing trigger list lives in [Communication](../contributing/communication.md).
+
+The handoff does not need to copy the whole chat. Capture the decision, evidence, owner when one exists, and enough context for another maintainer to continue. If the Discord thread only produced exploratory chatter with no durable decision, leave it in Discord.
+
 ---
 
 ## 5. Team Tiers and Contribution Authority
@@ -252,7 +304,7 @@ The three tiers reflect increasing demonstrated commitment to the project:
 
 ---
 
-**Tier 1: Community**
+#### Tier 1: Community
 
 Anyone. No approval required.
 
@@ -271,7 +323,7 @@ Anyone. No approval required.
 
 ---
 
-**Tier 2: Contributor**
+#### Tier 2: Contributor
 
 Community members who have had at least two PRs merged into the `master` branch.
 
@@ -292,7 +344,7 @@ Community members who have had at least two PRs merged into the `master` branch.
 
 ---
 
-**Tier 3: Core Team**
+#### Tier 3: Core Team
 
 Contributors who have demonstrated consistent, high-quality contributions over time and have been invited by existing Core Team members.
 
@@ -1045,7 +1097,6 @@ By v1.0.0, the governance model should be self-sustaining — the team should no
 **Success signal:** The last six months of development history shows consistent use of the pipeline. Issues are triaged within 3 days. PRs are reviewed within 5 days. The CHANGELOG is updated on every merge.
 
 ---
-
 
 ## Appendix A: Glossary
 

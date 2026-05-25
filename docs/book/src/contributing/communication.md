@@ -19,6 +19,8 @@ Channels:
 
 **Discord is ephemeral** — if the conversation leads to a bug or a feature idea, capture it as a GitHub issue afterwards so the record persists. Discord is for conversation; GitHub is for memory.
 
+Use a GitHub handoff when Discord produces something the project must remember. Create or update an issue, discussion, PR comment, or maintainer doc when the thread produces a reproducible bug, concrete feature scope, architecture or governance decision, maintainer commitment, owner assignment, milestone decision, blocker, workaround, validation evidence, release-impact note, or stale-exemption reason. The handoff only needs the decision, evidence, owner when one exists, and enough context for another maintainer to continue without rereading chat.
+
 ## GitHub issues
 
 For bugs, feature requests, and anything that needs to be tracked.
