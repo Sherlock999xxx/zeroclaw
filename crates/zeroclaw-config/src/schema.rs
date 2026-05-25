@@ -3162,7 +3162,7 @@ impl Config {
         }
         self.agents
             .get(agent_alias)
-            .map_or(false, |a| a.parallel_tools)
+            .is_some_and(|a| a.parallel_tools)
     }
 
     /// Effective `tool_dispatcher`. Profile `Some` (non-empty) wins over agent field.
@@ -3210,7 +3210,9 @@ impl Config {
         }
         self.agents
             .get(agent_alias)
-            .map_or_else(default_max_system_prompt_chars, |a| a.max_system_prompt_chars)
+            .map_or_else(default_max_system_prompt_chars, |a| {
+                a.max_system_prompt_chars
+            })
     }
 
     /// Effective `context_aware_tools`. Profile `Some` wins over agent field.
@@ -3224,7 +3226,7 @@ impl Config {
         }
         self.agents
             .get(agent_alias)
-            .map_or(false, |a| a.context_aware_tools)
+            .is_some_and(|a| a.context_aware_tools)
     }
 
     /// Effective `max_tool_result_chars`. Profile `Some` wins over agent field.
@@ -3252,7 +3254,9 @@ impl Config {
         }
         self.agents
             .get(agent_alias)
-            .map_or_else(default_keep_tool_context_turns, |a| a.keep_tool_context_turns)
+            .map_or_else(default_keep_tool_context_turns, |a| {
+                a.keep_tool_context_turns
+            })
     }
 
     /// Return a clone of the named agent's `AliasedAgentConfig` with all

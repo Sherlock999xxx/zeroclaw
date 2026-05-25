@@ -24,7 +24,6 @@ use zeroclaw_config::traits::{ConfigFieldEntry, ConfigTab, PropKind};
 use crate::client::{ConfigSectionEntry, ConfigTemplateEntry, RpcClient};
 use crate::theme;
 
-
 pub(crate) type Term = Terminal<CrosstermBackend<Stdout>>;
 
 pub(crate) fn init_terminal() -> Result<Term> {
@@ -1791,9 +1790,8 @@ impl<'a> App<'a> {
                                 self.select_items = aliases;
                                 self.status_msg = None;
                             } else {
-                                self.status_msg = Some(format!(
-                                    "No {map_path} defined — enter manually"
-                                ));
+                                self.status_msg =
+                                    Some(format!("No {map_path} defined — enter manually"));
                             }
                         }
                         Err(_) => {
@@ -2794,7 +2792,10 @@ impl<'a> App<'a> {
             let kind_hint = if field.is_secret {
                 format!("Type: {} (secret — input hidden)", field.kind.wire_name())
             } else if field.kind == PropKind::StringArray {
-                format!("Type: {} (one entry per line; Enter=new line, Ctrl+S=save)", field.kind.wire_name())
+                format!(
+                    "Type: {} (one entry per line; Enter=new line, Ctrl+S=save)",
+                    field.kind.wire_name()
+                )
             } else {
                 format!("Type: {}", field.kind.wire_name())
             };
@@ -2874,7 +2875,9 @@ impl<'a> App<'a> {
         // Filter active: paste goes into the filter buffer.
         if let Some(buf) = self.filter.as_mut() {
             for c in cleaned.chars() {
-                if c == '\n' { continue; } // filter is single-line
+                if c == '\n' {
+                    continue;
+                } // filter is single-line
                 buf.push(c);
             }
             return;
@@ -2884,7 +2887,9 @@ impl<'a> App<'a> {
             Screen::AliasCreate { .. } => {
                 // Aliases are single-line identifiers.
                 for c in cleaned.chars() {
-                    if c == '\n' { continue; }
+                    if c == '\n' {
+                        continue;
+                    }
                     self.edit_buf.push(c);
                 }
             }
@@ -2903,7 +2908,9 @@ impl<'a> App<'a> {
                 } else {
                     // Scalar fields: strip newlines.
                     for c in cleaned.chars() {
-                        if c == '\n' { continue; }
+                        if c == '\n' {
+                            continue;
+                        }
                         self.edit_buf.push(c);
                     }
                 }
@@ -2933,7 +2940,6 @@ impl<'a> App<'a> {
             _ => false,
         }
     }
-
 }
 
 impl crate::widgets::HelpContext for App<'_> {
@@ -3001,13 +3007,11 @@ impl crate::widgets::HelpContext for App<'_> {
                     ])
                 }
             }
-            Screen::AliasCreate { .. } => {
-                HelpNode::entries(vec![
-                    E::key("Enter", "Create alias"),
-                    E::key("Esc", "Cancel"),
-                    E::key("?", "This help"),
-                ])
-            }
+            Screen::AliasCreate { .. } => HelpNode::entries(vec![
+                E::key("Enter", "Create alias"),
+                E::key("Esc", "Cancel"),
+                E::key("?", "This help"),
+            ]),
             Screen::FieldList { .. } => {
                 if self.filter.is_some() {
                     HelpNode::entries(vec![
@@ -3065,7 +3069,9 @@ impl crate::widgets::HelpContext for App<'_> {
                 }
             }
             Screen::FieldEdit { field_idx, .. } => {
-                let is_string_array = self.fields.get(*field_idx)
+                let is_string_array = self
+                    .fields
+                    .get(*field_idx)
                     .map(|f| f.kind == PropKind::StringArray)
                     .unwrap_or(false);
                 if self.is_select_edit() {

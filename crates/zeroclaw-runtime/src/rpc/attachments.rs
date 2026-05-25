@@ -236,7 +236,6 @@ fn attachment_kind(mime: &str) -> &'static str {
 mod tests {
     use super::*;
     use serde_json::json;
-    use zeroclaw_api::jsonrpc::error_codes::*;
 
     #[test]
     fn mime_from_filename_common_types() {

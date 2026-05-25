@@ -939,7 +939,6 @@ impl<'a> Logs<'a> {
     pub(crate) fn wants_text_input(&self) -> bool {
         self.search_active
     }
-
 }
 
 impl crate::widgets::HelpContext for Logs<'_> {
@@ -975,7 +974,10 @@ impl crate::widgets::HelpContext for Logs<'_> {
                 E::key("c", "Clear search filter"),
                 E::key("?", "This help"),
                 E::spacer(),
-                E::key("Mouse", "Click to select, scroll wheel, double-click detail"),
+                E::key(
+                    "Mouse",
+                    "Click to select, scroll wheel, double-click detail",
+                ),
             ])
         }
     }

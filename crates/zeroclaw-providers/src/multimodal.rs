@@ -411,7 +411,10 @@ pub async fn prepare_messages_for_provider(
                 config,
                 max_bytes,
                 &remote_client,
-                &ImageNormalizeCtx { message_index: index, role: &message.role },
+                &ImageNormalizeCtx {
+                    message_index: index,
+                    role: &message.role,
+                },
             )
             .await
         {
@@ -434,7 +437,10 @@ pub async fn prepare_messages_for_provider(
             config,
             max_bytes,
             &remote_client,
-            &ImageNormalizeCtx { message_index: index, role: &message.role },
+            &ImageNormalizeCtx {
+                message_index: index,
+                role: &message.role,
+            },
         )
         .await;
         let content = compose_multimodal_content(
@@ -477,22 +483,22 @@ pub async fn prepare_messages_for_provider(
 
     // Apply the per-request image cap after normalization so failed image refs
     // do not consume budget and evict older images that could still be sent.
-    let capped_messages =
-        if has_successful_images && count_image_markers(&age_trimmed) > max_images {
-            ::zeroclaw_log::record!(
-                WARN,
-                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
-                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
-                    .with_attrs(::serde_json::json!({
-                        "images_after_normalization": count_image_markers(&age_trimmed),
-                        "max_images": max_images,
-                    })),
-                "multimodal: post-normalization image cap exceeded — trimming oldest images"
-            );
-            trim_old_images(&age_trimmed, max_images)
-        } else {
-            age_trimmed
-        };
+    let capped_messages = if has_successful_images && count_image_markers(&age_trimmed) > max_images
+    {
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({
+                    "images_after_normalization": count_image_markers(&age_trimmed),
+                    "max_images": max_images,
+                })),
+            "multimodal: post-normalization image cap exceeded — trimming oldest images"
+        );
+        trim_old_images(&age_trimmed, max_images)
+    } else {
+        age_trimmed
+    };
 
     Ok(PreparedMessages {
         contains_images: count_image_markers(&capped_messages) > 0,

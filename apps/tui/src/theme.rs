@@ -91,7 +91,9 @@ pub(crate) fn code_block_style() -> Style {
 
 /// Thought / thinking output.
 pub(crate) fn thought_style() -> Style {
-    Style::default().fg(FROST_DIM).add_modifier(Modifier::ITALIC)
+    Style::default()
+        .fg(FROST_DIM)
+        .add_modifier(Modifier::ITALIC)
 }
 
 /// Overlay border/title accent (session list, rename, approval).

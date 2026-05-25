@@ -4060,8 +4060,7 @@ mod fs_db_migration_tests {
             .expect("migration must succeed on partially-migrated DB");
 
         // Idempotent second call must also succeed.
-        migrate_sqlite_memory_to_v3(&db_path, &conn)
-            .expect("second migration run must be a no-op");
+        migrate_sqlite_memory_to_v3(&db_path, &conn).expect("second migration run must be a no-op");
 
         // The unique index must now exist.
         let has_unique = sqlite_memories_has_unique_agent_key(&conn).unwrap();
@@ -4072,9 +4071,11 @@ mod fs_db_migration_tests {
 
         // Existing row must have survived.
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM memories WHERE key='test-key'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE key='test-key'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(count, 1, "existing memory row must survive the migration");
     }

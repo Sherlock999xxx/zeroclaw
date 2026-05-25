@@ -1109,7 +1109,6 @@ impl InputBarState {
             explorer.render(f, area);
         }
     }
-
 }
 
 impl crate::widgets::HelpContext for InputBarState {

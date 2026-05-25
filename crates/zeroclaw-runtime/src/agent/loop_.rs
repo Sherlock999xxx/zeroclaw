@@ -1610,8 +1610,7 @@ pub async fn run_tool_call_loop(
                 )
             )
             .instrument(provider_span);
-            match stream_future.await
-            {
+            match stream_future.await {
                 Ok(streamed) => {
                     streamed_live_deltas = streamed.forwarded_live_deltas;
                     streamed_protocol_suppressed = streamed.suppressed_protocol;

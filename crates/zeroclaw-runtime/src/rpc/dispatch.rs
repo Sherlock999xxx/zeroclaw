@@ -2103,7 +2103,12 @@ fn notification_for_turn_event(
             arguments_summary: arguments_summary.clone(),
             timeout_secs: *timeout_secs,
         },
-        TurnEvent::Usage { input_tokens, cached_input_tokens: _, output_tokens: _, .. } => {
+        TurnEvent::Usage {
+            input_tokens,
+            cached_input_tokens: _,
+            output_tokens: _,
+            ..
+        } => {
             // `input_tokens` per TokenUsage contract is the *total* prompt
             // size (uncached + cached). `cached_input_tokens` is a subset
             // and must NOT be added — doing so double-counts cache reads
@@ -2114,7 +2119,7 @@ fn notification_for_turn_event(
                 input_tokens: *input_tokens,
                 max_context_tokens,
             }
-        },
+        }
     };
 
     let params = serde_json::to_value(update).ok()?;

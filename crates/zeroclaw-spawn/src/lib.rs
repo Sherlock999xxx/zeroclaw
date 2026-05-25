@@ -210,7 +210,7 @@ mod tests {
             // Yield once so the task actually re-enters its instrumented
             // span on a different poll than the spawn site.
             tokio::task::yield_now().await;
-            tracing::info!("inside_spawned_task");
+            tracing::event!(tracing::Level::INFO, "inside_spawned_task");
         });
         handle.await.unwrap();
 

@@ -46,7 +46,6 @@ impl<'a> Acp<'a> {
     pub(crate) fn ctx_tokens(&self) -> (Option<u64>, Option<u64>) {
         self.inner.ctx_tokens()
     }
-
 }
 
 impl<'a> crate::widgets::HelpContext for Acp<'a> {

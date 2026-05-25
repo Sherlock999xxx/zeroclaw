@@ -24,13 +24,13 @@ use crate::widgets::{CtxBar, HelpContext, HelpEntry, HelpNode};
 const TICK: Duration = Duration::from_millis(200);
 
 /// Mode bar entries. Shared between drawing and click detection.
-const MODES: [Mode; 6] = [
+/// NOTE: Onboard is intentionally excluded here — hidden until ready.
+const MODES: [Mode; 5] = [
     Mode::Dashboard,
     Mode::Config,
     Mode::Acp,
     Mode::Chat,
     Mode::Logs,
-    Mode::Onboard,
 ];
 
 // ── Mode enum ────────────────────────────────────────────────────
@@ -42,6 +42,8 @@ enum Mode {
     Acp,
     Chat,
     Logs,
+    /// Hidden until the onboarding flow is ready (F6 binding commented out).
+    #[allow(dead_code)]
     Onboard,
 }
 
@@ -79,11 +81,7 @@ pub async fn run(
     connect_label: &str,
     onboard_pane: Option<OnboardPane>,
 ) -> Result<bool> {
-    let mut mode = if onboard_pane.is_some() {
-        Mode::Onboard
-    } else {
-        Mode::Dashboard
-    };
+    let mut mode = Mode::Dashboard;
     let mut show_help = false;
     let mut bar_area = Rect::default();
     let mut content_area = Rect::default();
@@ -136,12 +134,18 @@ pub async fn run(
                 Mode::Acp => acp_pane.ctx_tokens(),
                 _ => (None, None),
             };
-            draw_status_bar(frame, chunks[2], &conn_state, rpc.tui_id(), CtxBar::new(ctx_input, ctx_max));
+            draw_status_bar(
+                frame,
+                chunks[2],
+                &conn_state,
+                rpc.tui_id(),
+                CtxBar::new(ctx_input, ctx_max),
+            );
 
             // Help modal overlay (drawn last so it sits on top).
             if show_help {
                 let mut node = HelpNode::entries(vec![
-                    HelpEntry::new(vec!["F1–F6"], "Switch mode"),
+                    HelpEntry::new(vec!["F1–F5"], "Switch mode"),
                     HelpEntry::key("Ctrl+C", "Quit"),
                     HelpEntry::spacer(),
                 ]);
@@ -221,10 +225,11 @@ pub async fn run(
                         mode = Mode::Logs;
                         continue;
                     }
-                    KeyCode::F(6) if onboard_pane.is_some() => {
-                        mode = Mode::Onboard;
-                        continue;
-                    }
+                    // F6 / Onboard hidden until ready
+                    // KeyCode::F(6) if onboard_pane.is_some() => {
+                    //     mode = Mode::Onboard;
+                    //     continue;
+                    // }
                     _ => {}
                 }
 
@@ -394,10 +399,7 @@ fn draw_status_bar(
     let right_w = conn_text_len.min(area.width);
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(right_w),
-        ])
+        .constraints([Constraint::Min(0), Constraint::Length(right_w)])
         .split(area);
     let left_area = chunks[0];
     let right_area = chunks[1];

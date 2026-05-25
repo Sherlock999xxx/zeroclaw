@@ -2640,7 +2640,7 @@ mod tests {
         let app = Router::new()
             .route("/v1/chat/completions", post(capture_chat_request))
             .with_state(capture.clone());
-        let server = tokio::spawn(async move {
+        let server = ::zeroclaw_spawn::spawn!(async move {
             axum::serve(listener, app).await.expect("serve test server");
         });
 
@@ -2693,7 +2693,7 @@ mod tests {
         let app = Router::new()
             .route("/v1/models", get(capture_models_request))
             .with_state(capture.clone());
-        let server = tokio::spawn(async move {
+        let server = ::zeroclaw_spawn::spawn!(async move {
             axum::serve(listener, app).await.expect("serve test server");
         });
 

@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Padding, Paragraph, Wrap},
 };
 
-use crate::widgets::{HelpNode};
+use crate::widgets::HelpNode;
 
 /// A read-only onboarding / welcome pane shown on first launch.
 pub struct OnboardPane {
@@ -14,6 +14,7 @@ pub struct OnboardPane {
 }
 
 impl OnboardPane {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self { scroll: 0 }
     }
@@ -32,15 +33,9 @@ impl OnboardPane {
             .add_modifier(Modifier::BOLD);
 
         let lines: Vec<Line> = vec![
-            Line::from(vec![Span::styled(
-                " Welcome to ZeroClaw ",
-                title_style,
-            )]),
+            Line::from(vec![Span::styled(" Welcome to ZeroClaw ", title_style)]),
             Line::from(""),
-            Line::from(vec![Span::styled(
-                "What is ZeroClaw?",
-                heading_style,
-            )]),
+            Line::from(vec![Span::styled("What is ZeroClaw?", heading_style)]),
             Line::from(vec![Span::styled(
                 "ZeroClaw is an autonomous AI agent platform. It runs persistent \
                  AI agents that can browse the web, write and run code, manage \
@@ -63,7 +58,10 @@ impl OnboardPane {
             Line::from(vec![
                 Span::styled("  3. ", dim_style),
                 Span::styled("ACP (F3)     ", key_style),
-                Span::styled(" — inspect live agent/channel protocol traffic.", normal_style),
+                Span::styled(
+                    " — inspect live agent/channel protocol traffic.",
+                    normal_style,
+                ),
             ]),
             Line::from(vec![
                 Span::styled("  4. ", dim_style),
@@ -143,7 +141,7 @@ impl OnboardPane {
     }
 
     pub fn help_context(&self) -> HelpNode {
-        use crate::widgets::{HelpEntry};
+        use crate::widgets::HelpEntry;
         HelpNode::entries(vec![
             HelpEntry::new(vec!["↑ / k", "↓ / j"], "Scroll up / down"),
             HelpEntry::new(vec!["PgUp", "PgDn"], "Scroll by 10 lines"),

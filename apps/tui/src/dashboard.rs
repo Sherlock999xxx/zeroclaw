@@ -1691,7 +1691,6 @@ impl<'a> Dashboard<'a> {
     pub(crate) fn wants_text_input(&self) -> bool {
         self.search_active
     }
-
 }
 
 impl crate::widgets::HelpContext for Dashboard<'_> {

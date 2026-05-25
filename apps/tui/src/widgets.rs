@@ -19,12 +19,18 @@ impl HelpEntry {
 
     /// Convenience: single key.
     pub fn key(key: &'static str, action: &'static str) -> Self {
-        Self { keys: vec![key], action }
+        Self {
+            keys: vec![key],
+            action,
+        }
     }
 
     /// Blank spacer row.
     pub fn spacer() -> Self {
-        Self { keys: vec![], action: "" }
+        Self {
+            keys: vec![],
+            action: "",
+        }
     }
 
     /// Format keys as "↑ / k" etc.
@@ -63,7 +69,10 @@ pub struct HelpNode {
 impl HelpNode {
     /// Leaf node with just keybindings.
     pub fn entries(entries: Vec<HelpEntry>) -> Self {
-        Self { entries, ..Default::default() }
+        Self {
+            entries,
+            ..Default::default()
+        }
     }
 
     /// Consume self and append a child node, returning the modified node.
@@ -97,7 +106,10 @@ pub struct CtxBar {
 
 impl CtxBar {
     pub fn new(input_tokens: Option<u64>, max_tokens: Option<u64>) -> Self {
-        Self { input_tokens, max_tokens }
+        Self {
+            input_tokens,
+            max_tokens,
+        }
     }
 
     /// `true` when there is something worth rendering.

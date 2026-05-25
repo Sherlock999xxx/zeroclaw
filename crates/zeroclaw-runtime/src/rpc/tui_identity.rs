@@ -292,7 +292,10 @@ mod tests {
 
         let entries = registry.list();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].env.get("MY_VAR").map(|s| s.as_str()), Some("my_value"));
+        assert_eq!(
+            entries[0].env.get("MY_VAR").map(|s| s.as_str()),
+            Some("my_value")
+        );
         assert_eq!(
             entries[0].env.get("ANTHROPIC_API_KEY").map(|s| s.as_str()),
             Some("sk-secret"),
@@ -332,7 +335,10 @@ mod tests {
         assert_eq!(registry.list().len(), 1);
 
         registry.unregister("tui_deadbeef");
-        assert!(registry.list().is_empty(), "env should be dropped with entry");
+        assert!(
+            registry.list().is_empty(),
+            "env should be dropped with entry"
+        );
     }
 
     #[test]
@@ -371,8 +377,14 @@ mod tests {
         });
 
         let got = registry.get_env("tui_getenv01").expect("should find env");
-        assert_eq!(got.get("PATH").map(|s| s.as_str()), Some("/usr/bin:/usr/local/bin"));
-        assert_eq!(got.get("SSH_AUTH_SOCK").map(|s| s.as_str()), Some("/tmp/ssh.sock"));
+        assert_eq!(
+            got.get("PATH").map(|s| s.as_str()),
+            Some("/usr/bin:/usr/local/bin")
+        );
+        assert_eq!(
+            got.get("SSH_AUTH_SOCK").map(|s| s.as_str()),
+            Some("/tmp/ssh.sock")
+        );
     }
 
     #[test]

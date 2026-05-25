@@ -139,8 +139,7 @@ impl<'a> Chat<'a> {
     /// Decide whether to show the CWD picker (WSS ACP) or start the session
     /// immediately (Unix, or non-ACP pane).
     async fn pick_or_start_session(&mut self, agent_alias: &str) {
-        if self.pane_kind == PaneKind::Acp
-            && self.rpc.transport() == crate::client::Transport::Wss
+        if self.pane_kind == PaneKind::Acp && self.rpc.transport() == crate::client::Transport::Wss
         {
             self.phase = ChatPhase::PickCwd {
                 agent_alias: agent_alias.to_string(),
@@ -159,18 +158,19 @@ impl<'a> Chat<'a> {
         // Over Unix socket, pass local CWD so the agent works in the
         // directory the TUI was launched from.  Over WSS the server
         // uses the agent's workspace dir unless the user supplies one.
-        let cwd_str: Option<String> =
-            if self.rpc.transport() == crate::client::Transport::Unix {
-                std::env::current_dir()
-                    .ok()
-                    .and_then(|p| p.to_str().map(str::to_string))
-            } else {
-                cwd_override
-                    .filter(|s| !s.trim().is_empty())
-                    .map(str::to_string)
-            };
+        let cwd_str: Option<String> = if self.rpc.transport() == crate::client::Transport::Unix {
+            std::env::current_dir()
+                .ok()
+                .and_then(|p| p.to_str().map(str::to_string))
+        } else {
+            cwd_override
+                .filter(|s| !s.trim().is_empty())
+                .map(str::to_string)
+        };
         let result = if self.pane_kind == PaneKind::Acp {
-            self.rpc.session_new_acp(agent_alias, cwd_str.as_deref(), None).await
+            self.rpc
+                .session_new_acp(agent_alias, cwd_str.as_deref(), None)
+                .await
         } else {
             self.rpc.session_new(agent_alias, cwd_str.as_deref()).await
         };
@@ -658,18 +658,24 @@ impl<'a> Chat<'a> {
                 state.mark_dirty_full();
             }
             // ── Browse mode: enter (Ctrl+↑) ──────────────────────
-            KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if !state.in_browse_mode() {
-                    state.enter_browse_mode();
-                } else {
-                    state.browse_move_up(1, false);
-                }
+            KeyCode::Up
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !state.in_browse_mode() =>
+            {
+                state.enter_browse_mode();
+            }
+            KeyCode::Up
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && state.in_browse_mode() =>
+            {
+                state.browse_move_up(1, false);
             }
             // ── Browse mode: exit (Ctrl+↓) ───────────────────────
-            KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if state.in_browse_mode() {
-                    state.exit_browse_mode();
-                }
+            KeyCode::Down
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && state.in_browse_mode() =>
+            {
+                state.exit_browse_mode();
             }
             // ── Browse mode: navigate ↑/↓ ────────────────────────
             KeyCode::Up if state.in_browse_mode() => {
@@ -695,12 +701,16 @@ impl<'a> Chat<'a> {
             }
             // ── Browse mode: fast scroll (Ctrl+Shift+↑/↓) ───────
             KeyCode::Up
-                if key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
+                if key
+                    .modifiers
+                    .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
             {
                 state.scroll_up(5);
             }
             KeyCode::Down
-                if key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
+                if key
+                    .modifiers
+                    .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
             {
                 state.scroll_down(5);
             }
@@ -769,13 +779,13 @@ impl<'a> Chat<'a> {
                             }
                         }
                     }
-                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                        if mouse::in_rect(col, row, overlay_area) {
-                            let up = matches!(mouse.kind, MouseEventKind::ScrollUp);
-                            let count = sessions.len();
-                            let i = list_state.selected().unwrap_or(0);
-                            list_state.select(Some(mouse::list_scroll(i, count, up, 1)));
-                        }
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                        if mouse::in_rect(col, row, overlay_area) =>
+                    {
+                        let up = matches!(mouse.kind, MouseEventKind::ScrollUp);
+                        let count = sessions.len();
+                        let i = list_state.selected().unwrap_or(0);
+                        list_state.select(Some(mouse::list_scroll(i, count, up, 1)));
                     }
                     _ => {}
                 }
@@ -841,7 +851,6 @@ impl<'a> Chat<'a> {
             _ => false,
         }
     }
-
 }
 
 impl<'a> crate::widgets::HelpContext for Chat<'a> {
@@ -978,13 +987,7 @@ fn draw_agent_picker(
 // ── CWD picker rendering ─────────────────────────────────────────
 
 /// Render the working-directory text-input overlay for WSS ACP sessions.
-fn draw_cwd_picker(
-    frame: &mut Frame,
-    area: Rect,
-    agent_alias: &str,
-    buf: &str,
-    tab_title: &str,
-) {
+fn draw_cwd_picker(frame: &mut Frame, area: Rect, agent_alias: &str, buf: &str, tab_title: &str) {
     // Outer block fills the whole pane area.
     let block = Block::default()
         .title(Span::styled(format!(" {tab_title} "), theme::title_style()))
@@ -1050,11 +1053,8 @@ fn draw_error(frame: &mut Frame, area: Rect, msg: &str, tab_title: &str) {
         ])
         .split(inner);
 
-    let p = Paragraph::new(Line::from(Span::styled(
-        msg,
-        theme::error_style(),
-    )))
-    .alignment(Alignment::Center);
+    let p = Paragraph::new(Line::from(Span::styled(msg, theme::error_style())))
+        .alignment(Alignment::Center);
     frame.render_widget(p, chunks[1]);
 }
 
@@ -1262,14 +1262,8 @@ fn render_entry_into(
         ChatEntry::AgentThought(text) => {
             if show_thoughts {
                 lines.push(Line::from(vec![
-                    Span::styled(
-                        "(thinking) ",
-                        theme::thought_style().add_modifier(sel_mod),
-                    ),
-                    Span::styled(
-                        text.clone(),
-                        theme::dim_style().add_modifier(sel_mod),
-                    ),
+                    Span::styled("(thinking) ", theme::thought_style().add_modifier(sel_mod)),
+                    Span::styled(text.clone(), theme::dim_style().add_modifier(sel_mod)),
                 ]));
             }
         }
@@ -1303,10 +1297,7 @@ fn render_conversation(f: &mut Frame, state: &mut ChatState, area: Rect) {
 
     // Streaming text (in-flight agent response).
     if !state.streaming_text.is_empty() {
-        let prefix = Line::from(vec![Span::styled(
-            "Agent: ",
-            theme::agent_label_style(),
-        )]);
+        let prefix = Line::from(vec![Span::styled("Agent: ", theme::agent_label_style())]);
         lines.push(prefix);
         lines.extend(markdown_to_lines(&state.streaming_text));
     }
@@ -1314,14 +1305,8 @@ fn render_conversation(f: &mut Frame, state: &mut ChatState, area: Rect) {
     // Streaming thought (in-flight).
     if state.show_thoughts && !state.streaming_thought.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled(
-                "(thinking) ",
-                theme::thought_style(),
-            ),
-            Span::styled(
-                state.streaming_thought.clone(),
-                theme::dim_style(),
-            ),
+            Span::styled("(thinking) ", theme::thought_style()),
+            Span::styled(state.streaming_thought.clone(), theme::dim_style()),
         ]));
     }
 
@@ -1578,10 +1563,7 @@ fn markdown_to_lines(text: &str) -> Vec<Line<'static>> {
                 if !current_spans.is_empty() {
                     lines.push(Line::from(std::mem::take(&mut current_spans)));
                 }
-                current_spans.push(Span::styled(
-                    "  \u{2022} ",
-                    theme::dim_style(),
-                ));
+                current_spans.push(Span::styled("  \u{2022} ", theme::dim_style()));
             }
             MdEvent::End(TagEnd::Item) if !current_spans.is_empty() => {
                 lines.push(Line::from(std::mem::take(&mut current_spans)));
@@ -1614,10 +1596,7 @@ fn markdown_to_lines(text: &str) -> Vec<Line<'static>> {
                 }
             }
             MdEvent::Code(t) => {
-                current_spans.push(Span::styled(
-                    t.to_string(),
-                    theme::code_inline_style(),
-                ));
+                current_spans.push(Span::styled(t.to_string(), theme::code_inline_style()));
             }
             MdEvent::SoftBreak => {
                 current_spans.push(Span::raw(" "));
@@ -1812,7 +1791,9 @@ impl ChatState {
     /// If `extend` is true, sets/keeps the anchor for range selection.
     fn browse_move_up(&mut self, n: usize, extend: bool) {
         let len = self.entries.len();
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         let cur = self.browse_cursor.unwrap_or(len - 1);
         if extend && self.browse_anchor.is_none() {
             self.browse_anchor = Some(cur);
@@ -1827,7 +1808,9 @@ impl ChatState {
     /// If `extend` is true, sets/keeps the anchor for range selection.
     fn browse_move_down(&mut self, n: usize, extend: bool) {
         let len = self.entries.len();
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         let cur = self.browse_cursor.unwrap_or(0);
         if extend && self.browse_anchor.is_none() {
             self.browse_anchor = Some(cur);
@@ -1850,7 +1833,8 @@ impl ChatState {
 
     /// True when `idx` falls inside the current browse selection range.
     fn is_in_browse_range(&self, idx: usize) -> bool {
-        self.browse_range().map_or(false, |(lo, hi)| idx >= lo && idx <= hi)
+        self.browse_range()
+            .is_some_and(|(lo, hi)| idx >= lo && idx <= hi)
     }
 
     /// Rebuild (or incrementally extend) the cached rendered lines from committed entries.
@@ -1896,7 +1880,12 @@ impl ChatState {
         let show_thoughts = self.show_thoughts;
         for (rel_idx, entry) in self.entries[start..].iter().enumerate() {
             let abs_idx = start + rel_idx;
-            render_entry_into(entry, self.is_in_browse_range(abs_idx), show_thoughts, &mut lines);
+            render_entry_into(
+                entry,
+                self.is_in_browse_range(abs_idx),
+                show_thoughts,
+                &mut lines,
+            );
         }
         self.cached_lines = lines;
         self.cached_entry_count = total - start;

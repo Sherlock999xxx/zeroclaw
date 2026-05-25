@@ -326,8 +326,7 @@ impl RpcClient {
         // (PATH, SSH_AUTH_SOCK, credential helpers, etc.).  This is safe
         // on a local Unix-socket connection because the daemon is on the
         // same machine and the socket paths / env values are meaningful.
-        let env_map: std::collections::HashMap<String, String> =
-            std::env::vars().collect();
+        let env_map: std::collections::HashMap<String, String> = std::env::vars().collect();
         init_params["env"] = serde_json::to_value(env_map).unwrap_or_default();
         let resp = rpc
             .request(method::INITIALIZE, init_params)
@@ -1399,8 +1398,9 @@ mod session_method_tests {
         let (rpc, mut write_rx) = make_rpc();
         let client = RpcClient::with_rpc(rpc.clone());
 
-        let task =
-            zeroclaw_spawn::spawn!(async move { client.session_new("my-agent", Some("/tmp/work")).await });
+        let task = zeroclaw_spawn::spawn!(async move {
+            client.session_new("my-agent", Some("/tmp/work")).await
+        });
 
         let line = write_rx.recv().await.unwrap();
         let req: serde_json::Value = serde_json::from_str(&line).unwrap();
