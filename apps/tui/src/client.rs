@@ -129,6 +129,12 @@ pub enum SessionUpdate {
         arguments_summary: String,
         timeout_secs: u64,
     },
+    /// Emitted once per LLM call with current context size and configured limit.
+    ContextUsage {
+        session_id: String,
+        input_tokens: Option<u64>,
+        max_context_tokens: Option<u64>,
+    },
 }
 
 pub fn parse_session_update(params: &serde_json::Value) -> Option<SessionUpdate> {
@@ -160,6 +166,11 @@ pub fn parse_session_update(params: &serde_json::Value) -> Option<SessionUpdate>
             tool_name: params.get("tool_name")?.as_str()?.to_string(),
             arguments_summary: params.get("arguments_summary")?.as_str()?.to_string(),
             timeout_secs: params.get("timeout_secs")?.as_u64().unwrap_or(30),
+        }),
+        "context_usage" => Some(SessionUpdate::ContextUsage {
+            session_id: sid,
+            input_tokens: params.get("input_tokens").and_then(|v| v.as_u64()),
+            max_context_tokens: params.get("max_context_tokens").and_then(|v| v.as_u64()),
         }),
         _ => None,
     }

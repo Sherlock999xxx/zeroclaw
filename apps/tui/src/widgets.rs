@@ -77,3 +77,84 @@ impl HelpNode {
 pub trait HelpContext {
     fn help_context(&self) -> HelpNode;
 }
+
+// ── CtxBar ────────────────────────────────────────────────────────────────────
+
+use ratatui::{
+    style::{Color, Style},
+    text::{Line, Span},
+    widgets::Paragraph,
+};
+
+/// A one-row context-window usage bar.
+///
+/// Renders left-aligned into whatever `Rect` you hand it.
+/// Returns `None` from `widget()` when there is nothing to show.
+pub struct CtxBar {
+    pub input_tokens: Option<u64>,
+    pub max_tokens: Option<u64>,
+}
+
+impl CtxBar {
+    pub fn new(input_tokens: Option<u64>, max_tokens: Option<u64>) -> Self {
+        Self { input_tokens, max_tokens }
+    }
+
+    /// `true` when there is something worth rendering.
+    pub fn has_content(&self) -> bool {
+        self.input_tokens.is_some() || self.max_tokens.is_some()
+    }
+
+    /// Build a `Paragraph` widget, or `None` if there is nothing to show.
+    pub fn widget(&self) -> Option<Paragraph<'static>> {
+        let (text, pct_opt) = match (self.input_tokens, self.max_tokens) {
+            (Some(used), Some(max)) if max > 0 => {
+                let pct = (used as f64 / max as f64 * 100.0).min(100.0);
+                let bar_width: usize = 16;
+                let filled = ((pct / 100.0) * bar_width as f64).round() as usize;
+                let empty = bar_width.saturating_sub(filled);
+                let bar = format!(
+                    "[{}{}]",
+                    "\u{2588}".repeat(filled),
+                    "\u{2591}".repeat(empty)
+                );
+                let label = format!(
+                    " ctx: {:>7} / {:>7}  {}  {:.0}%",
+                    fmt_tokens(used),
+                    fmt_tokens(max),
+                    bar,
+                    pct,
+                );
+                (label, Some(pct))
+            }
+            (Some(used), None) => {
+                let label = format!(" ctx: {} tokens", fmt_tokens(used));
+                (label, None)
+            }
+            _ => return None,
+        };
+
+        let color = match pct_opt {
+            Some(p) if p >= 90.0 => Color::Red,
+            Some(p) if p >= 75.0 => Color::Yellow,
+            _ => Color::DarkGray,
+        };
+
+        Some(Paragraph::new(Line::from(Span::styled(
+            text,
+            Style::default().fg(color),
+        ))))
+    }
+}
+
+fn fmt_tokens(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, ch) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out.chars().rev().collect()
+}

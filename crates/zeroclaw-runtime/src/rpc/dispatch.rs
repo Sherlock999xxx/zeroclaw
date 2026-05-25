@@ -750,6 +750,18 @@ impl RpcDispatcher {
         self.ctx.sessions.register_cancel_token(sid, cancel.clone());
         self.ctx.sessions.touch(sid).await;
 
+        // Capture max_context_tokens so the Usage notification can include it.
+        let max_ctx = {
+            let agent_alias = self
+                .ctx
+                .sessions
+                .get_agent_alias(sid)
+                .await
+                .unwrap_or_default();
+            let cfg = self.ctx.config.read().clone();
+            Some(cfg.effective_max_context_tokens(&agent_alias) as u64)
+        };
+
         let rpc = self.rpc.clone();
         let sid_owned = sid.to_string();
         let outcome = execute_turn(
@@ -761,7 +773,7 @@ impl RpcDispatcher {
                 let rpc = rpc.clone();
                 let sid = sid_owned.clone();
                 async move {
-                    if let Some(n) = notification_for_turn_event(&sid, &event) {
+                    if let Some(n) = notification_for_turn_event(&sid, &event, max_ctx) {
                         let _ = rpc.send_raw(n).await;
                     }
                 }
@@ -2053,7 +2065,11 @@ fn to_result<T: Serialize>(val: T) -> RpcResult {
     serde_json::to_value(val).map_err(|e| rpc_err(INTERNAL_ERROR, e.to_string()))
 }
 
-fn notification_for_turn_event(session_id: &str, event: &TurnEvent) -> Option<String> {
+fn notification_for_turn_event(
+    session_id: &str,
+    event: &TurnEvent,
+    max_context_tokens: Option<u64>,
+) -> Option<String> {
     let update = match event {
         TurnEvent::Chunk { delta } => SessionUpdateEvent::AgentMessageChunk {
             session_id: session_id.to_string(),
@@ -2087,7 +2103,11 @@ fn notification_for_turn_event(session_id: &str, event: &TurnEvent) -> Option<St
             arguments_summary: arguments_summary.clone(),
             timeout_secs: *timeout_secs,
         },
-        TurnEvent::Usage { .. } => return None,
+        TurnEvent::Usage { input_tokens, .. } => SessionUpdateEvent::ContextUsage {
+            session_id: session_id.to_string(),
+            input_tokens: *input_tokens,
+            max_context_tokens,
+        },
     };
 
     let params = serde_json::to_value(update).ok()?;
@@ -2134,7 +2154,7 @@ mod tests {
         let event = TurnEvent::Chunk {
             delta: "hello".into(),
         };
-        let json = notification_for_turn_event("s1", &event).unwrap();
+        let json = notification_for_turn_event("s1", &event, None).unwrap();
         let v = parse(&json);
         assert_eq!(v["jsonrpc"], JSONRPC_VERSION);
         assert_eq!(v["method"], notification::SESSION_UPDATE);
@@ -2148,7 +2168,7 @@ mod tests {
         let event = TurnEvent::Thinking {
             delta: "hmm".into(),
         };
-        let json = notification_for_turn_event("s1", &event).unwrap();
+        let json = notification_for_turn_event("s1", &event, None).unwrap();
         let v = parse(&json);
         assert_eq!(v["params"]["type"], "agent_thought_chunk");
         assert_eq!(v["params"]["text"], "hmm");
@@ -2161,7 +2181,7 @@ mod tests {
             name: "bash".into(),
             args: json!({"cmd": "ls"}),
         };
-        let json = notification_for_turn_event("s1", &event).unwrap();
+        let json = notification_for_turn_event("s1", &event, None).unwrap();
         let v = parse(&json);
         assert_eq!(v["params"]["type"], "tool_call");
         assert_eq!(v["params"]["tool_call_id"], "tc_1");
@@ -2176,7 +2196,7 @@ mod tests {
             name: "bash".into(),
             output: "file.txt".into(),
         };
-        let json = notification_for_turn_event("s1", &event).unwrap();
+        let json = notification_for_turn_event("s1", &event, None).unwrap();
         let v = parse(&json);
         assert_eq!(v["params"]["type"], "tool_result");
         assert_eq!(v["params"]["tool_call_id"], "tc_1");
@@ -2191,7 +2211,7 @@ mod tests {
             arguments_summary: "rm -rf /".into(),
             timeout_secs: 30,
         };
-        let json = notification_for_turn_event("s1", &event).unwrap();
+        let json = notification_for_turn_event("s1", &event, None).unwrap();
         let v = parse(&json);
         assert_eq!(v["params"]["type"], "approval_request");
         assert_eq!(v["params"]["request_id"], "ar_1");
@@ -2200,13 +2220,32 @@ mod tests {
     }
 
     #[test]
-    fn usage_event_returns_none() {
+    fn usage_event_emits_context_usage_notification() {
         let event = TurnEvent::Usage {
             input_tokens: Some(100),
             output_tokens: Some(50),
             cost_usd: Some(0.01),
         };
-        assert!(notification_for_turn_event("s1", &event).is_none());
+        let json = notification_for_turn_event("s1", &event, Some(32_000)).unwrap();
+        let v = parse(&json);
+        assert_eq!(v["params"]["type"], "context_usage");
+        assert_eq!(v["params"]["session_id"], "s1");
+        assert_eq!(v["params"]["input_tokens"], 100);
+        assert_eq!(v["params"]["max_context_tokens"], 32_000);
+    }
+
+    #[test]
+    fn usage_event_without_input_tokens_still_emits() {
+        let event = TurnEvent::Usage {
+            input_tokens: None,
+            output_tokens: Some(50),
+            cost_usd: None,
+        };
+        // Should emit even without input_tokens — TUI can handle None.
+        let json = notification_for_turn_event("s1", &event, None).unwrap();
+        let v = parse(&json);
+        assert_eq!(v["params"]["type"], "context_usage");
+        assert!(v["params"]["input_tokens"].is_null());
     }
 
     #[test]

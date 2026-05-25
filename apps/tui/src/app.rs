@@ -18,7 +18,7 @@ use crate::logs;
 use crate::mouse;
 use crate::onboard_pane::OnboardPane;
 use crate::theme;
-use crate::widgets::{HelpContext, HelpEntry, HelpNode};
+use crate::widgets::{CtxBar, HelpContext, HelpEntry, HelpNode};
 
 /// How often the UI redraws when no input arrives (for live panes).
 const TICK: Duration = Duration::from_millis(200);
@@ -131,7 +131,8 @@ pub async fn run(
                 }
             }
 
-            draw_status_bar(frame, chunks[2], &conn_state, rpc.tui_id());
+            let (ctx_input, ctx_max) = chat_pane.ctx_tokens();
+            draw_status_bar(frame, chunks[2], &conn_state, rpc.tui_id(), CtxBar::new(ctx_input, ctx_max));
 
             // Help modal overlay (drawn last so it sits on top).
             if show_help {
@@ -357,6 +358,7 @@ fn draw_status_bar(
     area: Rect,
     state: &ConnectionState,
     tui_id: Option<&str>,
+    ctx: CtxBar,
 ) {
     let (dot, label, style) = match state {
         ConnectionState::Connected => (
@@ -392,6 +394,11 @@ fn draw_status_bar(
     spans.push(Span::styled(label, style));
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+
+    // Ctx bar — left-aligned, overlaid on the same row.
+    if let Some(w) = ctx.widget() {
+        frame.render_widget(w, area);
+    }
 }
 
 // ── Help modal ───────────────────────────────────────────────────
