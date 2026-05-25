@@ -791,6 +791,29 @@ impl RpcClient {
         self.session_new_with_id(agent_alias, cwd, None).await
     }
 
+    /// Like [`session_new_with_id`] but sets `exclude_memory: true` so the
+    /// daemon strips memory tools and uses a NoneMemory backend. Used by the
+    /// ACP pane, which should never have access to persistent memory.
+    pub async fn session_new_acp(
+        &self,
+        agent_alias: &str,
+        cwd: Option<&str>,
+        session_id: Option<&str>,
+    ) -> Result<SessionNewResult> {
+        let tui_id = self.tui_id.as_deref();
+        self.call(
+            method::SESSION_NEW,
+            serde_json::json!({
+                "agent_alias": agent_alias,
+                "cwd": cwd,
+                "session_id": session_id,
+                "tui_id": tui_id,
+                "exclude_memory": true,
+            }),
+        )
+        .await
+    }
+
     /// Create or rehydrate a session. When `session_id` is `Some`, the daemon
     /// creates the session with that ID, restoring persisted history if it
     /// exists — effectively "attaching" to a prior session.

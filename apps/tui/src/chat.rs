@@ -136,7 +136,12 @@ impl<'a> Chat<'a> {
             None
         };
         let cwd_str = local_cwd.as_deref().and_then(|p| p.to_str());
-        match self.rpc.session_new(agent_alias, cwd_str).await {
+        let result = if self.pane_kind == PaneKind::Acp {
+            self.rpc.session_new_acp(agent_alias, cwd_str, None).await
+        } else {
+            self.rpc.session_new(agent_alias, cwd_str).await
+        };
+        match result {
             Ok(session) => {
                 let mut state = ChatState::new(session.session_id, agent_alias.to_string());
                 // Only ACP shows the working directory above the input bar.
@@ -294,10 +299,16 @@ impl<'a> Chat<'a> {
                             state.reset_for_session(new_sid.clone(), new_name);
                             state.agent_alias = agent_alias.clone();
                             // Rehydrate the session in the daemon so prompts work.
-                            if let Ok(rehydrated) = self
-                                .rpc
-                                .session_new_with_id(&agent_alias, None, Some(&new_sid))
-                                .await
+                            let rehydrate_result = if self.pane_kind == PaneKind::Acp {
+                                self.rpc
+                                    .session_new_acp(&agent_alias, None, Some(&new_sid))
+                                    .await
+                            } else {
+                                self.rpc
+                                    .session_new_with_id(&agent_alias, None, Some(&new_sid))
+                                    .await
+                            };
+                            if let Ok(rehydrated) = rehydrate_result
                                 && self.pane_kind == PaneKind::Acp
                             {
                                 state.cwd = rehydrated.workspace_dir;
@@ -513,7 +524,12 @@ impl<'a> Chat<'a> {
                     None
                 };
                 let cwd_str = local_cwd.as_deref().and_then(|p| p.to_str());
-                if let Ok(s) = self.rpc.session_new(&state.agent_alias, cwd_str).await {
+                let new_session = if self.pane_kind == PaneKind::Acp {
+                    self.rpc.session_new_acp(&state.agent_alias, cwd_str, None).await
+                } else {
+                    self.rpc.session_new(&state.agent_alias, cwd_str).await
+                };
+                if let Ok(s) = new_session {
                     let _ = self.rpc.session_close(&state.session_id).await;
                     state.reset_for_session(s.session_id, None);
                     if self.pane_kind == PaneKind::Acp {

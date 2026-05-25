@@ -572,6 +572,13 @@ impl Agent {
         self.model_name = model_name;
     }
 
+    /// Return the names of all registered tools.  Test-only — avoids
+    /// exposing `Box<dyn Tool>` across the crate boundary.
+    #[cfg(test)]
+    pub fn tool_names(&self) -> Vec<&str> {
+        self.tools.iter().map(|t| t.name()).collect()
+    }
+
     /// Hydrate the agent with prior chat messages (e.g. from a session backend).
     ///
     /// Ensures a system prompt is prepended if history is empty, then appends all
@@ -4442,118 +4449,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn exclude_memory_strips_memory_tools() {
-        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
-        let mem: Arc<dyn Memory> = Arc::new(zeroclaw_memory::NoneMemory::new("none"));
-
-        let agent = Agent::builder()
-            .model_provider(Box::new(MockModelProvider {
-                responses: Mutex::new(vec![]),
-            }))
-            .tools(vec![
-                Box::new(NamedMockTool::new("shell")),
-                Box::new(NamedMockTool::new("memory_recall")),
-                Box::new(NamedMockTool::new("memory_store")),
-                Box::new(NamedMockTool::new("memory_forget")),
-                Box::new(NamedMockTool::new("memory_export")),
-                Box::new(NamedMockTool::new("memory_purge")),
-                Box::new(NamedMockTool::new("file_read")),
-            ])
-            .memory(mem)
-            .observer(observer)
-            .tool_dispatcher(Box::new(XmlToolDispatcher))
-            .workspace_dir(std::path::PathBuf::from("/tmp"))
-            .exclude_memory(true)
-            .build()
-            .expect("agent builder should succeed");
-
-        let names: Vec<&str> = agent.tools.iter().map(|t| t.name()).collect();
-        assert_eq!(names, &["shell", "file_read"]);
-    }
-
-    #[test]
-    fn exclude_memory_forces_none_backend_and_no_autosave() {
-        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
-        // Provide a real memory backend — exclude_memory should override it.
-        let workspace = tempfile::TempDir::new().expect("temp dir");
-        let mem: Arc<dyn Memory> = Arc::from(
-            zeroclaw_memory::create_memory(
-                &zeroclaw_config::schema::MemoryConfig {
-                    backend: "sqlite".into(),
-                    ..Default::default()
-                },
-                workspace.path(),
-                None,
-            )
-            .expect("memory creation should succeed"),
-        );
-
-        let agent = Agent::builder()
-            .model_provider(Box::new(MockModelProvider {
-                responses: Mutex::new(vec![]),
-            }))
-            .tools(vec![Box::new(NamedMockTool::new("shell"))])
-            .memory(mem)
-            .observer(observer)
-            .tool_dispatcher(Box::new(XmlToolDispatcher))
-            .workspace_dir(workspace.path().to_path_buf())
-            .auto_save(true)
-            .exclude_memory(true)
-            .build()
-            .expect("agent builder should succeed");
-
-        assert_eq!(
-            agent.memory.name(),
-            "none",
-            "memory backend must be NoneMemory"
-        );
-        assert!(!agent.auto_save, "auto_save must be forced off");
-    }
-
-    #[test]
-    fn exclude_memory_false_preserves_memory() {
-        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
-        let workspace = tempfile::TempDir::new().expect("temp dir");
-        let mem: Arc<dyn Memory> = Arc::from(
-            zeroclaw_memory::create_memory(
-                &zeroclaw_config::schema::MemoryConfig {
-                    backend: "sqlite".into(),
-                    ..Default::default()
-                },
-                workspace.path(),
-                None,
-            )
-            .expect("memory creation should succeed"),
-        );
-
-        let agent = Agent::builder()
-            .model_provider(Box::new(MockModelProvider {
-                responses: Mutex::new(vec![]),
-            }))
-            .tools(vec![
-                Box::new(NamedMockTool::new("shell")),
-                Box::new(NamedMockTool::new("memory_recall")),
-            ])
-            .memory(mem)
-            .observer(observer)
-            .tool_dispatcher(Box::new(XmlToolDispatcher))
-            .workspace_dir(workspace.path().to_path_buf())
-            .auto_save(true)
-            .exclude_memory(false)
-            .build()
-            .expect("agent builder should succeed");
-
-        assert_ne!(
-            agent.memory.name(),
-            "none",
-            "memory backend must be preserved"
-        );
-        assert!(agent.auto_save, "auto_save must be preserved");
-        let names: Vec<&str> = agent.tools.iter().map(|t| t.name()).collect();
-        assert!(
-            names.contains(&"memory_recall"),
-            "memory tools must be preserved"
-        );
-    }
 }

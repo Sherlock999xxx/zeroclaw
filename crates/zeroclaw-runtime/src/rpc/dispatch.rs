@@ -575,6 +575,14 @@ impl RpcDispatcher {
 
     // ── Session handlers ─────────────────────────────────────────
 
+    /// Test-only: call `handle_session_new` directly, bypassing the
+    /// authentication gate in the `run` loop.  This lets integration tests
+    /// drive the full agent-creation path without spinning up a transport.
+    #[cfg(test)]
+    pub async fn handle_session_new_for_test(&self, params: &Value) -> RpcResult {
+        self.handle_session_new(params).await
+    }
+
     async fn handle_session_new(&self, params: &Value) -> RpcResult {
         let req: SessionNewParams = parse_params(params)?;
         let session_id = req
@@ -594,7 +602,7 @@ impl RpcDispatcher {
             &req.agent_alias,
             cwd_path,
             false,
-            false,
+            req.exclude_memory.unwrap_or(false),
             tui_env,
         )
         .await
@@ -2200,5 +2208,148 @@ mod tests {
         let val = to_result(r).unwrap();
         assert_eq!(val["protocol_version"], 1);
         assert_eq!(val["server_version"], "0.1.0");
+    }
+
+    // -----------------------------------------------------------------------
+    // ACP session/new — memory-tool exclusion
+    // -----------------------------------------------------------------------
+    //
+    // These tests verify that `session/new` with `exclude_memory: true` strips
+    // all five memory tools from the agent, while `exclude_memory: false` leaves
+    // at least one memory tool present.
+    //
+    // They live here (not in `tests/`) because they depend on `#[cfg(test)]`
+    // helpers: `RpcContext::minimal`, `RpcDispatcher::handle_session_new_for_test`,
+    // and `Agent::tool_names`.
+
+    const MEMORY_TOOLS: &[&str] = &[
+        "memory_recall",
+        "memory_store",
+        "memory_forget",
+        "memory_export",
+        "memory_purge",
+    ];
+
+    fn make_acp_test_config(tmp: &tempfile::TempDir) -> zeroclaw_config::schema::Config {
+        use std::collections::HashMap;
+        use zeroclaw_config::schema::{AliasedAgentConfig, RiskProfileConfig};
+
+        let workspace_dir = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_dir).unwrap();
+
+        let mut providers = zeroclaw_config::providers::Providers::default();
+        {
+            let base = providers
+                .models
+                .ensure("openai", "test-provider")
+                .expect("`openai` slot must exist");
+            base.api_key = Some("test-key".into());
+            base.model = Some("test-model".into());
+            base.uri = Some("http://127.0.0.1:1".into());
+        }
+
+        let mut agents = HashMap::new();
+        agents.insert(
+            "test-agent".to_string(),
+            AliasedAgentConfig {
+                enabled: true,
+                model_provider: "openai.test-provider".into(),
+                risk_profile: "test-profile".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let mut risk_profiles = HashMap::new();
+        risk_profiles.insert("test-profile".to_string(), RiskProfileConfig::default());
+
+        zeroclaw_config::schema::Config {
+            data_dir: workspace_dir,
+            config_path: tmp.path().join("config.toml"),
+            providers,
+            agents,
+            risk_profiles,
+            ..zeroclaw_config::schema::Config::default()
+        }
+    }
+
+    fn make_acp_test_dispatcher(
+        config: zeroclaw_config::schema::Config,
+    ) -> (RpcDispatcher, Arc<crate::rpc::session::SessionStore>) {
+        use zeroclaw_infra::session_queue::SessionActorQueue;
+        let queue = Arc::new(SessionActorQueue::new(4, 10, 60));
+        let sessions = Arc::new(crate::rpc::session::SessionStore::new(16, queue));
+        let ctx = RpcContext::minimal(config, Arc::clone(&sessions));
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
+        let dispatcher = RpcDispatcher::new(ctx, tx, "test-peer".into());
+        (dispatcher, sessions)
+    }
+
+    #[tokio::test]
+    async fn acp_session_new_exposes_no_memory_tools() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = make_acp_test_config(&tmp);
+        let (dispatcher, sessions) = make_acp_test_dispatcher(config);
+
+        let params = json!({
+            "agent_alias": "test-agent",
+            "exclude_memory": true,
+            "session_id": "acp-test-session-001"
+        });
+
+        let result = dispatcher.handle_session_new_for_test(&params).await;
+        assert!(
+            result.is_ok(),
+            "session/new should succeed; got: {:?}",
+            result.err()
+        );
+
+        let agent_arc = sessions
+            .get_agent("acp-test-session-001")
+            .await
+            .expect("session must be registered in the store after session/new");
+
+        let agent = agent_arc.lock().await;
+        let tool_names = agent.tool_names();
+
+        for &mem_tool in MEMORY_TOOLS {
+            assert!(
+                !tool_names.contains(&mem_tool),
+                "ACP session must NOT expose `{mem_tool}` — found in tool list: {tool_names:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn non_acp_session_new_exposes_memory_tools() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = make_acp_test_config(&tmp);
+        let (dispatcher, sessions) = make_acp_test_dispatcher(config);
+
+        let params = json!({
+            "agent_alias": "test-agent",
+            "exclude_memory": false,
+            "session_id": "chat-test-session-001"
+        });
+
+        let result = dispatcher.handle_session_new_for_test(&params).await;
+        assert!(
+            result.is_ok(),
+            "session/new should succeed; got: {:?}",
+            result.err()
+        );
+
+        let agent_arc = sessions
+            .get_agent("chat-test-session-001")
+            .await
+            .expect("session must be registered in the store after session/new");
+
+        let agent = agent_arc.lock().await;
+        let tool_names = agent.tool_names();
+
+        let has_any_memory_tool = MEMORY_TOOLS.iter().any(|&t| tool_names.contains(&t));
+        assert!(
+            has_any_memory_tool,
+            "non-ACP session MUST expose at least one memory tool — tool list: {tool_names:?}"
+        );
     }
 }
