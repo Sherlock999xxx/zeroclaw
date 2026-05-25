@@ -1770,6 +1770,14 @@ impl<'a> App<'a> {
                     .position(|v| v == current)
                     .unwrap_or(0);
             }
+            PropKind::StringArray => {
+                // Deserialize the JSON array into one entry-per-line for editing.
+                self.select_items.clear();
+                let raw = value.unwrap_or_default();
+                let entries: Vec<String> =
+                    serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default();
+                self.edit_buf = entries.join("\n");
+            }
             _ => {
                 self.select_items.clear();
                 self.edit_buf = value.unwrap_or_default();
@@ -1858,6 +1866,54 @@ impl<'a> App<'a> {
         if self.is_select_edit() {
             return self.handle_select_edit(key).await;
         }
+        // For StringArray fields, Enter adds a new line (new entry), Ctrl+S saves.
+        let is_string_array = matches!(&self.screen, Screen::FieldEdit { field_idx, .. }
+            if self.fields[*field_idx].kind == PropKind::StringArray);
+
+        if is_string_array {
+            match key.code {
+                KeyCode::Esc => self.pop_to_field_list().await?,
+                KeyCode::Enter => {
+                    self.edit_buf.push('\n');
+                }
+                KeyCode::Backspace => {
+                    self.edit_buf.pop();
+                }
+                KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Screen::FieldEdit {
+                        prefix, field_idx, ..
+                    } = &self.screen
+                    {
+                        let prop = self.fields[*field_idx].path.clone();
+                        let prefix = prefix.clone();
+                        let entries: Vec<String> = self
+                            .edit_buf
+                            .lines()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .collect();
+                        let value = serde_json::Value::Array(
+                            entries.into_iter().map(serde_json::Value::String).collect(),
+                        );
+                        match self.rpc.config_set(&prop, value).await {
+                            Ok(()) => {
+                                self.status_msg = Some(format!("Set {prop}"));
+                                self.load_fields(&prefix).await?;
+                                self.pop_to_field_list_keep_cursor().await?;
+                            }
+                            Err(e) => self.status_msg = Some(format!("Set failed: {e}")),
+                        }
+                    }
+                }
+                KeyCode::Char(c) => {
+                    self.edit_buf.push(c);
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
         match key.code {
             KeyCode::Esc => self.pop_to_field_list().await?,
             KeyCode::Enter => {
@@ -2665,9 +2721,40 @@ impl<'a> App<'a> {
             );
             let kind_hint = if field.is_secret {
                 format!("Type: {} (secret — input hidden)", field.kind.wire_name())
+            } else if field.kind == PropKind::StringArray {
+                format!("Type: {} (one entry per line; Enter=new line, Ctrl+S=save)", field.kind.wire_name())
             } else {
                 format!("Type: {}", field.kind.wire_name())
             };
+
+            if field.kind == PropKind::StringArray {
+                // Multi-line display: each array entry on its own line.
+                let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+                    kind_hint.clone(),
+                    theme::dim_style(),
+                ))];
+                let buf_lines: Vec<&str> = self.edit_buf.split('\n').collect();
+                for (i, l) in buf_lines.iter().enumerate() {
+                    let is_last = i + 1 == buf_lines.len();
+                    let text = if is_last {
+                        format!("{l}█")
+                    } else {
+                        l.to_string()
+                    };
+                    lines.push(Line::from(Span::styled(text, theme::input_style())));
+                }
+                frame.render_widget(
+                    Paragraph::new(lines).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(format!(" {short_name} (string_array) ")),
+                    ),
+                    r.main,
+                );
+                self.draw_footer(frame, r, "Enter=new line  Ctrl+S=save  Esc=cancel");
+                return;
+            }
+
             let input_display = if field.is_secret {
                 format!("{}█", "•".repeat(self.edit_buf.len()))
             } else {
@@ -2848,7 +2935,10 @@ impl crate::widgets::HelpContext for App<'_> {
                     self.field_list_context()
                 }
             }
-            Screen::FieldEdit { .. } => {
+            Screen::FieldEdit { field_idx, .. } => {
+                let is_string_array = self.fields.get(*field_idx)
+                    .map(|f| f.kind == PropKind::StringArray)
+                    .unwrap_or(false);
                 if self.is_select_edit() {
                     if self.filter.is_some() {
                         HelpNode::entries(vec![
@@ -2868,6 +2958,13 @@ impl crate::widgets::HelpContext for App<'_> {
                             E::key("Mouse", "Click, scroll, double-click to save"),
                         ])
                     }
+                } else if is_string_array {
+                    HelpNode::entries(vec![
+                        E::key("Enter", "New line (new entry)"),
+                        E::key("Ctrl+S", "Save array"),
+                        E::key("Esc", "Cancel"),
+                        E::key("?", "This help"),
+                    ])
                 } else {
                     HelpNode::entries(vec![
                         E::key("Enter", "Save value"),
