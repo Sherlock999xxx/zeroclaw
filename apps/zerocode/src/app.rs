@@ -39,7 +39,7 @@ const MODES: [Mode; 5] = [
 enum Mode {
     Dashboard,
     Config,
-    Acp,
+    Acp, // displayed as "Code" in the UI
     Chat,
     Logs,
     /// Hidden until the onboarding flow is ready (F6 binding commented out).

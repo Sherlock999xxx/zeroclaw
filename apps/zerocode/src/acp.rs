@@ -4,6 +4,7 @@ use ratatui::layout::Rect;
 use crate::chat;
 use crate::client::RpcClient;
 
+/// ACP pane — displayed as "Code" in the UI; internal name kept for historical reasons.
 pub(crate) struct Acp<'a> {
     inner: chat::Chat<'a>,
 }
