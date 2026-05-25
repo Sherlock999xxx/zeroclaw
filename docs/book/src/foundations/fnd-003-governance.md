@@ -122,6 +122,8 @@ Plus one terminal state that can be reached from anywhere:
 🚫 Won't Do  ← explicit decision not to pursue; never silently closed
 ```
 
+The board-level `Won't Do` state is a durable closure decision. Current closure-label spelling and replacement-process rules live in the [maintainer label guide](../maintainers/labels.md#resolution-labels) and [superseding guide](../maintainers/superseding.md).
+
 ### 3.2 The Gate Questions
 
 Every transition has a gate question. The question must be answered "yes" before the item moves forward. This is the project board made operational — the Vision → Architecture → Design → Implementation → Testing → Documentation hierarchy becomes a checklist at each stage.
@@ -914,10 +916,10 @@ This table records governance intent and historical taxonomy shape. For current 
 | `status:help-wanted` | `#059669` Green | Looking for a contributor |
 | `status:good-first-issue` | `#059669` Green | Suitable for new contributors |
 | `status:discussion` | `#a78bfa` Purple | Needs team discussion before work begins |
-| `status:wont-fix` | `#9ca3af` Gray | Explicitly decided not to pursue |
-| `status:duplicate` | `#9ca3af` Gray | Duplicate of another issue |
 
 The live community-pickup labels are the unprefixed `good first issue` and `help wanted`; the `status:*` pickup rows above are historical taxonomy. Current operational risk labels also distinguish issue risk (likely fix blast radius from the report) from PR risk (the actual diff under review). See the [maintainer label guide](../maintainers/labels.md) for the live policy.
+
+Terminal closure labels are operational policy, not part of the historical `status:*` taxonomy in this foundation document. Use the [maintainer label guide](../maintainers/labels.md#resolution-labels) for current resolution labels and the [superseding guide](../maintainers/superseding.md) for replacement-process rules.
 
 ### `rfc:` — RFC-specific status
 
