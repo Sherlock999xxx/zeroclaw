@@ -340,7 +340,7 @@ impl<'a> Logs<'a> {
             events: Vec::new(),
             list_state: ListState::default(),
             follow: true,
-            min_severity: SEV_INFO,
+            min_severity: SEV_DEBUG,
             subscribed: false,
             detail_open: false,
             detail_scroll: 0,

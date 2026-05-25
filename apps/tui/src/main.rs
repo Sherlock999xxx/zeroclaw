@@ -237,6 +237,18 @@ fn spawn_ephemeral_daemon(config_dir: &std::path::Path) -> anyhow::Result<()> {
         .arg("--config-dir")
         .arg(config_dir);
 
+    // Lower the daemon's log level to DEBUG when spawned ephemerally by the
+    // TUI so that the Logs pane can show debug events without any manual
+    // RUST_LOG override.  Third-party crates stay at WARN to avoid noise.
+    // Honour an existing RUST_LOG if the user set one themselves.
+    if std::env::var_os("RUST_LOG").is_none() {
+        cmd.env(
+            "RUST_LOG",
+            "debug,matrix_sdk=warn,matrix_sdk_base=warn,matrix_sdk_crypto=warn,\
+             hyper=warn,reqwest=warn,tokio=warn,h2=warn",
+        );
+    }
+
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
