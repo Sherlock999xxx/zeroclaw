@@ -2073,12 +2073,13 @@ impl ChatState {
                 max_context_tokens,
                 ..
             } => {
-                // Credit on arrival: every Usage event from the provider is
-                // added immediately to the session-cumulative counter. No
-                // per-turn buffer — cancellations/errors mid-turn still count.
-                if let Some(t) = input_tokens {
-                    self.context_input_tokens =
-                        Some(self.context_input_tokens.unwrap_or(0).saturating_add(t));
+                // Replace-on-arrival: ContextUsage reports the *current* prompt
+                // size for the upcoming/just-sent turn. It is an absolute
+                // measurement of how full the model's context window is, not
+                // an increment. Accumulating across turns produced a runaway
+                // counter that quickly exceeded the window.
+                if input_tokens.is_some() {
+                    self.context_input_tokens = input_tokens;
                 }
                 if max_context_tokens.is_some() {
                     self.context_max_tokens = max_context_tokens;

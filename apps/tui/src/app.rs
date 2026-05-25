@@ -131,7 +131,11 @@ pub async fn run(
                 }
             }
 
-            let (ctx_input, ctx_max) = chat_pane.ctx_tokens();
+            let (ctx_input, ctx_max) = match mode {
+                Mode::Chat => chat_pane.ctx_tokens(),
+                Mode::Acp => acp_pane.ctx_tokens(),
+                _ => (None, None),
+            };
             draw_status_bar(frame, chunks[2], &conn_state, rpc.tui_id(), CtxBar::new(ctx_input, ctx_max));
 
             // Help modal overlay (drawn last so it sits on top).
@@ -383,21 +387,33 @@ fn draw_status_bar(
     };
 
     let id_len = id_span.as_ref().map(|s| s.width()).unwrap_or(0);
-    let text_len = id_len + 1 + label.len(); // id + dot + label
-    let padding = (area.width as usize).saturating_sub(text_len);
+    let conn_text_len = (id_len + 1 + label.len()) as u16; // id + dot + label
 
-    let mut spans = vec![Span::raw(" ".repeat(padding))];
+    // Split the row: ctx bar on the left, connection status on the right.
+    // Right column is sized to exactly fit the conn text; left gets the rest.
+    let right_w = conn_text_len.min(area.width);
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(right_w),
+        ])
+        .split(area);
+    let left_area = chunks[0];
+    let right_area = chunks[1];
+
+    // Right: connection status, no leading padding (column is exact width).
+    let mut spans = Vec::with_capacity(3);
     if let Some(id) = id_span {
         spans.push(id);
     }
     spans.push(Span::styled(dot, style));
     spans.push(Span::styled(label, style));
+    frame.render_widget(Paragraph::new(Line::from(spans)), right_area);
 
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
-
-    // Ctx bar — left-aligned, overlaid on the same row.
+    // Left: ctx bar, left-aligned in its own column.
     if let Some(w) = ctx.widget() {
-        frame.render_widget(w, area);
+        frame.render_widget(w, left_area);
     }
 }
 
