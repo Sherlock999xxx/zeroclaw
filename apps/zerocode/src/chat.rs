@@ -21,6 +21,7 @@ use crate::client::{
     method, parse_session_update,
 };
 use crate::diff;
+use crate::file_explorer::{ExplorerAction, FileExplorerState};
 use crate::input_bar::{InputBarAction, InputBarState};
 use crate::mouse;
 use crate::theme;
@@ -40,12 +41,12 @@ enum ChatPhase {
         list_state: ListState,
         loading: bool,
     },
-    /// WSS only: user types the remote working directory before session starts.
+    /// WSS only: user picks the remote working directory before session starts.
     PickCwd {
         /// The agent alias already chosen.
         agent_alias: String,
-        /// Text buffer for the CWD path.
-        buf: String,
+        /// Interactive directory picker.
+        explorer: FileExplorerState,
     },
     /// Active chat session.
     Active(Box<ChatState>),
@@ -141,9 +142,13 @@ impl<'a> Chat<'a> {
     async fn pick_or_start_session(&mut self, agent_alias: &str) {
         if self.pane_kind == PaneKind::Acp && self.rpc.transport() == crate::client::Transport::Wss
         {
+            let start_dir = std::env::current_dir()
+                .ok()
+                .or_else(|| directories::UserDirs::new().map(|u| u.home_dir().to_path_buf()))
+                .unwrap_or_else(|| std::path::PathBuf::from("/"));
             self.phase = ChatPhase::PickCwd {
                 agent_alias: agent_alias.to_string(),
-                buf: String::new(),
+                explorer: FileExplorerState::new_dir_picker(start_dir),
             };
         } else {
             self.start_session(agent_alias, None).await;
@@ -239,8 +244,8 @@ impl<'a> Chat<'a> {
                     self.pane_kind.name(),
                 );
             }
-            ChatPhase::PickCwd { agent_alias, buf } => {
-                draw_cwd_picker(frame, area, agent_alias, buf, self.pane_kind.name());
+            ChatPhase::PickCwd { explorer, .. } => {
+                explorer.render(frame, area);
             }
             ChatPhase::Active(state) => {
                 render(frame, state, area);
@@ -292,21 +297,18 @@ impl<'a> Chat<'a> {
                 }
                 return false;
             }
-            ChatPhase::PickCwd { agent_alias, buf } => {
-                match key.code {
-                    KeyCode::Enter => {
-                        // Clone what we need before consuming self via start_session.
+            ChatPhase::PickCwd {
+                agent_alias,
+                explorer,
+            } => {
+                let action = explorer.handle_key(key);
+                match action {
+                    ExplorerAction::ConfirmDir(path) => {
                         let alias = agent_alias.clone();
-                        let cwd = buf.clone();
-                        let cwd_opt = if cwd.trim().is_empty() {
-                            None
-                        } else {
-                            Some(cwd.trim().to_string())
-                        };
-                        self.start_session(&alias, cwd_opt.as_deref()).await;
+                        let cwd_str = path.to_str().map(str::to_string);
+                        self.start_session(&alias, cwd_str.as_deref()).await;
                     }
-                    KeyCode::Esc => {
-                        // Go back to agent picker.
+                    ExplorerAction::Cancel => {
                         self.phase = ChatPhase::PickAgent {
                             agents: Vec::new(),
                             list_state: ListState::default(),
@@ -315,17 +317,7 @@ impl<'a> Chat<'a> {
                         // Re-fetch agents asynchronously.
                         let _ = self.init().await;
                     }
-                    KeyCode::Char(c) => {
-                        if let ChatPhase::PickCwd { buf, .. } = &mut self.phase {
-                            buf.push(c);
-                        }
-                    }
-                    KeyCode::Backspace => {
-                        if let ChatPhase::PickCwd { buf, .. } = &mut self.phase {
-                            buf.pop();
-                        }
-                    }
-                    _ => {}
+                    ExplorerAction::Confirm(_) | ExplorerAction::None => {}
                 }
                 return false;
             }
@@ -599,9 +591,15 @@ impl<'a> Chat<'a> {
                 {
                     // For WSS ACP, go through the CWD picker for new sessions too.
                     let _ = self.rpc.session_close(&state.session_id).await;
+                    let start_dir = std::env::current_dir()
+                        .ok()
+                        .or_else(|| {
+                            directories::UserDirs::new().map(|u| u.home_dir().to_path_buf())
+                        })
+                        .unwrap_or_else(|| std::path::PathBuf::from("/"));
                     self.phase = ChatPhase::PickCwd {
                         agent_alias: alias,
-                        buf: String::new(),
+                        explorer: FileExplorerState::new_dir_picker(start_dir),
                     };
                 } else {
                     let local_cwd = if self.rpc.transport() == crate::client::Transport::Unix {
@@ -743,6 +741,12 @@ impl<'a> Chat<'a> {
     }
 
     pub(crate) fn handle_mouse(&mut self, mouse: MouseEvent, area: Rect) {
+        // Dir-picker explorer handles its own mouse events.
+        if let ChatPhase::PickCwd { explorer, .. } = &mut self.phase {
+            explorer.handle_mouse(mouse);
+            return;
+        }
+
         if let ChatPhase::Active(ref mut state) = self.phase {
             // Let the file explorer handle mouse events first when open.
             if state.input_bar.handle_mouse(mouse) {
@@ -865,10 +869,7 @@ impl<'a> crate::widgets::HelpContext for Chat<'a> {
                     ])
                 }
             }
-            ChatPhase::PickCwd { .. } => HelpNode::entries(vec![
-                E::key("Enter", "Start session (empty = default dir)"),
-                E::key("Esc", "Back to agent picker"),
-            ]),
+            ChatPhase::PickCwd { explorer, .. } => explorer.help_context(),
             ChatPhase::Error(_) => HelpNode::entries(vec![E::key("q", "Quit")]),
             ChatPhase::Active(state) => {
                 match &state.session_overlay {
@@ -979,55 +980,6 @@ fn draw_agent_picker(
         .collect();
     let list = List::new(items).highlight_style(theme::list_highlight_style());
     frame.render_stateful_widget(list, chunks[1], list_state);
-}
-
-// ── CWD picker rendering ─────────────────────────────────────────
-
-/// Render the working-directory text-input overlay for WSS ACP sessions.
-fn draw_cwd_picker(frame: &mut Frame, area: Rect, agent_alias: &str, buf: &str, tab_title: &str) {
-    // Outer block fills the whole pane area.
-    let block = Block::default()
-        .title(Span::styled(format!(" {tab_title} "), theme::title_style()))
-        .borders(Borders::ALL)
-        .border_style(theme::dim_style());
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Fill(1),
-            Constraint::Length(6),
-            Constraint::Fill(1),
-        ])
-        .split(inner);
-
-    let dialog_area = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(10),
-            Constraint::Min(40),
-            Constraint::Percentage(10),
-        ])
-        .split(chunks[1])[1];
-
-    frame.render_widget(Clear, dialog_area);
-
-    let cursor = "\u{2588}"; // block cursor
-    let display_buf = format!("{buf}{cursor}");
-    let text = format!(
-        "Agent: {agent_alias}\n\nWorking directory (leave blank for default):\n  {display_buf}\n\nEnter=start  Esc=back"
-    );
-    let p = Paragraph::new(text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Set Working Directory ")
-                .style(theme::overlay_border_style()),
-        )
-        .wrap(ratatui::widgets::Wrap { trim: true });
-    frame.render_widget(p, dialog_area);
 }
 
 // ── Error rendering ──────────────────────────────────────────────
