@@ -62,11 +62,11 @@ impl Mode {
 
     fn key(self) -> &'static str {
         match self {
-            Mode::Dashboard => "F1/1",
-            Mode::Config => "F2/2",
-            Mode::Acp => "F3/3",
-            Mode::Chat => "F4/4",
-            Mode::Logs => "F5/5",
+            Mode::Dashboard => "F1",
+            Mode::Config => "F2",
+            Mode::Acp => "F3",
+            Mode::Chat => "F4",
+            Mode::Logs => "F5",
             Mode::Onboard => "F6",
         }
     }
@@ -147,7 +147,7 @@ pub async fn run(
             // Help modal overlay (drawn last so it sits on top).
             if show_help {
                 let mut node = HelpNode::entries(vec![
-                    HelpEntry::new(vec!["F1–F5", "Alt+1–5"], "Switch mode"),
+                    HelpEntry::new(vec!["F1–F5", "Tab"], "Switch mode"),
                     HelpEntry::key("Ctrl+C", "Quit"),
                     HelpEntry::spacer(),
                 ]);
@@ -205,42 +205,46 @@ pub async fn run(
                     continue;
                 }
 
-                // Global keys: F1–F6 or Alt+1–5 switch modes
-                let is_mode_key = |code: KeyCode, f_num: u8, digit: char| -> bool {
-                    match code {
-                        KeyCode::F(n) => n == f_num,
-                        KeyCode::Char(c) if c == digit => {
-                            key.modifiers.contains(KeyModifiers::ALT)
-                        }
-                        _ => false,
-                    }
-                };
+                // Global keys: F1–F5, Tab/Shift+Tab, or 1–5 switch modes.
+                // Tab cycles forward through modes; Shift+Tab cycles backward.
                 match key.code {
-                    c if is_mode_key(c, 1, '1') => {
+                    KeyCode::F(1) => {
                         mode = Mode::Dashboard;
                         continue;
                     }
-                    c if is_mode_key(c, 2, '2') => {
+                    KeyCode::F(2) => {
                         mode = Mode::Config;
                         continue;
                     }
-                    c if is_mode_key(c, 3, '3') => {
+                    KeyCode::F(3) => {
                         mode = Mode::Acp;
                         continue;
                     }
-                    c if is_mode_key(c, 4, '4') => {
+                    KeyCode::F(4) => {
                         mode = Mode::Chat;
                         continue;
                     }
-                    c if is_mode_key(c, 5, '5') => {
+                    KeyCode::F(5) => {
                         mode = Mode::Logs;
                         continue;
                     }
-                    // F6 / Onboard hidden until ready
-                    // KeyCode::F(6) if onboard_pane.is_some() => {
-                    //     mode = Mode::Onboard;
-                    //     continue;
-                    // }
+                    KeyCode::Tab => {
+                        let modes = [
+                            Mode::Dashboard,
+                            Mode::Config,
+                            Mode::Acp,
+                            Mode::Chat,
+                            Mode::Logs,
+                        ];
+                        let idx = modes.iter().position(|m| *m == mode).unwrap_or(0);
+                        let next = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            idx.wrapping_sub(1).min(modes.len() - 1)
+                        } else {
+                            (idx + 1) % modes.len()
+                        };
+                        mode = modes[next];
+                        continue;
+                    }
                     _ => {}
                 }
 
