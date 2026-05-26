@@ -70,17 +70,23 @@ pub struct ToolCall {
 /// Raw token counts from a single LLM API response.
 ///
 /// Contract: `input_tokens` is the **total prompt size** sent to the model
-/// (uncached + cached). `cached_input_tokens` is the **subset** of
-/// `input_tokens` that was served from the prompt cache. So
-/// `cached_input_tokens <= input_tokens`, and the uncached/billable portion
-/// is `input_tokens - cached_input_tokens`.
+/// (every token the model saw, regardless of cache state).
+/// `cached_input_tokens` is the **subset** of `input_tokens` that was served
+/// from the prompt cache. So `cached_input_tokens <= input_tokens`, and the
+/// billable uncached portion is `input_tokens - cached_input_tokens`.
 ///
 /// Providers normalize to this shape:
 /// - OpenAI/Compatible: `prompt_tokens` is already total, `cached_tokens` is
 ///   already a subset — used directly.
-/// - Anthropic: `input_tokens` from the API is the *uncached* portion, and
-///   `cache_read_input_tokens` is the cached portion. The provider adapter
-///   must add them to produce a total before constructing `TokenUsage`.
+/// - Anthropic: the API reports three DISJOINT buckets per
+///   <https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching>:
+///     total_input = cache_read_input_tokens
+///                 + cache_creation_input_tokens
+///                 + input_tokens
+///   where Anthropic's `input_tokens` is *only* the tokens after the last
+///   cache breakpoint. The adapter sums all three to produce the total here.
+///   `cached_input_tokens` is set to `cache_read_input_tokens` (the
+///   discount-billed subset).
 #[derive(Debug, Clone, Default)]
 pub struct TokenUsage {
     /// Total prompt size: uncached + cached input tokens.

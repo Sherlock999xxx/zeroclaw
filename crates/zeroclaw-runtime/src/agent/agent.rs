@@ -1706,6 +1706,29 @@ impl Agent {
 
             let prepared_messages = self.prepare_provider_messages(&messages).await?;
 
+            // Outbound prompt size diagnostic — see streaming site for notes.
+            {
+                let msg_count = prepared_messages.len();
+                let content_chars: usize = prepared_messages
+                    .iter()
+                    .map(|m| m.content.len())
+                    .sum();
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(
+                        module_path!(),
+                        ::zeroclaw_log::Action::Note,
+                    )
+                    .with_attrs(::serde_json::json!({
+                        "msg_count": msg_count,
+                        "content_chars": content_chars,
+                        "approx_tokens": content_chars / 4,
+                        "model": effective_model,
+                    })),
+                    "agent: outbound prompt size (non-streaming)"
+                );
+            }
+
             let response = match self
                 .model_provider
                 .chat(
@@ -1908,6 +1931,34 @@ impl Agent {
             }
 
             let prepared_messages = self.prepare_provider_messages(&messages).await?;
+
+            // Log outbound prompt size so it can be diffed against the
+            // provider's reported usage. `content_chars` is the raw character
+            // count of message bodies (tool defs/system prompt are added by
+            // the provider adapter and not counted here, but messages are by
+            // far the largest contributor in long sessions). Rough rule of
+            // thumb: 1 token ≈ 4 chars; treat with care.
+            {
+                let msg_count = prepared_messages.len();
+                let content_chars: usize = prepared_messages
+                    .iter()
+                    .map(|m| m.content.len())
+                    .sum();
+                ::zeroclaw_log::record!(
+                    DEBUG,
+                    ::zeroclaw_log::Event::new(
+                        module_path!(),
+                        ::zeroclaw_log::Action::Note,
+                    )
+                    .with_attrs(::serde_json::json!({
+                        "msg_count": msg_count,
+                        "content_chars": content_chars,
+                        "approx_tokens": content_chars / 4,
+                        "model": effective_model,
+                    })),
+                    "agent: outbound prompt size (streaming)"
+                );
+            }
 
             // ── Streaming LLM call ────────────────────────────────────
             // Try streaming first; if the model_provider returns content we

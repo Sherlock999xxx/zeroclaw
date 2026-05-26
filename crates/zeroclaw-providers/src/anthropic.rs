@@ -201,12 +201,20 @@ struct NativeChatResponse {
 
 #[derive(Debug, Deserialize)]
 struct AnthropicUsage {
+    /// Tokens *after* the last cache breakpoint — NOT the total prompt.
+    /// Per Anthropic prompt-caching docs:
+    /// total_input = cache_read + cache_creation + input_tokens.
     #[serde(default)]
     input_tokens: Option<u64>,
     #[serde(default)]
     output_tokens: Option<u64>,
+    /// Tokens served from the prompt cache this request.
     #[serde(default)]
     cache_read_input_tokens: Option<u64>,
+    /// Tokens written to the prompt cache this request (cache miss path).
+    /// Disjoint from `cache_read_input_tokens` and `input_tokens`.
+    #[serde(default)]
+    cache_creation_input_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -606,19 +614,33 @@ impl AnthropicModelProvider {
         let mut tool_calls = Vec::new();
 
         let usage = response.usage.map(|u| {
-            // Anthropic returns `input_tokens` as the *uncached* portion and
-            // `cache_read_input_tokens` separately. Our TokenUsage contract is
-            // that `input_tokens` is the **total** prompt size (uncached +
-            // cached), and `cached_input_tokens` is a subset. Normalize here.
+            // Anthropic's three input buckets are DISJOINT per
+            // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+            //
+            //   total_input_tokens = cache_read_input_tokens
+            //                      + cache_creation_input_tokens
+            //                      + input_tokens
+            //
+            // Anthropic's `input_tokens` is the tokens AFTER the last cache
+            // breakpoint, not the total prompt. The other two are tokens
+            // before the breakpoint (read from cache vs. being written now).
+            //
+            // Our internal TokenUsage contract is that `input_tokens` is the
+            // *total* prompt sent to the model. Sum all three to normalize.
+            // `cached_input_tokens` is reported as the cache-read portion
+            // (the discounted-billing subset of the total) — this matches
+            // what billable_uncached_input = input - cached expects.
             let uncached = u.input_tokens.unwrap_or(0);
-            let cached = u.cache_read_input_tokens.unwrap_or(0);
-            let total = uncached.saturating_add(cached);
+            let cache_read = u.cache_read_input_tokens.unwrap_or(0);
+            let cache_create = u.cache_creation_input_tokens.unwrap_or(0);
+            let total = uncached
+                .saturating_add(cache_read)
+                .saturating_add(cache_create);
+            let any_reported = u.input_tokens.is_some()
+                || u.cache_read_input_tokens.is_some()
+                || u.cache_creation_input_tokens.is_some();
             TokenUsage {
-                input_tokens: if u.input_tokens.is_some() || u.cache_read_input_tokens.is_some() {
-                    Some(total)
-                } else {
-                    None
-                },
+                input_tokens: if any_reported { Some(total) } else { None },
                 output_tokens: u.output_tokens,
                 cached_input_tokens: u.cache_read_input_tokens,
             }
@@ -789,6 +811,7 @@ impl AnthropicModelProvider {
         let mut input_tokens: Option<u64> = None;
         let mut output_tokens: Option<u64> = None;
         let mut cached_input_tokens: Option<u64> = None;
+        let mut cache_creation_input_tokens: Option<u64> = None;
 
         while let Ok(Some(line)) = lines.next_line().await {
             let line = line.trim().to_string();
@@ -821,13 +844,19 @@ impl AnthropicModelProvider {
                     let observed_cached = usage
                         .and_then(|u| u.get("cache_read_input_tokens"))
                         .and_then(|t| t.as_u64());
+                    let observed_cache_create = usage
+                        .and_then(|u| u.get("cache_creation_input_tokens"))
+                        .and_then(|t| t.as_u64());
                     if let Some(v) = observed_input {
                         input_tokens = Some(v);
                     }
                     if let Some(v) = observed_cached {
                         cached_input_tokens = Some(v);
                     }
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"model": model, "input_tokens": observed_input, "cached_input_tokens": observed_cached})), "stream: message_start");
+                    if let Some(v) = observed_cache_create {
+                        cache_creation_input_tokens = Some(v);
+                    }
+                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"model": model, "input_tokens": observed_input, "cached_input_tokens": observed_cached, "cache_creation_input_tokens": observed_cache_create})), "stream: message_start");
                 }
                 "content_block_start" => {
                     if let Some(block) = event.get("content_block") {
@@ -944,17 +973,26 @@ impl AnthropicModelProvider {
                         ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note),
                         "stream: message_stop"
                     );
-                    if input_tokens.is_some() || output_tokens.is_some() {
+                    if input_tokens.is_some()
+                        || output_tokens.is_some()
+                        || cached_input_tokens.is_some()
+                        || cache_creation_input_tokens.is_some()
+                    {
                         // Normalize to TokenUsage contract: `input_tokens` is
-                        // the *total* prompt size (uncached + cached).
-                        // Anthropic streams report `input_tokens` as the
-                        // uncached portion only; fold cached reads in here.
-                        let normalized_input = match (input_tokens, cached_input_tokens) {
-                            (Some(u), Some(c)) => Some(u.saturating_add(c)),
-                            (Some(u), None) => Some(u),
-                            (None, Some(c)) => Some(c),
-                            (None, None) => None,
-                        };
+                        // the *total* prompt size. Anthropic reports three
+                        // DISJOINT buckets per
+                        // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching:
+                        //   total = cache_read + cache_creation + input_tokens
+                        // where `input_tokens` from the API is "tokens after
+                        // the last cache breakpoint", not the total.
+                        let uncached = input_tokens.unwrap_or(0);
+                        let cache_read = cached_input_tokens.unwrap_or(0);
+                        let cache_create = cache_creation_input_tokens.unwrap_or(0);
+                        let normalized_input = Some(
+                            uncached
+                                .saturating_add(cache_read)
+                                .saturating_add(cache_create),
+                        );
                         let _ = tx
                             .send(Ok(StreamEvent::Usage(TokenUsage {
                                 input_tokens: normalized_input,
@@ -1527,9 +1565,14 @@ mod tests {
     /// Fake Anthropic SSE stream covering the message_start → content → delta
     /// → stop sequence with usage in both the start frame and the stop delta.
     /// Each `data:` line is one Anthropic event per the streaming spec.
+    ///
+    /// The usage frame includes all three disjoint input buckets
+    /// (input_tokens=314 after-breakpoint, cache_read=42, cache_creation=100)
+    /// so the test exercises the documented Anthropic formula:
+    ///   total = cache_read + cache_creation + input_tokens
     fn fake_anthropic_sse() -> &'static [u8] {
         b"event: message_start\n\
-data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":314,\"cache_read_input_tokens\":42}}}\n\n\
+data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":314,\"cache_read_input_tokens\":42,\"cache_creation_input_tokens\":100}}}\n\n\
 event: content_block_start\n\
 data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n\
 event: content_block_delta\n\
@@ -1600,8 +1643,10 @@ data: {\"type\":\"message_stop\"}\n\n"
             .unwrap();
         assert_eq!(
             usage.input_tokens,
-            Some(356),
-            "input_tokens must be total (uncached 314 + cached 42) per TokenUsage contract"
+            Some(456),
+            "input_tokens must be the total of all three Anthropic buckets \
+             (after-breakpoint 314 + cache_read 42 + cache_creation 100) \
+             per the documented prompt-caching formula"
         );
         assert_eq!(
             usage.output_tokens,
@@ -2568,6 +2613,42 @@ data: {\"type\":\"message_stop\"}\n\n";
         let usage = result.usage.unwrap();
         assert_eq!(usage.input_tokens, Some(300));
         assert_eq!(usage.output_tokens, Some(75));
+    }
+
+    #[test]
+    fn native_response_sums_all_three_anthropic_input_buckets() {
+        // Per https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching:
+        //   total_input = cache_read + cache_creation + input_tokens
+        // where Anthropic's `input_tokens` is *only* the tokens after the
+        // last cache breakpoint. The three buckets are disjoint.
+        //
+        // This is the most common live shape on a long Anthropic session:
+        // huge cache_read, tiny input_tokens, occasional cache_creation as
+        // the conversation grows past the previous breakpoint.
+        let json = r#"{
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {
+                "input_tokens": 1,
+                "cache_read_input_tokens": 148539,
+                "cache_creation_input_tokens": 4200,
+                "output_tokens": 27
+            }
+        }"#;
+        let resp: NativeChatResponse = serde_json::from_str(json).unwrap();
+        let result = AnthropicModelProvider::parse_native_response(resp);
+        let usage = result.usage.expect("usage should be Some");
+        assert_eq!(
+            usage.input_tokens,
+            Some(152_740),
+            "total = 1 (after-breakpoint) + 148539 (cache_read) + 4200 (cache_creation)"
+        );
+        assert_eq!(
+            usage.cached_input_tokens,
+            Some(148_539),
+            "cached_input_tokens is the cache-read portion only \
+             (the discount-billed subset of the total)"
+        );
+        assert_eq!(usage.output_tokens, Some(27));
     }
 
     #[test]
