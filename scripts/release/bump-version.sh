@@ -109,16 +109,16 @@ fi
 # ── Marketplace: Dokploy ───────────────────────────────────────────
 echo "Marketplace templates..."
 bump "marketplace/dokploy/meta-entry.json" \
-  '"version": "[0-9]+\.[0-9]+\.[0-9]+"' \
+  '"version": "[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]*)?"' \
   "\"version\": \"${VERSION}\""
 
 bump "marketplace/dokploy/blueprints/zeroclaw/docker-compose.yml" \
-  'ghcr\.io/zeroclaw-labs/zeroclaw:[0-9]+\.[0-9]+\.[0-9]+' \
+  'ghcr\.io/zeroclaw-labs/zeroclaw:[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]*)?' \
   "ghcr.io/zeroclaw-labs/zeroclaw:${VERSION}"
 
 # ── Marketplace: EasyPanel ─────────────────────────────────────────
 bump "marketplace/easypanel/meta.yaml" \
-  'ghcr\.io/zeroclaw-labs/zeroclaw:[0-9]+\.[0-9]+\.[0-9]+' \
+  'ghcr\.io/zeroclaw-labs/zeroclaw:[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]*)?' \
   "ghcr.io/zeroclaw-labs/zeroclaw:${VERSION}"
 
 # ── Workflow description examples ──────────────────────────────────
@@ -128,7 +128,7 @@ for wf in \
   .github/workflows/discord-release.yml \
   marketplace/sync-marketplace-templates.yml; do
   bump "$wf" \
-    '\(e\.g\. v[0-9]+\.[0-9]+\.[0-9]+\)' \
+    '\(e\.g\. v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]*)?\)' \
     "(e.g. v${VERSION})"
 done
 
@@ -154,7 +154,7 @@ for f in "${docs_files[@]}"; do
   rel="${f#$REPO_ROOT/}"
   # Image tags share one form across .md and .po (no quotes involved).
   bump "$rel" \
-    'zeroclawlabs/zeroclaw:v[0-9]+\.[0-9]+\.[0-9]+' \
+    'zeroclawlabs/zeroclaw:v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]*)?' \
     "zeroclawlabs/zeroclaw:v${VERSION}"
   # Version literal needs per-format dispatch: the unescaped pattern is
   # a strict substring of the escaped one, so running both blindly
@@ -163,7 +163,7 @@ for f in "${docs_files[@]}"; do
   case "$f" in
     *.md)
       bump "$rel" \
-        '"version": "[0-9]+\.[0-9]+\.[0-9]+"' \
+        '"version": "[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]*)?"' \
         "\"version\": \"${VERSION}\""
       ;;
     *.po)
@@ -172,7 +172,7 @@ for f in "${docs_files[@]}"; do
       # emits as a single backslash followed by a quote, restoring
       # the gettext escaped form.
       bump "$rel" \
-        '\\"version\\": \\"[0-9]+\.[0-9]+\.[0-9]+\\"' \
+        '\\"version\\": \\"[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]*)?\\"' \
         '\\"version\\": \\"'"${VERSION}"'\\"'
       ;;
   esac
