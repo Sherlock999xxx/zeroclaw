@@ -499,6 +499,11 @@ pub struct IntegrationDescriptor {
 /// Metadata for one channel type, as returned by [`ChannelsConfig::channels`].
 #[derive(Debug, Clone)]
 pub struct ChannelInfo {
+    /// Canonical kebab-case identifier used in config TOML
+    /// (`[channels.<kind>]`). Matches the field name on
+    /// `ChannelsConfig` so Quickstart and other surfaces can
+    /// reuse the schema's own labeling without a parallel map.
+    pub kind: &'static str,
     pub name: &'static str,
     pub desc: &'static str,
     pub configured: bool,

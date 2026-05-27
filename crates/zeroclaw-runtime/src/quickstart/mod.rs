@@ -459,54 +459,21 @@ pub fn snapshot_state(cfg: &Config) -> QuickstartState {
 }
 
 /// Build the Quickstart channel-type picker rows directly from the
-/// schema. We do not hardcode a label→kind table: the canonical
-/// kebab-case `kind` is the JSON object key in the serialised form
-/// of `ChannelsConfig`, and the display name is the matching entry
-/// from `ChannelsConfig::channels()`. Adding a new channel family
-/// only requires extending the schema — this function picks it up
-/// automatically.
-///
-/// Order is preserved from `ChannelsConfig::channels()` (the
-/// schema's curated display order); kinds the schema knows about
-/// but `channels()` does not surface are appended in
-/// JSON-object-key order with their kind used as the display name.
+/// schema's curated `ChannelsConfig::channels()` list. Each entry
+/// already carries its canonical kebab-case `kind` and human label,
+/// so the surface never re-derives them from serde introspection
+/// (which loses unconfigured channels because of
+/// `#[serde(skip_serializing_if = "HashMap::is_empty")]`).
 fn build_channel_type_options(
     channels_cfg: &zeroclaw_config::schema::ChannelsConfig,
 ) -> Vec<QuickstartTypeOption> {
-    // Step 1: enumerate the kebab-case kinds the schema knows about
-    // by walking the serialised form. `serde_json::Map` preserves
-    // insertion order, which matches struct-field declaration order.
-    let mut kinds: Vec<String> = Vec::new();
-    if let Ok(serde_json::Value::Object(map)) = serde_json::to_value(channels_cfg) {
-        for key in map.keys() {
-            kinds.push(key.clone());
-        }
-    }
-
-    // Step 2: pair each kind with its display name from `channels()`,
-    // which is the schema's own curated label list. We match by
-    // position because `channels()` mirrors the field declaration
-    // order of `ChannelsConfig` (verified by the `kinds.len() ==
-    // channels.len()` assertion in tests).
-    let display_names: Vec<String> = channels_cfg
+    channels_cfg
         .channels()
         .into_iter()
-        .map(|info| info.name.to_string())
-        .collect();
-
-    kinds
-        .into_iter()
-        .enumerate()
-        .map(|(idx, kind)| {
-            let display_name = display_names
-                .get(idx)
-                .cloned()
-                .unwrap_or_else(|| kind.clone());
-            QuickstartTypeOption {
-                kind,
-                display_name,
-                local: false,
-            }
+        .map(|info| QuickstartTypeOption {
+            kind: info.kind.to_string(),
+            display_name: info.name.to_string(),
+            local: false,
         })
         .collect()
 }
@@ -1231,6 +1198,44 @@ mod tests {
     use zeroclaw_config::presets::{
         AgentIdentity, BuilderSubmission, MemoryChoice, ModelProviderChoice, SelectorChoice,
     };
+    use zeroclaw_config::schema::Config;
+
+    /// Regression: every channel kind the schema enumerates in
+    /// `ChannelsConfig::channels()` must appear in the Quickstart
+    /// `channel_types` picker. The previous implementation walked the
+    /// serialized form of `ChannelsConfig`, which hid every empty
+    /// channel HashMap because of
+    /// `#[serde(skip_serializing_if = "HashMap::is_empty")]` — that
+    /// silently truncated the picker to whatever channels happened
+    /// to have a configured alias on the live config (~9 instead of
+    /// 32). Drive the picker from the schema's curated list so the
+    /// picker matches what the schema knows about.
+    #[test]
+    fn channel_type_options_cover_every_schema_channel() {
+        let cfg = Config::default();
+        let picker = build_channel_type_options(&cfg.channels);
+        let schema = cfg.channels.channels();
+        assert_eq!(
+            picker.len(),
+            schema.len(),
+            "Quickstart channel-type picker count diverged from \
+             ChannelsConfig::channels(); picker has {} rows, schema has {}",
+            picker.len(),
+            schema.len(),
+        );
+        for (picked, expected) in picker.iter().zip(schema.iter()) {
+            assert_eq!(
+                picked.kind, expected.kind,
+                "kind mismatch at {} — picker `{}`, schema `{}`",
+                picked.display_name, picked.kind, expected.kind,
+            );
+            assert_eq!(
+                picked.display_name, expected.name,
+                "display_name mismatch at `{}` — picker `{}`, schema `{}`",
+                picked.kind, picked.display_name, expected.name,
+            );
+        }
+    }
 
     fn fresh_submission(agent_name: &str) -> BuilderSubmission {
         BuilderSubmission {
