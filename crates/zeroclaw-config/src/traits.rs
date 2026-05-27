@@ -418,7 +418,7 @@ pub struct ConfigFieldEntry {
     pub enum_variants: Vec<String>,
     pub description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub onboard_section: Option<String>,
+    pub section: Option<String>,
     /// Tab grouping. `ConfigTab::None` = no tab grouping (flat display).
     #[serde(default, skip_serializing_if = "ConfigTab::is_none")]
     pub tab: ConfigTab,
@@ -437,7 +437,7 @@ impl ConfigFieldEntry {
             Some(serde_json::Value::String(info.display_value))
         };
         let enum_variants = info.enum_variants.map(|f| f()).unwrap_or_default();
-        let onboard_section =
+        let section =
             crate::sections::Section::from_key(info.name.split('.').next().unwrap_or(""))
                 .map(|s| s.as_str().to_string());
 
@@ -452,7 +452,7 @@ impl ConfigFieldEntry {
             is_env_overridden,
             enum_variants,
             description: info.description.to_string(),
-            onboard_section,
+            section,
             tab: info.tab,
         }
     }
@@ -511,104 +511,4 @@ pub trait ChannelConfig {
     fn name() -> &'static str;
     /// short description
     fn desc() -> &'static str;
-}
-
-/// A menu item for `OnboardUi::select`, with an optional status badge
-/// (e.g. `[configured]` / `[not set]`) that backends render next to the label.
-#[derive(Debug, Clone)]
-pub struct SelectItem {
-    pub label: String,
-    pub badge: Option<String>,
-}
-
-impl SelectItem {
-    pub fn new(label: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            badge: None,
-        }
-    }
-
-    pub fn with_badge(label: impl Into<String>, badge: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            badge: Some(badge.into()),
-        }
-    }
-}
-
-/// Result of a single prompt — either the value the user chose, or a
-/// navigation signal. Backends return `Answer::Back` when the user presses
-/// the backend's back key (Esc on ratatui / dialoguer). Callers rewind.
-#[derive(Debug, Clone)]
-pub enum Answer<T> {
-    Value(T),
-    Back,
-}
-
-/// Prompt-surface the onboard orchestrator drives.
-///
-/// Async is deliberate: the orchestrator is already async (Config::load_or_init,
-/// Config::save), and a future gateway-backed onboarder (WebSocket → browser)
-/// needs to await network I/O per prompt. A sync trait would force that
-/// backend to bridge sync↔async via blocking threads and channels, which
-/// starves the tokio runtime under concurrent onboarding sessions. Blocking
-/// backends (dialoguer) wrap their calls in `tokio::task::spawn_blocking`.
-///
-/// Idempotency contract: prompts accept a `current` value and pre-populate it
-/// as the default. `secret(has_current=true)` returns `None` when the user
-/// declines to rotate; callers then skip the write. The orchestrator never
-/// calls `config.set_prop` unless the new value differs from `current`.
-#[async_trait::async_trait]
-pub trait OnboardUi: Send {
-    async fn confirm(&mut self, prompt: &str, default: bool) -> anyhow::Result<Answer<bool>>;
-
-    /// Single-line text/number/path input.
-    ///
-    /// - `current`: existing value to pre-fill into the editable buffer
-    ///   (edit mode — user lands on the prompt with the value typed in
-    ///   and can modify it before Enter).
-    /// - `placeholder`: a schema/runtime default to surface as ghost-text
-    ///   when the buffer is empty. Backends that support styled output
-    ///   render this dim; pressing Enter on an empty buffer commits the
-    ///   placeholder as the chosen value.
-    ///
-    /// At most one of `current` / `placeholder` should be `Some` at any
-    /// call site: if the user has set a value already, pre-fill it;
-    /// otherwise surface the default as ghost text. Passing both
-    /// devolves to pre-fill semantics (the placeholder is ignored).
-    async fn string(
-        &mut self,
-        prompt: &str,
-        current: Option<&str>,
-        placeholder: Option<&str>,
-    ) -> anyhow::Result<Answer<String>>;
-
-    /// `Answer::Value(Some(v))` = new secret entered. `Answer::Value(None)` =
-    /// user declined to update an existing secret (only when `has_current`).
-    /// `Answer::Back` = rewind.
-    async fn secret(
-        &mut self,
-        prompt: &str,
-        has_current: bool,
-    ) -> anyhow::Result<Answer<Option<String>>>;
-
-    async fn select(
-        &mut self,
-        prompt: &str,
-        items: &[SelectItem],
-        current: Option<usize>,
-    ) -> anyhow::Result<Answer<usize>>;
-
-    async fn editor(&mut self, hint: &str, initial: &str) -> anyhow::Result<Answer<String>>;
-
-    /// Announce a new section or subsection. `level == 1` = section
-    /// (Providers, Channels, …). `level == 2` = subsection within a section
-    /// (Hardware › Transport). Backends render these persistently so every
-    /// prompt remains anchored to its phase — rendered like Markdown
-    /// headings. `level == 1` resets any prior subsection.
-    fn heading(&mut self, level: u8, text: &str);
-    fn note(&mut self, msg: &str);
-    fn status(&mut self, msg: &str);
-    fn warn(&mut self, msg: &str);
 }

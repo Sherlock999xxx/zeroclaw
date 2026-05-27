@@ -20,7 +20,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use zeroclaw_config::api_error::{ConfigApiCode, ConfigApiError};
 use zeroclaw_config::traits::MaskSecrets;
-use zeroclaw_runtime::onboard::{field_visibility, section_for_path};
+use zeroclaw_config::field_visibility;
+use zeroclaw_config::sections::section_for_path;
 
 use super::AppState;
 use super::api::require_auth;
@@ -245,7 +246,7 @@ pub struct ListEntry {
     /// section. The dashboard groups list entries by this for per-section
     /// rendering — same source the CLI wizard uses, no schema attribute.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub onboard_section: Option<&'static str>,
+    pub section: Option<&'static str>,
 }
 
 /// Stable wire-form name for a `PropKind` variant. Matches the lower-kebab
@@ -764,7 +765,7 @@ pub async fn handle_list(
                 is_secret: is_sensitive,
                 is_env_overridden,
                 enum_variants,
-                onboard_section: section,
+                section: section,
             }
         })
         .collect();
@@ -2186,7 +2187,7 @@ mod tests {
             is_secret: true,
             is_env_overridden: false,
             enum_variants: vec![],
-            onboard_section: Some("providers.models"),
+            section: Some("providers.models"),
         };
         let json = serde_json::to_value(&entry).expect("serialize");
         let obj = json.as_object().expect("object");

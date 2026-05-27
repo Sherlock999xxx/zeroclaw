@@ -448,9 +448,7 @@ mod tests {
         assert!(runtime_preset("not-a-real-preset").is_none());
     }
 
-    /// No preset is allowed to use `default` as its alias — that's
-    /// the well-known footgun this whole preset surface exists to
-    /// avoid (see `tmp/quickstart-plan.md` § Aliases).
+    /// No preset is allowed to use `default` as its alias.
     #[test]
     fn no_preset_uses_default_alias() {
         for p in RISK_PRESETS {

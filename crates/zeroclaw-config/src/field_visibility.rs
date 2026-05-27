@@ -11,7 +11,7 @@
 //! `[memory]` section is still a single struct carrying every backend's
 //! sub-tables (the typed-family pattern hasn't been applied there).
 
-use zeroclaw_config::schema::Config;
+use crate::schema::Config;
 
 /// Exclude list for the top-level `[memory]` walk based on the active backend.
 ///

@@ -45,7 +45,7 @@ import {
   storeMemory,
   deleteMemory,
   getMapKeys,
-  getOnboardStatus,
+  getQuickstartState,
   getTuis,
 } from "@/lib/api";
 import { resolveModelToProviderType } from "@/lib/configuredModels";
@@ -2574,8 +2574,7 @@ function truncateForPreview(content: string): string {
 
 function AgentsSection() {
   const [agents, setAgents] = useState<AgentSummary[] | null>(null);
-  const [onboardButtonLabel, setOnboardButtonLabel] =
-    useState("Start onboarding");
+  const [quickstartLabel, setQuickstartLabel] = useState("Start Quickstart");
   const [error, setError] = useState<string | null>(null);
   const [toggling, setToggling] = useState<Set<string>>(new Set());
 
@@ -2588,20 +2587,15 @@ function AgentsSection() {
   }, []);
 
   useEffect(() => {
-    getOnboardStatus()
-      .then((status) => {
-        if (status.reason === "has_dispatchable_agent") {
-          setOnboardButtonLabel("Run onboarding again");
-        } else if (
-          status.has_partial_state ||
-          status.reason === "incomplete_agent"
-        ) {
-          setOnboardButtonLabel("Continue onboarding");
+    getQuickstartState()
+      .then((state) => {
+        if (state.agents.length > 0) {
+          setQuickstartLabel("Create another agent");
         } else {
-          setOnboardButtonLabel("Start onboarding");
+          setQuickstartLabel("Start Quickstart");
         }
       })
-      .catch(() => setOnboardButtonLabel("Start onboarding"));
+      .catch(() => setQuickstartLabel("Start Quickstart"));
   }, []);
 
   const handleToggle = useCallback(async (agent: AgentSummary) => {
@@ -2712,11 +2706,11 @@ function AgentsSection() {
             No agents configured yet.
           </p>
           <Link
-            to="/onboard"
+            to="/quickstart"
             className="btn-electric inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs"
           >
             <Plus className="h-3.5 w-3.5" />
-            {onboardButtonLabel}
+            {quickstartLabel}
           </Link>
         </div>
       ) : (

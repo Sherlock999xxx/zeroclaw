@@ -1,4 +1,4 @@
-// Schema-driven config editor (#6175). Same building blocks as /onboard
+// Schema-driven config editor (#6175). Curated section explorer
 // but lands on a per-section overview: pick a section in the sidebar, see
 // what's currently configured under it, click an item to edit, click +Add
 // to instantiate a new entry.
@@ -31,17 +31,17 @@ import {
 } from "../lib/api";
 import FieldForm, {
   clearFieldFormCatalogCaches,
-} from "../components/onboard/FieldForm";
-import PersonalityEditor from "../components/onboard/PersonalityEditor";
-import SkillsBundleEditor from "../components/onboard/SkillsBundleEditor";
-import ReloadDaemonButton from "../components/onboard/ReloadDaemonButton";
-import SectionPicker from "../components/onboard/SectionPicker";
+} from "../components/sections/FieldForm";
+import PersonalityEditor from "../components/sections/PersonalityEditor";
+import SkillsBundleEditor from "../components/sections/SkillsBundleEditor";
+import ReloadDaemonButton from "../components/sections/ReloadDaemonButton";
+import SectionPicker from "../components/sections/SectionPicker";
 import SectionTabs, {
   type SectionTabSpec,
-} from "../components/onboard/SectionTabs";
+} from "../components/sections/SectionTabs";
 import CostRatesEditor, {
   type CostRatesCategory,
-} from "../components/onboard/CostRatesEditor";
+} from "../components/sections/CostRatesEditor";
 
 // Display order for the curated sidebar groups. Each `SectionInfo.group`
 // from the gateway lands in one of these buckets (anything else falls
@@ -51,7 +51,7 @@ import CostRatesEditor, {
 // Foundation leads — Workspace / Providers / Channels / Memory /
 // Hardware / Tunnel are the most-edited sections, surfaced first inside
 // the Config explorer instead of as duplicate top-level nav entries.
-// The setup wizard at /onboard walks the same six (reachable via the
+// The Quickstart flow walks the same six (reachable via the
 // "Run setup again" link in the breadcrumb row).
 const GROUP_ORDER = [
   "Foundation",
@@ -66,7 +66,7 @@ const GROUP_ORDER = [
 ] as const;
 
 // Foundation order is gateway-provided: the server returns sections
-// pre-ordered by `zeroclaw_config::sections::ONBOARDING_SECTIONS`
+// pre-ordered by `zeroclaw_config::sections::QUICKSTART_SECTIONS`
 // (single canonical source). The dashboard preserves response order for
 // the Foundation group instead of carrying its own copy of the list.
 
@@ -517,7 +517,7 @@ export default function Config() {
                 )
                 .sort((a, b) => {
                   // Foundation: preserve server-provided canonical order
-                  // (driven by `ONBOARDING_SECTIONS` in the Rust config
+                  // (driven by `QUICKSTART_SECTIONS` in the Rust config
                   // crate). Other groups: alphabetize by label.
                   if (groupName === "Foundation") {
                     return sections.indexOf(a) - sections.indexOf(b);
@@ -608,12 +608,12 @@ export default function Config() {
               </div>
               <div className="flex items-center gap-2">
                 <Link
-                  to="/onboard"
+                  to="/quickstart"
                   className="btn-secondary inline-flex items-center gap-1.5 text-xs px-3 py-1.5"
-                  title="Walk the first-run onboarding wizard again"
+                  title="Run Quickstart again"
                 >
                   <Sparkles className="h-3.5 w-3.5" />
-                  Run onboarding again
+                  Run Quickstart again
                 </Link>
                 <ReloadDaemonButton
                   onReloaded={() => {

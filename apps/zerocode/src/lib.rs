@@ -1,10 +1,6 @@
-//! Ratatui-backed `OnboardUi` implementation.
-//!
-//! The onboard orchestrator lives in `zeroclaw-runtime`; this crate only
-//! provides the TUI drawing/input layer. `RatatuiUi` is the one export.
+//! zerocode TUI widgets reusable outside the main binary. Limited to
+//! drawing/input primitives; consumers of the binary itself should
+//! depend on `apps/zerocode/src/main.rs` directly.
 
-mod onboarding;
 mod theme;
 mod widgets;
-
-pub use onboarding::RatatuiUi;

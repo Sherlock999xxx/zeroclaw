@@ -1,5 +1,5 @@
-// Picker view used by /onboard and /config to mirror the TUI's
-//   ZeroClaw Onboard › Providers › [filter:_____] › <pickable list>
+// Picker view used by /config to mirror the TUI's
+//   ZeroClaw Sections › Providers › [filter:_____] › <pickable list>
 // flow. Items come from /api/config/sections/<section> (gateway derives
 // them from list_providers / selectable_memory_backends / schema-walk).
 //
@@ -7,7 +7,7 @@
 //
 // Click a row → calls onPick(item.key). Configured rows show a checkmark
 // badge so the user can see what they've already set up. Advance/Finish
-// buttons are owned by the parent (Onboard / Config) so the picker stays
+// buttons are owned by the parent (Config) so the picker stays
 // a pure list view — no duplicate buttons.
 
 import { useEffect, useMemo, useRef, useState } from "react";

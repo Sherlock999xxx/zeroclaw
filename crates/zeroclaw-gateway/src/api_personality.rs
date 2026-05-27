@@ -14,8 +14,7 @@
 //!
 //! The `agent` query parameter is required and selects which agent's
 //! workspace the endpoint operates against. Each agent has its own
-//! `<install>/agents/<alias>/workspace/` per the v0.8.0 multi-agent
-//! layout.
+//! `<install>/agents/<alias>/workspace/` per the multi-agent layout.
 
 use axum::{
     Json,

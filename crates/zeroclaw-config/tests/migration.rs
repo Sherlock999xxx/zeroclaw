@@ -1890,7 +1890,7 @@ allowed_rooms = ["!ops:matrix.org"]
 
 #[test]
 fn v2_channels_voice_duplex_block_alias_wraps() {
-    // Reproduces the user-reported migration error in v0.8.0:
+    // Reproduces a user-reported migration error:
     //   invalid type: boolean `false`, expected struct VoiceDuplexConfig
     //   in `channels.voice_duplex.enabled`
     // Cause: voice_duplex was missing from V3_CHANNEL_TYPES and went

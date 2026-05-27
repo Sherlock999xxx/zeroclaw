@@ -13,7 +13,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { loadLocale, saveLocale } from "./contexts/ThemeContext";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { DraftContext, useDraftStore } from "./hooks/useDraft";
-import { getAdminPairCode, getOnboardStatus } from "./lib/api";
+import { getAdminPairCode, getQuickstartState } from "./lib/api";
 import { basePath } from "./lib/basePath";
 import { ConfigDraftProvider } from "./lib/draftStore";
 import { setLocale, type Locale } from "./lib/i18n";
@@ -318,18 +318,15 @@ function AppContent() {
   );
 }
 
-// Redirects fresh installs (no completed onboarding sections, no provider
-// configured) from the default `/` landing to `/onboard`. The daemon
-// always writes a default config.toml on init, so file existence isn't
-// the right signal — we ask the gateway via /api/config/status which
-// inspects the in-memory config for explicit user-driven markers
-// (`onboard_state.completed_sections`, `providers.fallback`,
-// `providers.models`).
+// Redirects fresh installs (no agents yet, Quickstart never completed)
+// from `/` to `/quickstart`. The daemon always writes a default
+// config.toml on init, so file existence isn't the right signal —
+// we ask the gateway via /api/quickstart/state which reports
+// quickstart_completed plus the live agents list.
 //
 // Fires once per session. Only redirects when the user lands at `/` —
-// manual navigation to other routes is left alone, so the user can
-// always escape into the existing config editor or chat surfaces if
-// they want.
+// manual navigation to other routes is left alone, so returning users
+// who already have agents can always reach Quickstart from the nav.
 function FreshInstallRedirect() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -339,10 +336,10 @@ function FreshInstallRedirect() {
     if (checked) return;
     setChecked(true);
     if (location.pathname !== "/") return;
-    void getOnboardStatus()
-      .then((status) => {
-        if (status.needs_onboarding) {
-          navigate("/onboard", { replace: true });
+    void getQuickstartState()
+      .then((state) => {
+        if (!state.quickstart_completed && state.agents.length === 0) {
+          navigate("/quickstart", { replace: true });
         }
       })
       .catch(() => {

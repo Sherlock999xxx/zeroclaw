@@ -17,7 +17,6 @@ use crate::config_manager;
 use crate::dashboard;
 use crate::logs;
 use crate::mouse;
-use crate::onboard_pane::OnboardPane;
 use crate::theme;
 use crate::widgets::{CtxBar, HelpContext, HelpEntry, HelpNode};
 
@@ -25,7 +24,6 @@ use crate::widgets::{CtxBar, HelpContext, HelpEntry, HelpNode};
 const TICK: Duration = Duration::from_millis(200);
 
 /// Mode bar entries. Shared between drawing and click detection.
-/// NOTE: Onboard is intentionally excluded here — hidden until ready.
 const MODES: [Mode; 5] = [
     Mode::Dashboard,
     Mode::Config,
@@ -43,9 +41,6 @@ enum Mode {
     Acp, // displayed as "Code" in the UI
     Chat,
     Logs,
-    /// Hidden until the onboarding flow is ready (F6 binding commented out).
-    #[allow(dead_code)]
-    Onboard,
 }
 
 impl Mode {
@@ -56,7 +51,6 @@ impl Mode {
             Mode::Acp => "Code",
             Mode::Chat => "Chat",
             Mode::Logs => "Logs",
-            Mode::Onboard => "Onboard",
         }
     }
 
@@ -67,7 +61,6 @@ impl Mode {
             Mode::Acp => "F3",
             Mode::Chat => "F4",
             Mode::Logs => "F5",
-            Mode::Onboard => "F6",
         }
     }
 }
@@ -80,7 +73,6 @@ pub async fn run(
     rpc: Arc<RpcClient>,
     term: &mut config_manager::Term,
     connect_label: &str,
-    onboard_pane: Option<OnboardPane>,
 ) -> Result<bool> {
     let mut mode = Mode::Dashboard;
     let mut show_help = false;
@@ -99,7 +91,6 @@ pub async fn run(
     chat_pane.init().await?;
     let mut logs_pane = logs::Logs::new(&*rpc);
     logs_pane.init().await?;
-    let mut onboard_pane = onboard_pane;
 
     loop {
         // Draw
@@ -124,11 +115,6 @@ pub async fn run(
                 Mode::Acp => acp_pane.draw(frame, chunks[1]),
                 Mode::Chat => chat_pane.draw(frame, chunks[1]),
                 Mode::Logs => logs_pane.draw(frame, chunks[1]),
-                Mode::Onboard => {
-                    if let Some(ref pane) = onboard_pane {
-                        pane.draw(frame, chunks[1]);
-                    }
-                }
             }
 
             let (ctx_input, ctx_max) = match mode {
@@ -157,10 +143,6 @@ pub async fn run(
                     Mode::Acp => acp_pane.help_context(),
                     Mode::Chat => chat_pane.help_context(),
                     Mode::Logs => logs_pane.help_context(),
-                    Mode::Onboard => onboard_pane
-                        .as_ref()
-                        .map(|p| p.help_context())
-                        .unwrap_or_else(|| HelpNode::entries(vec![])),
                 };
                 node.children.push(pane_node);
                 draw_help_modal(frame, frame.area(), &node);
@@ -227,11 +209,6 @@ pub async fn run(
                         mode = Mode::Logs;
                         continue;
                     }
-                    // F6 / Onboard hidden until ready
-                    // KeyCode::F(6) if onboard_pane.is_some() => {
-                    //     mode = Mode::Onboard;
-                    //     continue;
-                    // }
                     _ => {}
                 }
 
@@ -243,10 +220,6 @@ pub async fn run(
                         Mode::Acp => acp_pane.wants_text_input(),
                         Mode::Chat => chat_pane.wants_text_input(),
                         Mode::Logs => logs_pane.wants_text_input(),
-                        Mode::Onboard => onboard_pane
-                            .as_ref()
-                            .map(|p| p.wants_text_input())
-                            .unwrap_or(false),
                     };
                     if !in_text_input {
                         show_help = true;
@@ -266,13 +239,6 @@ pub async fn run(
                     Mode::Acp => acp_pane.handle_key(key, term).await,
                     Mode::Chat => chat_pane.handle_key(key, term).await,
                     Mode::Logs => logs_pane.handle_key(key).await,
-                    Mode::Onboard => {
-                        if let Some(ref mut pane) = onboard_pane {
-                            pane.handle_key(key).await
-                        } else {
-                            false
-                        }
-                    }
                 };
                 if quit {
                     break;
@@ -318,9 +284,6 @@ pub async fn run(
                         }
                         Mode::Chat => {
                             chat_pane.handle_mouse(mouse, content_area);
-                        }
-                        Mode::Onboard => {
-                            // Onboard pane has no mouse handler.
                         }
                     }
                 }

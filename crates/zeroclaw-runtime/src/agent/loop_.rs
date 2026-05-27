@@ -2875,7 +2875,7 @@ pub fn apply_text_tool_prompt_policy(
 ///
 /// SubAgent spawn paths use this to inject the validated child policy
 /// returned from [`SecurityPolicy::ensure_no_escalation_beyond`] (and,
-/// once v0.8.1 plumbs caller-supplied allowlist narrowing, the
+/// once caller-supplied allowlist narrowing lands, the
 /// validated agent-scoped memory wrapper). Without this hook the run
 /// path rebuilds both surfaces from config, so the validator's
 /// guarantees never reach the agent loop. `None` on either field

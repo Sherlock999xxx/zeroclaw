@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use clap::Parser;
@@ -18,7 +21,6 @@ mod file_explorer;
 mod input_bar;
 mod logs;
 mod mouse;
-mod onboard_pane;
 mod theme;
 mod turn_status;
 mod widgets;
@@ -180,7 +182,7 @@ async fn run_with_reconnect(
 ) -> anyhow::Result<()> {
     loop {
         let label = target.label();
-        let should_reconnect = match app::run(Arc::clone(&rpc), term, &label, None).await {
+        let should_reconnect = match app::run(Arc::clone(&rpc), term, &label).await {
             Ok(reconnect) => reconnect,
             Err(_) if rpc.is_disconnected() => {
                 // RPC error caused by a dead connection — treat as

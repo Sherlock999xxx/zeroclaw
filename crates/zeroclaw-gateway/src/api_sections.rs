@@ -1,13 +1,6 @@
-//! Onboard catalog endpoint — exposes the model_provider + model catalog the CLI
-//! wizard already uses, so the dashboard's "+ Add model_provider" affordance and
-//! model-picker dropdown share the same source of truth as the CLI.
-//!
-//! No catalog data is hand-maintained at this layer. `list_model_providers()` lives
-//! in `zeroclaw-providers` and is the canonical list; `list_models()` per
-//! model_provider fetches from models.dev (cached) or the model_provider's own /models
-//! endpoint. Same code paths as the CLI wizard.
-//!
-//!
+//! Curated config-section endpoints. Used by the `/config` page in the
+//! web dashboard to navigate the schema by curated section rather than
+//! raw prop paths. OpenAPI is authoritative for the exact route set.
 
 use axum::{
     extract::{Query, State},
@@ -77,7 +70,7 @@ pub async fn handle_catalog_models(
     // Try provider construction + list_models first (covers credentialed
     // /models endpoints). Fall back to the family catalog table when
     // construction or list_models fails — this is the path that covers
-    // onboard mode where the operator hasn't supplied a credential
+    // quickstart mode where the operator hasn't supplied a credential
     // and the provider has typed required fields (Azure resource,
     // Bedrock region, …) that haven't been populated yet.
     let provider_path = match zeroclaw_providers::create_model_provider(&q.model_provider, None) {
@@ -118,15 +111,15 @@ fn error_response(err: ConfigApiError) -> Response {
 
 // ── Section + picker (mirrors the TUI flow) ──────────────────────────
 
-/// Pure derivation of the onboard-status response from a config snapshot.
-/// `needs_onboarding` is `false` iff at least one enabled `[agents.<alias>]`
+/// Pure derivation of the section status response from a config snapshot.
+/// `needs_quickstart` is `false` iff at least one enabled `[agents.<alias>]`
 /// block has a resolved model provider with a selected model plus resolved
 /// risk/runtime profile refs. A provider without a bound, runnable agent is
 /// not a completion signal: chat dispatch still bounces with a setup error in
 /// that state.
 #[must_use]
-pub fn derive_onboard_status(cfg: &zeroclaw_config::schema::Config) -> ConfigStatusResult {
-    let missing = onboard_missing_requirements(cfg);
+pub fn derive_section_status(cfg: &zeroclaw_config::schema::Config) -> ConfigStatusResult {
+    let missing = quickstart_missing_requirements(cfg);
     let ready = missing.is_empty();
     let has_partial_state = !cfg.onboard_state.completed_sections.is_empty()
         || cfg.providers.models.iter_entries().next().is_some()
@@ -141,14 +134,14 @@ pub fn derive_onboard_status(cfg: &zeroclaw_config::schema::Config) -> ConfigSta
         "fresh_install"
     };
     ConfigStatusResult {
-        needs_onboarding: !ready,
+        needs_quickstart: !ready,
         reason: reason.to_string(),
         has_partial_state,
         missing,
     }
 }
 
-fn onboard_missing_requirements(cfg: &zeroclaw_config::schema::Config) -> Vec<String> {
+fn quickstart_missing_requirements(cfg: &zeroclaw_config::schema::Config) -> Vec<String> {
     let mut missing = Vec::new();
     if cfg.providers.models.iter_entries().next().is_none() {
         missing.push("Add a model provider.".to_string());
@@ -162,7 +155,7 @@ fn onboard_missing_requirements(cfg: &zeroclaw_config::schema::Config) -> Vec<St
     agent_aliases.sort();
     let mut has_dispatchable_agent = false;
     for alias in agent_aliases {
-        let agent_missing = onboard_agent_missing_requirements(cfg, alias, &cfg.agents[alias]);
+        let agent_missing = quickstart_agent_missing_requirements(cfg, alias, &cfg.agents[alias]);
         if agent_missing.is_empty() {
             has_dispatchable_agent = true;
             break;
@@ -175,7 +168,7 @@ fn onboard_missing_requirements(cfg: &zeroclaw_config::schema::Config) -> Vec<St
     missing
 }
 
-fn onboard_agent_missing_requirements(
+fn quickstart_agent_missing_requirements(
     cfg: &zeroclaw_config::schema::Config,
     alias: &str,
     agent: &zeroclaw_config::schema::AliasedAgentConfig,
@@ -231,14 +224,14 @@ fn onboard_agent_missing_requirements(
 /// `GET /api/config/status` — boolean signal for the dashboard's
 /// fresh-install redirect. The daemon writes a default `config.toml` on
 /// first init, so file existence isn't a useful "is the user new?" check.
-/// Onboarding is complete iff at least one agent has its
+/// Section status: ready iff at least one agent has its
 /// `model_provider`, `risk_profile`, and `runtime_profile` bound.
-pub async fn handle_onboard_status(State(state): State<AppState>, headers: HeaderMap) -> Response {
+pub async fn handle_section_status(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if let Err(e) = require_auth(&state, &headers) {
         return e.into_response();
     }
     let cfg = state.config.read().clone();
-    axum::Json(derive_onboard_status(&cfg)).into_response()
+    axum::Json(derive_section_status(&cfg)).into_response()
 }
 
 /// All alias-reference choices an agent form needs, in one round-trip.
@@ -325,7 +318,7 @@ pub async fn handle_agent_options(State(state): State<AppState>, headers: Header
 ///
 /// Schema-driven: walks `Config::prop_fields()` and collects unique first
 /// segments, then asks `Config::map_key_sections()` for which ones have
-/// pickers. The 4 onboarding sections (`model_providers`, `channels`, `memory`,
+/// pickers. The 4 quickstart sections (`model_providers`, `channels`, `memory`,
 /// `tunnel`) keep their existing per-section dispatch in
 /// `handle_section_picker`; everything else (`gateway`, `observability`,
 /// `scheduler`, ...) renders as a direct form. Adding a new top-level
@@ -386,11 +379,11 @@ pub async fn handle_sections(State(state): State<AppState>, headers: HeaderMap) 
         roots.insert(prefix.to_string());
     }
 
-    // Synthetic onboarding sections — keys that aren't fields on Config
+    // Synthetic curated sections — keys that aren't fields on Config
     // but are part of the wizard flow (personality lives as markdown
     // files, not TOML). Inject so the canonical-order sort places them
     // correctly and frontends don't need to know which ones to splice.
-    for s in zeroclaw_config::sections::ONBOARDING_SECTIONS {
+    for s in zeroclaw_config::sections::QUICKSTART_SECTIONS {
         roots.insert(s.as_str().to_string());
     }
 
@@ -410,9 +403,9 @@ pub async fn handle_sections(State(state): State<AppState>, headers: HeaderMap) 
     // dead-end "no picker" page.
     roots.retain(|k| !k.starts_with("cost.rates"));
 
-    // Sort: onboarding-wizard sections first in their canonical order
+    // Sort: curated sections first in their canonical order
     // (single source of truth in `zeroclaw_config::sections`), then
-    // everything else alphabetically. This is what makes /onboard's wizard
+    // everything else alphabetically. This is what makes /quickstart's wizard
     // order and /config's foundation grouping derive from one Rust const
     // — frontends consume the response order directly.
     let mut ordered: Vec<String> = roots.into_iter().collect();
@@ -453,7 +446,7 @@ pub async fn handle_sections(State(state): State<AppState>, headers: HeaderMap) 
                 help: section_help(&key).to_string(),
                 has_picker,
                 group: section_group(&key).to_string(),
-                is_onboarding: wizard.is_some(),
+                is_quickstart: wizard.is_some(),
                 shape: wizard.map(zeroclaw_config::sections::Section::shape),
                 key,
             }
@@ -477,7 +470,7 @@ fn section_ready(cfg: &zeroclaw_config::schema::Config, key: &str, completed_mar
         Some(Section::Agents) => cfg
             .agents
             .iter()
-            .any(|(alias, agent)| onboard_agent_missing_requirements(cfg, alias, agent).is_empty()),
+            .any(|(alias, agent)| quickstart_agent_missing_requirements(cfg, alias, agent).is_empty()),
         _ => completed_marker,
     }
 }
@@ -684,7 +677,9 @@ fn picker_items_for(
         | Section::RuntimeProfiles => {
             PickerDispatch::Items(one_tier_alias_map_picker(cfg, section.as_str()))
         }
-        Section::Hardware | Section::Mcp | Section::Skills => PickerDispatch::DirectForm,
+        Section::Hardware | Section::Mcp | Section::Skills | Section::QuickstartState => {
+            PickerDispatch::DirectForm
+        }
     }
 }
 
@@ -966,7 +961,7 @@ fn apply_first_run_agent_defaults(cfg: &mut zeroclaw_config::schema::Config, ali
     }
 }
 
-fn mark_onboard_section_completed(cfg: &mut zeroclaw_config::schema::Config, section: &str) {
+fn mark_section_completed(cfg: &mut zeroclaw_config::schema::Config, section: &str) {
     if !cfg
         .onboard_state
         .completed_sections
@@ -1140,9 +1135,9 @@ pub async fn handle_section_select(
                 Err(resp) => return resp,
             };
             // The per-channel-type struct's `enabled` field defaults to
-            // `false` (pre-v0.8.0 paste-safety rationale: don't fire a
-            // listener on a half-pasted block). For wizard-driven creation
-            // the operator has just consciously added the alias, so flip
+            // `false` for paste-safety (don't fire a listener on a
+            // half-pasted block). For wizard-driven creation the operator
+            // has just consciously added the alias, so flip
             // the new entry's `enabled` to true. Re-selecting an existing
             // alias is a no-op (created=false), so user-edited values are
             // never trampled.
@@ -1236,7 +1231,7 @@ pub async fn handle_section_select(
                 Ok(c) => c,
                 Err(resp) => return resp,
             };
-            mark_onboard_section_completed(&mut working, "storage");
+            mark_section_completed(&mut working, "storage");
             (format!("storage.{key}.{alias}"), created)
         }
         Section::Memory => {
@@ -1252,7 +1247,7 @@ pub async fn handle_section_select(
                     .with_path("memory.backend"),
                 );
             }
-            mark_onboard_section_completed(&mut working, "memory");
+            mark_section_completed(&mut working, "memory");
             ("memory".to_string(), true)
         }
         Section::Tunnel => {
@@ -1274,7 +1269,7 @@ pub async fn handle_section_select(
             };
             (prefix, true)
         }
-        Section::Hardware | Section::Mcp | Section::Skills => {
+        Section::Hardware | Section::Mcp | Section::Skills | Section::QuickstartState => {
             return error_response(
                 ConfigApiError::new(
                     ConfigApiCode::PathNotFound,
@@ -1393,18 +1388,18 @@ mod tests {
     }
 
     #[test]
-    fn derive_onboard_status_requires_dispatchable_agent() {
+    fn derive_section_status_requires_dispatchable_agent() {
         let mut cfg = zeroclaw_config::schema::Config::default();
-        let resp = derive_onboard_status(&cfg);
-        assert!(resp.needs_onboarding);
+        let resp = derive_section_status(&cfg);
+        assert!(resp.needs_quickstart);
         assert_eq!(resp.reason, "fresh_install");
 
         cfg.create_map_key("providers.models.anthropic", "default")
             .unwrap();
-        let resp = derive_onboard_status(&cfg);
+        let resp = derive_section_status(&cfg);
         assert!(
-            resp.needs_onboarding,
-            "provider configured without a bound agent must not flip needs_onboarding"
+            resp.needs_quickstart,
+            "provider configured without a bound agent must not flip needs_quickstart"
         );
         assert_eq!(resp.reason, "incomplete_agent");
         assert!(resp.has_partial_state);
@@ -1412,9 +1407,9 @@ mod tests {
         cfg.create_map_key("risk-profiles", "default").unwrap();
         cfg.create_map_key("runtime-profiles", "default").unwrap();
         cfg.create_map_key("agents", "default").unwrap();
-        let resp = derive_onboard_status(&cfg);
+        let resp = derive_section_status(&cfg);
         assert!(
-            resp.needs_onboarding,
+            resp.needs_quickstart,
             "agent without provider/profile bindings must still need onboarding"
         );
         assert_eq!(resp.reason, "incomplete_agent");
@@ -1428,9 +1423,9 @@ mod tests {
         agent.model_provider = "anthropic.default".into();
         agent.risk_profile = "default".into();
         agent.runtime_profile = "default".into();
-        let resp = derive_onboard_status(&cfg);
+        let resp = derive_section_status(&cfg);
         assert!(
-            resp.needs_onboarding,
+            resp.needs_quickstart,
             "provider alias without a selected model must still need onboarding"
         );
         assert!(
@@ -1441,9 +1436,9 @@ mod tests {
 
         cfg.set_prop_persistent("providers.models.anthropic.default.model", "claude-sonnet")
             .unwrap();
-        let resp = derive_onboard_status(&cfg);
+        let resp = derive_section_status(&cfg);
         assert!(
-            resp.needs_onboarding,
+            resp.needs_quickstart,
             "hosted provider alias without credential/auth must still need onboarding"
         );
         assert!(
@@ -1454,21 +1449,21 @@ mod tests {
 
         cfg.set_prop_persistent("providers.models.anthropic.default.api-key", "sk-test")
             .unwrap();
-        let resp = derive_onboard_status(&cfg);
-        assert!(!resp.needs_onboarding);
+        let resp = derive_section_status(&cfg);
+        assert!(!resp.needs_quickstart);
         assert_eq!(resp.reason, "has_dispatchable_agent");
         assert!(!resp.has_partial_state || resp.missing.is_empty());
     }
 
     #[test]
-    fn derive_onboard_status_completed_sections_without_dispatchable_agent_stays_pending() {
+    fn derive_section_status_completed_sections_without_dispatchable_agent_stays_pending() {
         let mut cfg = zeroclaw_config::schema::Config::default();
         cfg.onboard_state
             .completed_sections
             .push("providers.models".into());
-        let resp = derive_onboard_status(&cfg);
+        let resp = derive_section_status(&cfg);
         assert!(
-            resp.needs_onboarding,
+            resp.needs_quickstart,
             "completed_sections marker without a dispatchable agent must NOT flip the redirect"
         );
         assert_eq!(resp.reason, "incomplete_agent");

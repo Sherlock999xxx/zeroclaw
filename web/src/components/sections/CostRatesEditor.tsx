@@ -1,5 +1,5 @@
 // Schema-driven editor for `[cost.rates.providers.<category>.<type>.<resource>]`.
-// Reuses the same FieldForm machinery that powers /onboard and /config so the
+// Reuses the same FieldForm machinery that powers /config so the
 // rendered inputs always match the Configurable derive (input_per_mtok,
 // output_per_mtok, cached_input_per_mtok for models; per_mchar for tts;
 // per_minute for transcription). Adding a new rate field anywhere in the

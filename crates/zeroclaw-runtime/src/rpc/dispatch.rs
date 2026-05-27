@@ -828,6 +828,11 @@ impl RpcDispatcher {
 
         let rpc = self.rpc.clone();
         let sid_owned = sid.to_string();
+        let acp_token_store = if matches!(chat_mode, crate::rpc::types::ChatMode::Acp) {
+            self.ctx.acp_session_store.clone()
+        } else {
+            None
+        };
         let outcome = execute_turn(
             agent,
             prompt.clone(),
@@ -842,7 +847,18 @@ impl RpcDispatcher {
             move |event| {
                 let rpc = rpc.clone();
                 let sid = sid_owned.clone();
+                let acp_token_store = acp_token_store.clone();
                 async move {
+                    if let (
+                        Some(store),
+                        TurnEvent::Usage {
+                            input_tokens: Some(it),
+                            ..
+                        },
+                    ) = (acp_token_store.as_ref(), &event)
+                    {
+                        let _ = store.set_token_count(&sid, *it);
+                    }
                     if let Some(n) = notification_for_turn_event(&sid, &event, max_ctx) {
                         let _ = rpc.send_raw(n).await;
                     }
@@ -860,28 +876,23 @@ impl RpcDispatcher {
                         outcome,
                         Ok(TurnOutcome::Completed { .. }) | Ok(TurnOutcome::Cancelled { .. })
                     )
-                {
-                    if let Some(new_msgs) = self
+                    && let Some(new_msgs) = self
                         .ctx
                         .sessions
                         .history_slice_from(sid, pre_history_len)
                         .await
-                        && !new_msgs.is_empty()
-                        && let Err(e) = store.append_turn(sid, &new_msgs)
-                    {
-                        ::zeroclaw_log::record!(
-                            WARN,
-                            ::zeroclaw_log::Event::new(
-                                module_path!(),
-                                ::zeroclaw_log::Action::Note
-                            )
+                    && !new_msgs.is_empty()
+                    && let Err(e) = store.append_turn(sid, &new_msgs)
+                {
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
                             .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
                             .with_attrs(
                                 ::serde_json::json!({"session_id": sid, "error": e.to_string()})
                             ),
-                            "Failed to persist ACP turn"
-                        );
-                    }
+                        "Failed to persist ACP turn"
+                    );
                 }
             }
             crate::rpc::types::ChatMode::Chat => {
@@ -1431,7 +1442,7 @@ impl RpcDispatcher {
     }
 
     fn handle_config_list(&self, params: &Value) -> RpcResult {
-        use crate::onboard::field_visibility;
+        use zeroclaw_config::field_visibility;
         use zeroclaw_config::traits::ConfigFieldEntry;
         let req: ConfigListParams = parse_params(params)?;
         let config = self.ctx.config.read().clone();
@@ -1877,13 +1888,13 @@ impl RpcDispatcher {
     fn handle_config_sections(&self) -> RpcResult {
         use zeroclaw_config::schema::Config;
         use zeroclaw_config::sections::{
-            ONBOARDING_SECTIONS, Section, SectionShape, section_help, section_index_for_key,
+            QUICKSTART_SECTIONS, Section, SectionShape, section_help, section_index_for_key,
         };
 
         let config = self.ctx.config.read().clone();
 
         // Schema-driven: walk Config::prop_fields() to discover ALL
-        // top-level section roots, not just ONBOARDING_SECTIONS.
+        // top-level section roots, not just QUICKSTART_SECTIONS.
         let mut roots: std::collections::BTreeSet<String> = config
             .prop_fields()
             .iter()
@@ -1916,7 +1927,7 @@ impl RpcDispatcher {
         }
 
         // Inject synthetic onboarding sections (e.g. personality).
-        for s in ONBOARDING_SECTIONS {
+        for s in QUICKSTART_SECTIONS {
             roots.insert(s.as_str().to_string());
         }
 
@@ -1965,7 +1976,7 @@ impl RpcDispatcher {
                     None => section_has_picker_for_key(&key),
                 };
                 let completed = wizard
-                    .map(|w| crate::onboard::section_has_signal(&config, w))
+                    .map(|w| zeroclaw_config::sections::section_has_signal(&config, w))
                     .unwrap_or(false);
                 let label = humanize_section_key(&key);
                 ConfigSectionEntry {
@@ -1974,7 +1985,7 @@ impl RpcDispatcher {
                     completed,
                     ready: false,
                     group: String::new(),
-                    is_onboarding: wizard.is_some(),
+                    is_quickstart: wizard.is_some(),
                     shape: wizard.map(Section::shape),
                     label,
                     key,
@@ -1985,21 +1996,21 @@ impl RpcDispatcher {
     }
 
     fn handle_config_status(&self) -> RpcResult {
-        use zeroclaw_config::sections::ONBOARDING_SECTIONS;
+        use zeroclaw_config::sections::QUICKSTART_SECTIONS;
         let config = self.ctx.config.read().clone();
-        let missing: Vec<String> = ONBOARDING_SECTIONS
+        let missing: Vec<String> = QUICKSTART_SECTIONS
             .iter()
-            .filter(|&&s| !crate::onboard::section_has_signal(&config, s))
+            .filter(|&&s| !zeroclaw_config::sections::section_has_signal(&config, s))
             .map(|s| s.as_str().to_string())
             .collect();
-        let needs_onboarding = !missing.is_empty();
-        let reason = if needs_onboarding {
+        let needs_quickstart = !missing.is_empty();
+        let reason = if needs_quickstart {
             format!("{} section(s) incomplete", missing.len())
         } else {
             "all sections complete".to_string()
         };
         to_result(ConfigStatusResult {
-            needs_onboarding,
+            needs_quickstart,
             reason,
             has_partial_state: false,
             missing,

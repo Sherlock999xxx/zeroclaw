@@ -2859,7 +2859,7 @@ pub struct FilesystemMigrationReport {
 /// 2. Iterate legacy top-level entries; for each, look up the V3
 ///    destination via [`workspace_toplevel_v3_path`] (or the
 ///    [`memory_subentry_v3_path`] sub-dispatch for `memory/`) and move it.
-/// 3. Heal intermediate v0.8.0-pre installs by relocating
+/// 3. Heal intermediate installs that landed under the old layout by relocating
 ///    `agents/default/workspace/skills/` to `shared/skills/`.
 ///
 /// Idempotent: on a fresh install or an already-migrated install the
@@ -3119,7 +3119,7 @@ fn move_with_refuse_to_clobber(src: &Path, dst: &Path) -> MigResult<bool> {
     Ok(true)
 }
 
-/// Heal intermediate v0.8.0-pre installs that landed skills under
+/// Heal intermediate installs that landed skills under
 /// `agents/default/workspace/skills/` before the host-wide
 /// `shared/skills/` layout was introduced. Idempotent.
 pub fn relocate_default_agent_skills_to_shared(install_root: &Path) -> MigResult<bool> {

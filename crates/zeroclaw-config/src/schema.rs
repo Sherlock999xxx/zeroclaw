@@ -87,7 +87,7 @@ pub struct Config {
     /// Populated by `apply_env_overrides`; consulted by `save()` to mask the
     /// env-injected values back to disk-or-default before encryption, and by
     /// `prop_is_env_overridden` for O(1) display-layer lookup (config list,
-    /// dashboard, onboarding).
+    /// dashboard, quickstart).
     #[serde(skip)]
     pub env_overridden_paths: std::collections::HashSet<String>,
     /// Per-path snapshot of pre-override raw values, captured at apply time
@@ -440,7 +440,7 @@ pub struct Config {
     #[nested]
     pub nodes: NodesConfig,
 
-    /// Meta-state for `zeroclaw onboard` (which sections the user has
+    /// Meta-state for the Quickstart flow (which sections the user has
     /// already walked through). Not user-facing config (`[onboard_state]`).
     #[serde(default)]
     #[nested]
@@ -543,21 +543,30 @@ pub struct Config {
 /// When enabled, each client engagement gets an isolated workspace with
 /// separate memory, audit, secrets, and tool restrictions.
 #[allow(clippy::struct_excessive_bools)]
-/// Opaque state the `zeroclaw onboard` flow writes so it can tell, on a
+/// Opaque state the Quickstart flow writes so it can tell, on a
 /// re-run, which sections the user has already walked through at least
 /// once — which lets it offer "Reconfigure? [y/N]" skip gates instead of
 /// forcing users through every field again.
 ///
-/// This is meta-state about the onboard process, not user-facing config.
+/// This is meta-state about the Quickstart flow, not user-facing config.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "onboard_state"]
 pub struct OnboardStateConfig {
-    /// Section keys the user has completed at least once via onboard.
+    /// Section keys the user has completed at least once.
     /// Values are the lowercased Section variant names
     /// (`"workspace"`, `"model_providers"`, …).
     #[serde(default)]
     pub completed_sections: Vec<String>,
+    /// `true` once the Quickstart has applied a `BuilderSubmission`
+    /// successfully on this install. Web gateway and TUI auto-launch
+    /// the Quickstart on startup iff this is `false` **and** no
+    /// `agents.*` entries exist (the implicit-completion rule covers
+    /// upgrades). The flag is flipped in the same atomic write that
+    /// lands the Quickstart submission; re-entering the Quickstart
+    /// later to add another agent does not flip it back to `false`.
+    #[serde(default)]
+    pub quickstart_completed: bool,
 }
 
 /// Used by `#[serde(skip_serializing_if)]` on plain `bool` fields to omit
@@ -13524,12 +13533,12 @@ pub fn resolve_config_dir_for_data(data_dir: &Path) -> (PathBuf, PathBuf) {
     (data_config_dir.clone(), data_config_dir.join("data"))
 }
 
-/// Resolve the current runtime config/data directories for onboarding flows.
+/// Resolve the current runtime config/data directories.
 ///
 /// This mirrors the same precedence used by `Config::load_or_init()`:
 /// `ZEROCLAW_CONFIG_DIR` > `ZEROCLAW_DATA_DIR` > `ZEROCLAW_WORKSPACE`
 /// (deprecated) > defaults.
-pub async fn resolve_runtime_dirs_for_onboarding() -> Result<(PathBuf, PathBuf)> {
+pub async fn resolve_runtime_dirs() -> Result<(PathBuf, PathBuf)> {
     let (default_zeroclaw_dir, default_data_dir) = default_config_and_data_dirs()?;
     let (config_dir, data_dir, _) =
         resolve_runtime_config_dirs(&default_zeroclaw_dir, &default_data_dir).await?;
@@ -13865,7 +13874,7 @@ fn has_ollama_cloud_credential(config_api_key: Option<&str>) -> bool {
 
 /// Ensure that essential bootstrap files exist in the workspace directory.
 ///
-/// When the workspace is created outside of `zeroclaw onboard` (e.g., non-tty
+/// When the workspace is created outside of Quickstart (e.g., non-tty
 /// daemon/cron sessions), these files would otherwise be missing. This function
 /// creates sensible defaults that allow the agent to operate with a basic identity.
 pub async fn ensure_bootstrap_files(workspace_dir: &Path) -> Result<()> {
@@ -13998,7 +14007,7 @@ impl Config {
 
     /// Returns `true` if `path` was populated by a `ZEROCLAW_*` env-var
     /// override at load time. O(1) HashSet lookup; safe to call per row in
-    /// list-rendering paths (`config list`, dashboard, onboarding).
+    /// list-rendering paths (`config list`, dashboard, quickstart).
     pub fn prop_is_env_overridden(&self, path: &str) -> bool {
         self.env_overridden_paths.contains(path)
     }
@@ -14196,8 +14205,8 @@ impl Config {
             // `auto_approve` in the approval decision (see approval/mod.rs).
             //
             // Skipped when the loaded config has no `risk_profiles.default`
-            // entry: we will not synthesize a `default` alias here. Per
-            // v0.8.0 rules, `default` is a migration artifact (V1/V2→V3
+            // entry: we will not synthesize a `default` alias here.
+            // `default` is a migration artifact (V1/V2→V3
             // single-instance bridge); a config that arrives without it
             // is a legitimate multi-aliased shape and must not have one
             // injected at load time.
@@ -14664,7 +14673,7 @@ impl Config {
             // explicit `uri` (the model_provider factory resolves the
             // family's default endpoint via `ModelEndpoint`). An entry
             // with no identifying information at all is almost always an
-            // in-progress onboarding state — the user picked the model
+            // in-progress quickstart state — the user picked the model
             // provider but hasn't filled anything in yet. Warn but don't
             // bail; the runtime falls back to family-default endpoint at
             // use time, and a chat against the unconfigured model
@@ -14679,7 +14688,7 @@ impl Config {
                 .is_some_and(|v| !v.trim().is_empty());
             if !has_uri && !has_api_key && !has_model {
                 ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"model_provider": profile_name, "profile_name": profile_name})), "providers.models. is empty (no uri / api_key / model). \
-                     Skipping at runtime; finish onboarding via the dashboard or `zeroclaw onboard` \
+                     Skipping at runtime; run `zeroclaw quickstart` (or use the dashboard) \
                      to make this model_provider usable.");
                 continue;
             }
@@ -16216,7 +16225,7 @@ mod tests {
     #[test]
     async fn config_default_has_sane_values() {
         let c = Config::default();
-        // No model_provider configured by default — set during onboarding.
+        // No model_provider configured by default — set during Quickstart.
         assert!(c.providers.models.is_empty());
         assert!(c.providers.models.iter_entries().next().is_none());
         assert!(!c.skills.open_skills_enabled);
@@ -21902,7 +21911,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
         // review: an operator with a real on-disk credential who sets a
         // `ZEROCLAW_*` env override for the same path and triggers any
         // save (dashboard auto-save, CLI `config set` for an unrelated
-        // field, onboarding finalizer) must NOT corrupt the disk file.
+        // field, Quickstart finalizer) must NOT corrupt the disk file.
         //
         // Pre-fix behavior: `mask_env_overrides_for_save` read disk via
         // `get_prop`, which returns `"**** (encrypted)"` for secret-typed
@@ -22395,7 +22404,7 @@ allowed_users = []
 
     /// Audit gate: every path emitted by `prop_fields()` must round-trip
     /// through `get_prop`. The CLI (`zeroclaw config get/set`), the TUI
-    /// onboarding prompts (`prompt_field`), the gateway list endpoint
+    /// Quickstart prompts (`prompt_field`), the gateway list endpoint
     /// (`/api/config/list`), and the dashboard form all derive from
     /// `prop_fields()`; if a path appears here but `get_prop` rejects
     /// it, that field is unreachable on every surface.
@@ -22434,6 +22443,34 @@ allowed_users = []
                 .get_prop("onboard-state.completed-sections")
                 .expect("onboard state marker path should be readable"),
             "[\"agents\"]"
+        );
+    }
+
+    /// `onboard-state.quickstart-completed` is the flag the Quickstart
+    /// flips when it lands a `BuilderSubmission`. Defaults to `false`
+    /// so first launches auto-open the Quickstart; round-trips through
+    /// `set_prop` / `get_prop` like any other top-level config field.
+    #[test]
+    async fn onboard_state_quickstart_completed_round_trips() {
+        let mut config = Config::default();
+
+        assert_eq!(
+            config
+                .get_prop("onboard-state.quickstart-completed")
+                .expect("default quickstart-completed should be readable"),
+            "false",
+            "fresh configs default to quickstart-completed=false so the \
+             Quickstart auto-opens on first launch",
+        );
+
+        config
+            .set_prop("onboard-state.quickstart-completed", "true")
+            .expect("quickstart-completed should be writable via prop path");
+        assert_eq!(
+            config
+                .get_prop("onboard-state.quickstart-completed")
+                .expect("quickstart-completed should be readable after set"),
+            "true"
         );
     }
 

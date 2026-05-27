@@ -373,7 +373,8 @@ async fn normalize_native_tool_result_json(
         return None;
     }
 
-    let normalized = normalize_image_references(&refs, config, max_bytes, remote_client, ctx, cache).await;
+    let normalized =
+        normalize_image_references(&refs, config, max_bytes, remote_client, ctx, cache).await;
     let new_inner = compose_multimodal_content(
         &cleaned_text,
         &normalized.data_uris,
@@ -726,7 +727,15 @@ async fn normalize_image_references(
     let mut skipped_count = 0usize;
 
     for reference in refs {
-        match normalize_image_reference(reference, config, max_bytes, remote_client, cache.as_deref_mut()).await {
+        match normalize_image_reference(
+            reference,
+            config,
+            max_bytes,
+            remote_client,
+            cache.as_deref_mut(),
+        )
+        .await
+        {
             Ok(data_uri) => data_uris.push(data_uri),
             Err(error) => {
                 skipped_count += 1;
@@ -787,7 +796,6 @@ async fn normalize_image_references(
         skipped_count,
     }
 }
-
 
 fn compose_multimodal_content(
     text: &str,
@@ -1045,12 +1053,13 @@ async fn normalize_local_image_cached(
         .into());
     }
 
-    let metadata = tokio::fs::metadata(path)
-        .await
-        .map_err(|error| MultimodalError::LocalReadFailed {
-            input: source.to_string(),
-            reason: error.to_string(),
-        })?;
+    let metadata =
+        tokio::fs::metadata(path)
+            .await
+            .map_err(|error| MultimodalError::LocalReadFailed {
+                input: source.to_string(),
+                reason: error.to_string(),
+            })?;
 
     let file_len = metadata.len();
     let is_immutable = source.contains("/uploads/");
@@ -1100,7 +1109,6 @@ async fn normalize_local_image_cached(
     cache.insert(source.to_string(), cache_len, mtime, data_uri.clone());
     Ok(data_uri)
 }
-
 
 fn validate_size(source: &str, size_bytes: usize, max_bytes: usize) -> anyhow::Result<()> {
     if size_bytes > max_bytes {

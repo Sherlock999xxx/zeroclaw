@@ -147,15 +147,15 @@ fn print_no_command_help(cmd: clap::Command) -> Result<()> {
         );
         println!(
             "{}",
-            crate::i18n::get_cli_string("cli-try-onboard")
+            crate::i18n::get_cli_string("cli-try-quickstart")
                 .as_deref()
-                .unwrap_or("Try `zeroclaw onboard` to initialize your workspace.")
+                .unwrap_or("Try `zeroclaw quickstart` to create your first agent.")
         );
     }
     #[cfg(not(feature = "agent-runtime"))]
     {
         println!("No command provided.");
-        println!("Try `zeroclaw onboard` to initialize your workspace.");
+        println!("Try `zeroclaw quickstart` to create your first agent.");
     }
     println!();
 
@@ -308,7 +308,29 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Initialize your workspace and configuration
+    /// Quickstart — create one working agent end-to-end. Replaces the
+    /// section-by-section onboarding flow with a single preset-driven
+    /// path. Non-interactive in this build: writes balanced defaults
+    /// for risk/runtime/memory and prints next-step instructions.
+    Quickstart {
+        /// Provider type (anthropic / openai / openrouter / ollama).
+        #[arg(long)]
+        model_provider: Option<String>,
+
+        /// Default model id for the new provider entry.
+        #[arg(long)]
+        model: Option<String>,
+
+        /// API key for the new provider entry (omit for ollama / local).
+        #[arg(long)]
+        api_key: Option<String>,
+
+        /// Alias for the new agent. Defaults to a sanitized provider name.
+        #[arg(long)]
+        agent: Option<String>,
+    },
+
+    /// Deprecated. Use `zeroclaw quickstart`. Any flags error.
     Onboard {
         /// Configure a specific section only. Omit to run the full flow.
         #[command(subcommand)]
@@ -838,56 +860,6 @@ enum DeprecatedPropsCommands {
     Any(Vec<String>),
 }
 
-/// Single source of truth for the retired `--*-only` boolean flags. Each
-/// row binds the legacy flag name, the new positional subcommand it
-/// became, and the canonical [`Section`] it routes to. The function
-/// below and its tests both walk this table — no magic positional
-/// bools, no parallel mapping.
-#[cfg(feature = "agent-runtime")]
-const LEGACY_ONBOARD_FLAGS: &[(zeroclaw_config::sections::Section, &str, &str)] = {
-    use zeroclaw_config::sections::Section;
-    &[
-        (Section::Channels, "--channels-only", "channels"),
-        (Section::ModelProviders, "--providers-only", "providers"),
-        (Section::Memory, "--memory-only", "memory"),
-        (Section::Hardware, "--hardware-only", "hardware"),
-        (Section::Tunnel, "--tunnel-only", "tunnel"),
-    ]
-};
-
-/// Resolve the onboard target from the positional `<section>` subcommand
-/// (if any) plus the legacy `--*-only` boolean flags. Returns the target
-/// section for the orchestrator plus an optional `(old_flag, new_subcommand)`
-/// pair — `Some(_)` means the caller should emit a deprecation warning.
-///
-/// Precedence: an explicit positional section always wins for target
-/// selection, even when a legacy flag is also set. The deprecation warning
-/// still fires in that case so the user learns the flag is retired.
-///
-/// `legacy_flags` parallels [`LEGACY_ONBOARD_FLAGS`] in order; the
-/// caller (clap entry point and tests) builds it once from the parsed
-/// CLI bools so the position-encoded mapping is no longer scattered.
-#[cfg(feature = "agent-runtime")]
-fn resolve_onboard_target(
-    explicit: Option<zeroclaw_config::sections::Section>,
-    legacy_flags: &[bool],
-) -> (
-    zeroclaw_runtime::onboard::Target,
-    Option<(&'static str, &'static str)>,
-) {
-    debug_assert_eq!(
-        legacy_flags.len(),
-        LEGACY_ONBOARD_FLAGS.len(),
-        "legacy_flags must align with LEGACY_ONBOARD_FLAGS",
-    );
-    let legacy = LEGACY_ONBOARD_FLAGS
-        .iter()
-        .zip(legacy_flags.iter().copied())
-        .find_map(|(row, active)| active.then_some(*row));
-    let target = explicit.or(legacy.map(|(s, ..)| s));
-    let deprecation = legacy.map(|(_, old, new)| (old, new));
-    (target, deprecation)
-}
 
 #[cfg(feature = "agent-runtime")]
 fn runtime_dir_env_is_explicit(name: &str, value: &str) -> bool {
@@ -943,6 +915,92 @@ fn apply_homebrew_onboard_config_dir() {
             unsafe { std::env::set_var(name, value) };
         },
     );
+}
+
+/// `zeroclaw quickstart` CLI entry — preset-driven scaffold.
+///
+/// Lands one working agent end-to-end with balanced defaults for risk,
+/// runtime, and memory. Provider/model/api-key/agent come from flags;
+/// the interactive TUI form lives in `apps/zerocode` (Quickstart tab)
+/// and the web form lives at `/quickstart`. The CLI does no readline
+/// prompting — scripted-flag matrices belong in `zeroclaw config set`.
+#[cfg(feature = "agent-runtime")]
+async fn run_quickstart_cli(
+    model_provider: Option<String>,
+    model: Option<String>,
+    api_key: Option<String>,
+    agent: Option<String>,
+) -> anyhow::Result<()> {
+    use zeroclaw_config::presets::{
+        AgentIdentity, BuilderSubmission, ChannelQuickStart, MemoryChoice, ModelProviderChoice,
+        SelectorChoice,
+    };
+    use zeroclaw_runtime::quickstart::apply;
+
+    let provider_type = model_provider.ok_or_else(|| {
+        anyhow::anyhow!("--model-provider is required (anthropic / openai / openrouter / ollama)")
+    })?;
+    let model =
+        model.ok_or_else(|| anyhow::anyhow!("--model is required (e.g. claude-sonnet-4-5)"))?;
+    let agent_alias = agent.unwrap_or_else(|| sanitize_alias(&provider_type));
+
+    let submission = BuilderSubmission {
+        model_provider: SelectorChoice::Fresh(ModelProviderChoice {
+            provider_type: provider_type.clone(),
+            alias: provider_type.clone(),
+            default_model: model.clone(),
+            api_key,
+            base_url: None,
+        }),
+        risk_profile: SelectorChoice::Fresh("balanced".to_string()),
+        runtime_profile: SelectorChoice::Fresh("balanced".to_string()),
+        memory: SelectorChoice::Fresh(MemoryChoice::Sqlite),
+        channels: Vec::<SelectorChoice<ChannelQuickStart>>::new(),
+        agent: AgentIdentity {
+            name: agent_alias.clone(),
+            system_prompt: String::new(),
+            personality_file: None,
+        },
+    };
+
+    let _dirs = crate::config::schema::resolve_runtime_dirs().await?;
+    let mut cfg = crate::config::schema::Config::load_or_init().await?;
+    match apply(submission, &mut cfg).await {
+        Ok(applied) => {
+            println!("Quickstart complete. Created agent `{}`.", applied.alias);
+            println!();
+            println!("Next steps:");
+            println!(
+                "  zeroclaw agent {}  # chat with this agent in your terminal",
+                applied.alias
+            );
+            if which_zerocode_on_path() {
+                println!("  zerocode                   # launch the TUI");
+            }
+            Ok(())
+        }
+        Err(errs) => {
+            for e in &errs {
+                eprintln!("error: {e}");
+            }
+            anyhow::bail!("quickstart rejected: {} errors", errs.len())
+        }
+    }
+}
+
+#[cfg(feature = "agent-runtime")]
+fn sanitize_alias(seed: &str) -> String {
+    seed.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect::<String>()
+        .to_lowercase()
+}
+
+#[cfg(feature = "agent-runtime")]
+fn which_zerocode_on_path() -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|p| p.join("zerocode").is_file()))
+        .unwrap_or(false)
 }
 
 #[cfg(feature = "plugins-wasm")]
@@ -1364,25 +1422,26 @@ async fn main() -> Result<()> {
     // Ephemeral daemon mode defaults to debug so tool call spans are visible.
     // All other modes default to info.
     let default_log_level = match &cli.command {
-        Commands::Daemon { ephemeral: true, .. } => "debug",
+        Commands::Daemon {
+            ephemeral: true, ..
+        } => "debug",
         _ => "info",
     };
 
     zeroclaw_log::install_global_subscriber(default_log_level);
 
-    // Onboard auto-detects the environment: if stdin/stdout are a TTY and no
-    // model_provider flags were given, it runs the full interactive wizard; otherwise
-    // it runs the quick (scriptable) setup.  Use --quick to force quick setup,
-    // or set ZEROCLAW_INTERACTIVE=1 to force interactive mode when TTY
-    // detection fails.  This means `curl … | bash` and
-    // `zeroclaw onboard --api-key …` both take the fast path, while a bare
-    // `zeroclaw onboard` in a terminal launches the wizard.
+
+    // `zeroclaw onboard` is deprecated. The legacy section-by-section
+    // wizard is gone; new installs run `zeroclaw quickstart`. Any old
+    // flags (`--api-key`, `--model-provider`, `--quick`, `--<section>-only`,
+    // positional section subcommands) error so scripted callers fail
+    // loudly rather than silently doing the wrong thing.
     #[cfg(feature = "agent-runtime")]
     if let Commands::Onboard {
         section,
         quick,
         cli: use_cli,
-        tui: use_tui_deprecated,
+        tui: _,
         force,
         reinit,
         api_key,
@@ -1396,125 +1455,29 @@ async fn main() -> Result<()> {
         tunnel_only,
     } = &cli.command
     {
-        use zeroclaw_runtime::onboard::ui::{QuickUi, TermUi};
-        use zeroclaw_runtime::onboard::{Flags, run as run_onboard};
-
-        let (target, deprecation) = resolve_onboard_target(
-            *section,
-            // Order matches LEGACY_ONBOARD_FLAGS row order. Adding a
-            // legacy flag means: add a row to that const + a slot
-            // here, nowhere else.
-            &[
-                *channels_only,
-                *providers_only,
-                *memory_only,
-                *hardware_only,
-                *tunnel_only,
-            ],
-        );
-        if let Some((old, new)) = deprecation {
-            eprintln!("warning: {old} is deprecated; use `zeroclaw onboard {new}` instead");
-        }
-
-        apply_homebrew_onboard_config_dir();
-
-        // --reinit backs up the config dir BEFORE load_or_init re-materializes it.
-        if *reinit {
-            let (zeroclaw_dir, _) =
-                crate::config::schema::resolve_runtime_dirs_for_onboarding().await?;
-            if zeroclaw_dir.exists() {
-                let ts = chrono::Local::now().format("%Y%m%d%H%M%S");
-                let backup = format!("{}.backup.{}", zeroclaw_dir.display(), ts);
-                if !*force {
-                    eprintln!(
-                        "⚠️  --reinit will back up {} → {backup}",
-                        zeroclaw_dir.display()
-                    );
-                    eprint!("Continue? [y/N] ");
-                    std::io::stderr().flush().ok();
-                    let mut answer = String::new();
-                    std::io::stdin().read_line(&mut answer)?;
-                    if !answer.trim().eq_ignore_ascii_case("y") {
-                        bail!("Aborted.");
-                    }
-                }
-                tokio::fs::rename(&zeroclaw_dir, &backup)
-                    .await
-                    .with_context(|| format!("backup {} → {backup}", zeroclaw_dir.display()))?;
-            }
-        }
-
-        let mut cfg = Box::pin(Config::load_or_init()).await?;
-
-        let flags = Flags {
-            force: *force,
-            reinit: *reinit,
-            api_key: api_key.clone(),
-            model_provider: model_provider.clone(),
-            model: model.clone(),
-            memory: memory.clone(),
-        };
-
-        if *use_tui_deprecated {
+        let any_legacy_flag = section.is_some()
+            || *quick
+            || *use_cli
+            || *force
+            || *reinit
+            || api_key.is_some()
+            || model_provider.is_some()
+            || model.is_some()
+            || memory.is_some()
+            || *channels_only
+            || *providers_only
+            || *memory_only
+            || *hardware_only
+            || *tunnel_only;
+        if any_legacy_flag {
             eprintln!(
-                "warning: --tui is deprecated and now a no-op (TUI is the default); \
-                 pass --cli to force the terminal-prompt backend"
+                "error: `zeroclaw onboard` is deprecated and its flags no longer apply. \
+                 Use `zeroclaw quickstart` to create a new agent, or `zeroclaw config set <path>=<value>` \
+                 for headless updates."
             );
+            std::process::exit(2);
         }
-
-        match (*quick, *use_cli) {
-            (true, true) => bail!("--quick and --cli are mutually exclusive"),
-            (true, false) => {
-                let mut ui = QuickUi::new();
-                Box::pin(run_onboard(&mut cfg, &mut ui, target, &flags)).await?;
-            }
-            (false, true) => {
-                let mut ui = TermUi;
-                Box::pin(run_onboard(&mut cfg, &mut ui, target, &flags)).await?;
-            }
-            (false, false) => {
-                // Default: prefer ratatui TUI. Fall back to TermUi on init
-                // failure or when stdout isn't a terminal (e.g. piped output,
-                // CI without --quick).
-                #[cfg(feature = "tui-onboarding")]
-                {
-                    use std::io::IsTerminal;
-                    if std::io::stdout().is_terminal() {
-                        match zerocode::RatatuiUi::new() {
-                            Ok(mut ui) => {
-                                Box::pin(run_onboard(&mut cfg, &mut ui, target, &flags)).await?;
-                            }
-                            Err(e) => {
-                                ::zeroclaw_log::record!(
-                                    DEBUG,
-                                    ::zeroclaw_log::Event::new(
-                                        module_path!(),
-                                        ::zeroclaw_log::Action::Note
-                                    )
-                                    .with_attrs(::serde_json::json!({"e": e.to_string()})),
-                                    "TUI init failed"
-                                );
-                                eprintln!(
-                                    "TUI init failed ({e}); falling back to terminal prompts."
-                                );
-                                let mut ui = TermUi;
-                                Box::pin(run_onboard(&mut cfg, &mut ui, target, &flags)).await?;
-                            }
-                        }
-                    } else {
-                        let mut ui = TermUi;
-                        Box::pin(run_onboard(&mut cfg, &mut ui, target, &flags)).await?;
-                    }
-                }
-                #[cfg(not(feature = "tui-onboarding"))]
-                {
-                    let mut ui = TermUi;
-                    Box::pin(run_onboard(&mut cfg, &mut ui, target, &flags)).await?;
-                }
-            }
-        }
-
-        Box::pin(cfg.save_dirty()).await?;
+        eprintln!("`zeroclaw onboard` is deprecated — use `zeroclaw quickstart`.");
         return Ok(());
     }
 
@@ -1578,7 +1541,7 @@ async fn main() -> Result<()> {
                             );
                             anyhow::Error::msg(format!(
                                 "Unknown model_provider family: {type_key}. \
-                             Run `zeroclaw onboard model_providers` to see configured options."
+                             Configure a provider via `zeroclaw quickstart` or the /config editor."
                             ))
                         })?;
                     if let Some(m) = &model {
@@ -1592,8 +1555,7 @@ async fn main() -> Result<()> {
                 } else if config.model_provider_for_agent(&agent_alias).is_none() {
                     anyhow::bail!(
                         "No model model_provider configured for agent {agent_alias}. \
-                         Pass --model-provider <type> or run \
-                         `zeroclaw onboard model_providers` to configure one."
+                         Pass --model-provider <type> or run `zeroclaw quickstart` to configure one."
                     );
                 }
 
@@ -1673,6 +1635,16 @@ async fn main() -> Result<()> {
         | Commands::Completions { .. }
         | Commands::MarkdownHelp
         | Commands::MarkdownSchema => unreachable!(),
+
+        Commands::Quickstart {
+            model_provider,
+            model,
+            api_key,
+            agent,
+        } => {
+            run_quickstart_cli(model_provider, model, api_key, agent).await?;
+            return Ok(());
+        }
 
         Commands::Agent {
             agent: agent_alias,
@@ -4250,7 +4222,7 @@ mod tests {
         // section's `as_str()` keys (snake_case) verbatim, set via
         // `#[command(name = $key)]` inside the `sections!` macro that
         // also defines the enum.
-        for w in zeroclaw_config::sections::ONBOARDING_SECTIONS {
+        for w in zeroclaw_config::sections::QUICKSTART_SECTIONS {
             let cli = Cli::try_parse_from(["zeroclaw", "onboard", w.as_str()])
                 .unwrap_or_else(|_| panic!("onboard {} should parse", w.as_str()));
             match cli.command {
@@ -4258,60 +4230,6 @@ mod tests {
                 other => panic!("expected onboard command, got {other:?}"),
             }
         }
-    }
-
-    #[test]
-    #[cfg(feature = "agent-runtime")]
-    fn resolve_onboard_target_no_explicit_no_legacy_runs_all() {
-        let none_set = vec![false; LEGACY_ONBOARD_FLAGS.len()];
-        let (target, deprecation) = resolve_onboard_target(None, &none_set);
-        assert_eq!(target, None);
-        assert!(deprecation.is_none());
-    }
-
-    #[test]
-    #[cfg(feature = "agent-runtime")]
-    fn resolve_onboard_target_positional_wins_and_emits_no_warning() {
-        use zeroclaw_runtime::onboard::Section;
-        let none_set = vec![false; LEGACY_ONBOARD_FLAGS.len()];
-        let (target, deprecation) = resolve_onboard_target(Some(Section::Channels), &none_set);
-        assert_eq!(target, Some(Section::Channels));
-        assert!(deprecation.is_none());
-    }
-
-    /// Drives directly off [`LEGACY_ONBOARD_FLAGS`] — every row in the
-    /// const generates one assertion. No magic positional bool array.
-    #[test]
-    #[cfg(feature = "agent-runtime")]
-    fn resolve_onboard_target_legacy_flag_routes_and_warns() {
-        for (idx, (expected_section, expected_old, expected_new)) in
-            LEGACY_ONBOARD_FLAGS.iter().enumerate()
-        {
-            let mut flags = vec![false; LEGACY_ONBOARD_FLAGS.len()];
-            flags[idx] = true;
-            let (target, deprecation) = resolve_onboard_target(None, &flags);
-            assert_eq!(target, Some(*expected_section), "{expected_old} target");
-            assert_eq!(
-                deprecation,
-                Some((*expected_old, *expected_new)),
-                "{expected_old} deprecation pair",
-            );
-        }
-    }
-
-    /// When both an explicit subcommand and a legacy flag are set, the
-    /// subcommand wins for target selection but the deprecation warning
-    /// still fires so the user migrates off the retired flag.
-    #[test]
-    #[cfg(feature = "agent-runtime")]
-    fn resolve_onboard_target_explicit_plus_legacy_warns_but_picks_explicit() {
-        use zeroclaw_runtime::onboard::Section;
-        // Position 0 is --channels-only per LEGACY_ONBOARD_FLAGS row order.
-        let mut flags = vec![false; LEGACY_ONBOARD_FLAGS.len()];
-        flags[0] = true;
-        let (target, deprecation) = resolve_onboard_target(Some(Section::ModelProviders), &flags);
-        assert_eq!(target, Some(Section::ModelProviders));
-        assert_eq!(deprecation, Some(("--channels-only", "channels")));
     }
 
     #[test]

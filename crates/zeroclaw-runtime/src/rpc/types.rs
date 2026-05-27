@@ -934,9 +934,9 @@ rpc_type! {
         /// Display group for the dashboard sidebar.
         #[serde(default)]
         pub group: String,
-        /// `true` when this section is part of the canonical onboarding list.
+        /// `true` when this section is part of the canonical Quickstart list.
         #[serde(default)]
-        pub is_onboarding: bool,
+        pub is_quickstart: bool,
         /// Editor shape (direct form / one-tier alias map / typed-family map /
         /// backend picker).
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -954,7 +954,7 @@ rpc_type! {
 rpc_type! {
     /// Config readiness status for the dashboard/TUI.
     pub struct ConfigStatusResult {
-        pub needs_onboarding: bool,
+        pub needs_quickstart: bool,
         pub reason: String,
         pub has_partial_state: bool,
         pub missing: Vec<String>,

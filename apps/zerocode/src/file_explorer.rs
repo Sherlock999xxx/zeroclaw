@@ -130,7 +130,8 @@ impl FileExplorerState {
             let rpc = Arc::clone(rpc);
             let result = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
-                    rpc.fs_list_dir(std::path::Path::new(&path), show_hidden).await
+                    rpc.fs_list_dir(std::path::Path::new(&path), show_hidden)
+                        .await
                 })
             });
             match result {
@@ -148,7 +149,8 @@ impl FileExplorerState {
                     if !resp.cwd.is_empty() {
                         self.cwd = std::path::PathBuf::from(resp.cwd);
                     }
-                    self.entries.sort_by_key(|a| (!a.is_dir, a.name.to_lowercase()));
+                    self.entries
+                        .sort_by_key(|a| (!a.is_dir, a.name.to_lowercase()));
                     return;
                 }
                 Err(e) => {

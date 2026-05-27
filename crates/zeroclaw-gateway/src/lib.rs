@@ -17,11 +17,12 @@ pub mod api;
 pub mod api_browse;
 pub mod api_config;
 pub mod api_logs;
-pub mod api_onboard;
 pub mod api_pairing;
 pub mod api_personality;
 #[cfg(feature = "plugins-wasm")]
 pub mod api_plugins;
+pub mod api_quickstart;
+pub mod api_sections;
 pub mod api_skills;
 #[cfg(feature = "webauthn")]
 pub mod api_webauthn;
@@ -517,8 +518,8 @@ pub async fn run_gateway(
     // (2) the first configured `[providers.models.<type>.<alias>]`
     // model with a WARN naming what to set, (3) leave the model empty so
     // the gateway boots and the dashboard can complete browser-based
-    // onboarding at /onboard. The chat-dispatch path checks
-    // `state.model.is_empty()` and returns a structured needs_onboarding
+    // quickstart at /quickstart. The chat-dispatch path checks
+    // `state.model.is_empty()` and returns a structured needs_quickstart
     // error before any model_provider call, so the original "no silent
     // vendor-default substitution" guarantee is preserved at request-time
     // rather than at boot. V3 has no global fallback model_provider — every
@@ -547,7 +548,7 @@ pub async fn run_gateway(
                         ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
                             .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
                             .with_attrs(::serde_json::json!({"display_addr": display_addr})),
-                        "Gateway booting without a configured model. Visit http:///onboard to complete browser onboarding. Chat endpoints will return 503 needs_onboarding until at least one [providers.models.<type>.<alias>] model = \"...\" is set."
+                        "Gateway booting without a configured model. Visit http:///quickstart to complete browser quickstart. Chat endpoints will return 503 needs_quickstart until at least one [providers.models.<type>.<alias>] model = \"...\" is set."
                     );
                     String::new()
                 }
@@ -563,7 +564,7 @@ pub async fn run_gateway(
     // synthesize `<workspace_dir>/memory/brain.db` on a fresh install
     // that has nothing to remember; per-agent memory factories under
     // `agents/<alias>/workspace/memory/` are the only legitimate
-    // origin of memory state in v0.8.0. AppState gets a NoneMemory
+    // origin of memory state. AppState gets a NoneMemory
     // stub so endpoints that read `state.mem` keep working until an
     // agent comes online.
     let mem: Arc<dyn Memory> = if config.agents.is_empty() {
@@ -589,7 +590,7 @@ pub async fn run_gateway(
     //
     // Agent count is unconstrained at boot. Zero agents is a valid
     // state — the gateway must come up so `/admin/reload` and
-    // `/onboard` can install one — and the legacy seed simply stays
+    // `/quickstart` can install one — and the legacy seed simply stays
     // empty. With one or more enabled agents, any of them seeds the
     // vestige; aliases are arbitrary so the iteration-order pick is
     // load-bearing on nothing.
@@ -614,7 +615,7 @@ pub async fn run_gateway(
     // test mock — they are not load-bearing for per-request agent dispatch.
     // When the seed agent's `risk_profile` (or any related per-agent
     // validation) fails to resolve, the gateway must still boot so the
-    // operator can fix the config via `/admin/reload` or `/onboard`
+    // operator can fix the config via `/admin/reload` or `/quickstart`
     // instead of crash-looping the daemon supervisor. Degraded boot:
     // log a warning and fall through to the empty-tools-registry branch.
     let agent_setup: Option<(
@@ -622,14 +623,14 @@ pub async fn run_gateway(
         Arc<SecurityPolicy>,
     )> = agent_alias_opt.as_ref().and_then(|agent_alias| {
         let Some(risk_profile) = config.risk_profile_for_agent(agent_alias) else {
-            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"agent": agent_alias, "agent_alias": agent_alias})), "Gateway: agents..risk_profile does not name a configured risk_profiles entry; booting with empty tools registry. Fix via /admin/reload or /onboard.");
+            ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"agent": agent_alias, "agent_alias": agent_alias})), "Gateway: agents..risk_profile does not name a configured risk_profiles entry; booting with empty tools registry. Fix via /admin/reload or /quickstart.");
             return None;
         };
         let risk_profile = risk_profile.clone();
         let security = match SecurityPolicy::for_agent(&config, agent_alias) {
             Ok(s) => Arc::new(s),
             Err(e) => {
-                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"agent": agent_alias, "error": format!("{}", e), "agent_alias": agent_alias})), "Gateway: agent SecurityPolicy failed to build; booting with empty tools registry. Fix [agents.] via /admin/reload or /onboard.");
+                ::zeroclaw_log::record!(WARN, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_outcome(::zeroclaw_log::EventOutcome::Unknown).with_attrs(::serde_json::json!({"agent": agent_alias, "error": format!("{}", e), "agent_alias": agent_alias})), "Gateway: agent SecurityPolicy failed to build; booting with empty tools registry. Fix [agents.] via /admin/reload or /quickstart.");
                 return None;
             }
         };
@@ -679,7 +680,7 @@ pub async fn run_gateway(
                 INFO,
                 ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
                     .with_attrs(::serde_json::json!({"display_addr": display_addr})),
-                "Gateway: no [agents.<alias>] configured — booting with empty tools registry. Visit http:///onboard to add an agent."
+                "Gateway: no [agents.<alias>] configured — booting with empty tools registry. Visit http:///quickstart to add an agent."
             );
             (Vec::new(), None)
         }
@@ -1321,26 +1322,38 @@ pub async fn run_gateway(
             post(api_config::handle_map_key).delete(api_config::handle_delete_map_key),
         )
         .route("/api/config/rename-map-key", post(api_config::handle_rename_map_key))
-        .route("/api/config/catalog", get(api_onboard::handle_catalog))
+        .route("/api/config/catalog", get(api_sections::handle_catalog))
         .route(
             "/api/config/catalog/models",
-            get(api_onboard::handle_catalog_models),
+            get(api_sections::handle_catalog_models),
         )
-        .route("/api/config/status", get(api_onboard::handle_onboard_status))
+        .route("/api/config/status", get(api_sections::handle_section_status))
         .route(
             "/api/config/agent-options",
-            get(api_onboard::handle_agent_options),
+            get(api_sections::handle_agent_options),
         )
-        .route("/api/config/sections", get(api_onboard::handle_sections))
+        .route("/api/config/sections", get(api_sections::handle_sections))
         .route(
             "/api/config/sections/{section}",
-            get(api_onboard::handle_section_picker),
+            get(api_sections::handle_section_picker),
         )
         .route(
             "/api/config/sections/{section}/items/{key}",
-            post(api_onboard::handle_section_select),
+            post(api_sections::handle_section_select),
         )
         .route("/api/personality", get(api_personality::handle_index))
+        .route(
+            "/api/quickstart/state",
+            get(api_quickstart::handle_state),
+        )
+        .route(
+            "/api/quickstart/validate",
+            post(api_quickstart::handle_validate),
+        )
+        .route(
+            "/api/quickstart/apply",
+            post(api_quickstart::handle_apply),
+        )
         .route(
             "/api/personality/templates",
             get(api_personality::handle_templates),
@@ -1848,23 +1861,23 @@ struct GatewayChatOutcome {
     cost_usd: Option<f64>,
 }
 
-/// Returns a structured `needs_onboarding` error when `model` is empty
+/// Returns a structured `needs_quickstart` error when `model` is empty
 /// or whitespace-only, otherwise `None`. Empty model means the gateway
 /// booted with nothing configured (fresh install). Callers refuse the
 /// dispatch with this marker instead of calling the provider with an
 /// empty model id. Mirrors `agent::Agent::from_config` at
-/// request-time so `/onboard` stays reachable.
-fn needs_onboarding_for(model: &str) -> Option<anyhow::Error> {
+/// request-time so `/quickstart` stays reachable.
+fn needs_quickstart_for(model: &str) -> Option<anyhow::Error> {
     if model.trim().is_empty() {
         ::zeroclaw_log::record!(
             WARN,
             ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Reject)
                 .with_outcome(::zeroclaw_log::EventOutcome::Failure),
-            "gateway dispatch refused: no model configured (browser onboarding incomplete)"
+            "gateway dispatch refused: no model configured (browser quickstart incomplete)"
         );
         Some(anyhow::Error::msg(
-            "needs_onboarding: gateway has no model configured. Complete \
-             browser onboarding at /onboard, or set [providers.models.<type>.<alias>] \
+            "needs_quickstart: gateway has no model configured. Complete \
+             browser quickstart at /quickstart, or set [providers.models.<type>.<alias>] \
              model = \"...\" before sending messages.",
         ))
     } else {
@@ -1872,21 +1885,21 @@ fn needs_onboarding_for(model: &str) -> Option<anyhow::Error> {
     }
 }
 
-/// True when `e` carries the marker produced by `needs_onboarding_for`.
+/// True when `e` carries the marker produced by `needs_quickstart_for`.
 /// Used by chat-dispatch error paths to map the marker to a 503
-/// `needs_onboarding` HTTP response or a more accurate channel-side
+/// `needs_quickstart` HTTP response or a more accurate channel-side
 /// reply, instead of the generic 500 / "sorry" catch-all.
-fn is_needs_onboarding_err(e: &anyhow::Error) -> bool {
-    e.to_string().contains("needs_onboarding")
+fn is_needs_quickstart_err(e: &anyhow::Error) -> bool {
+    e.to_string().contains("needs_quickstart")
 }
 
 /// Reply text sent over a channel SDK when chat dispatch refuses
 /// because the gateway has no model configured. Resolved through the
-/// shared Fluent catalog (`channel-needs-onboarding-reply` in
+/// shared Fluent catalog (`channel-needs-quickstart-reply` in
 /// `crates/zeroclaw-runtime/locales/<locale>/cli.ftl`) so non-English
 /// operators see localized text instead of a Rust-side English literal.
-fn needs_onboarding_channel_reply() -> String {
-    i18n::get_required_cli_string("channel-needs-onboarding-reply")
+fn needs_quickstart_channel_reply() -> String {
+    i18n::get_required_cli_string("channel-needs-quickstart-reply")
 }
 
 /// Full-featured chat with tools for channel and webhook handlers.
@@ -1895,7 +1908,7 @@ async fn run_gateway_chat_with_tools(
     message: &str,
     session_id: Option<&str>,
 ) -> anyhow::Result<GatewayChatOutcome> {
-    if let Some(err) = needs_onboarding_for(&state.model) {
+    if let Some(err) = needs_quickstart_for(&state.model) {
         return Err(err);
     }
 
@@ -2253,17 +2266,17 @@ async fn handle_webhook(
                 },
             );
 
-            if is_needs_onboarding_err(&e) {
+            if is_needs_quickstart_err(&e) {
                 ::zeroclaw_log::record!(
                     WARN,
                     ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
                         .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
                     "Webhook chat refused: gateway has no model configured; \
-                     visit /onboard"
+                     visit /quickstart"
                 );
                 let body = serde_json::json!({
-                    "error": "needs_onboarding",
-                    "url": "/onboard"
+                    "error": "needs_quickstart",
+                    "url": "/quickstart"
                 });
                 (StatusCode::SERVICE_UNAVAILABLE, Json(body))
             } else {
@@ -2467,15 +2480,15 @@ async fn handle_whatsapp_message(
                 }
             }
             Err(e) => {
-                let reply = if is_needs_onboarding_err(&e) {
+                let reply = if is_needs_quickstart_err(&e) {
                     ::zeroclaw_log::record!(
                         WARN,
                         ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
                             .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
                         "WhatsApp chat refused: gateway has no model configured; \
-                         visit /onboard"
+                         visit /quickstart"
                     );
-                    needs_onboarding_channel_reply()
+                    needs_quickstart_channel_reply()
                 } else {
                     ::zeroclaw_log::record!(
                         ERROR,
@@ -2609,15 +2622,15 @@ async fn handle_linq_webhook(
                 }
             }
             Err(e) => {
-                let reply = if is_needs_onboarding_err(&e) {
+                let reply = if is_needs_quickstart_err(&e) {
                     ::zeroclaw_log::record!(
                         WARN,
                         ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
                             .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
                         "Linq chat refused: gateway has no model configured; \
-                         visit /onboard"
+                         visit /quickstart"
                     );
-                    needs_onboarding_channel_reply()
+                    needs_quickstart_channel_reply()
                 } else {
                     ::zeroclaw_log::record!(
                         ERROR,
@@ -2746,15 +2759,15 @@ async fn handle_wati_webhook(State(state): State<AppState>, body: Bytes) -> impl
                 }
             }
             Err(e) => {
-                let reply = if is_needs_onboarding_err(&e) {
+                let reply = if is_needs_quickstart_err(&e) {
                     ::zeroclaw_log::record!(
                         WARN,
                         ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
                             .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
                         "WATI chat refused: gateway has no model configured; \
-                         visit /onboard"
+                         visit /quickstart"
                     );
-                    needs_onboarding_channel_reply()
+                    needs_quickstart_channel_reply()
                 } else {
                     ::zeroclaw_log::record!(
                         ERROR,
@@ -2893,7 +2906,7 @@ async fn handle_nextcloud_talk_webhook(
                     }
                 }
                 Err(e) => {
-                    let reply = if is_needs_onboarding_err(&e) {
+                    let reply = if is_needs_quickstart_err(&e) {
                         ::zeroclaw_log::record!(
                             WARN,
                             ::zeroclaw_log::Event::new(
@@ -2902,9 +2915,9 @@ async fn handle_nextcloud_talk_webhook(
                             )
                             .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
                             "Nextcloud Talk chat refused: gateway has no model configured; \
-                             visit /onboard"
+                             visit /quickstart"
                         );
-                        needs_onboarding_channel_reply()
+                        needs_quickstart_channel_reply()
                     } else {
                         ::zeroclaw_log::record!(ERROR, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail).with_outcome(::zeroclaw_log::EventOutcome::Failure).with_attrs(::serde_json::json!({"channel": "nextcloud_talk", "error": format!("{}", e)})), "LLM error");
                         "Sorry, I couldn't process your message right now.".to_string()
@@ -3330,7 +3343,7 @@ mod tests {
     }
 
     /// Regression: the gateway must boot with zero configured agents so
-    /// a fresh install can reach `/admin/reload` and `/onboard` to add
+    /// a fresh install can reach `/admin/reload` and `/quickstart` to add
     /// one. Earlier the boot path returned
     /// `gateway start requires at least one configured [agents.<alias>]
     /// entry`, which crashed the daemon supervisor before the reload
@@ -3376,7 +3389,7 @@ mod tests {
         if handle.is_finished() {
             let result = handle.await.expect("task did not panic");
             panic!(
-                "gateway exited during boot with zero agents — must stay up for reload/onboard: {:?}",
+                "gateway exited during boot with zero agents — must stay up for reload/quickstart: {:?}",
                 result
             );
         }
@@ -3388,7 +3401,7 @@ mod tests {
     /// Earlier the boot path used `config.risk_profile_for_agent(...).with_context(...)?`
     /// which propagated up through the daemon supervisor and crash-looped
     /// the gateway component, locking the operator out of `/admin/reload`
-    /// and `/onboard` — the exact endpoints they need to fix the broken
+    /// and `/quickstart` — the exact endpoints they need to fix the broken
     /// risk_profile reference. The fix degrades gracefully: warn,
     /// fall through to an empty tools registry, keep serving.
     #[tokio::test]
@@ -3425,7 +3438,7 @@ mod tests {
             let result = handle.await.expect("task did not panic");
             panic!(
                 "gateway exited during boot when agent.risk_profile was unresolved \
-                 — must stay up so operator can fix via /admin/reload or /onboard: {:?}",
+                 — must stay up so operator can fix via /admin/reload or /quickstart: {:?}",
                 result
             );
         }
@@ -5152,90 +5165,90 @@ mod tests {
     }
 
     #[test]
-    fn needs_onboarding_for_flags_empty_model() {
+    fn needs_quickstart_for_flags_empty_model() {
         let err =
-            needs_onboarding_for("").expect("empty model must produce a needs_onboarding error");
+            needs_quickstart_for("").expect("empty model must produce a needs_quickstart error");
         let msg = err.to_string();
         assert!(
-            msg.contains("needs_onboarding"),
-            "error must carry the needs_onboarding marker for callers to map to 503; got: {msg}"
+            msg.contains("needs_quickstart"),
+            "error must carry the needs_quickstart marker for callers to map to 503; got: {msg}"
         );
         assert!(
-            msg.contains("/onboard"),
-            "error must point the user at /onboard; got: {msg}"
+            msg.contains("/quickstart"),
+            "error must point the user at /quickstart; got: {msg}"
         );
     }
 
     #[test]
-    fn needs_onboarding_for_flags_whitespace_only_model() {
+    fn needs_quickstart_for_flags_whitespace_only_model() {
         assert!(
-            needs_onboarding_for("   ").is_some(),
+            needs_quickstart_for("   ").is_some(),
             "whitespace-only model must be treated as empty"
         );
         assert!(
-            needs_onboarding_for("\n\t ").is_some(),
+            needs_quickstart_for("\n\t ").is_some(),
             "tabs and newlines count as empty too"
         );
     }
 
     #[test]
-    fn needs_onboarding_for_passes_real_model() {
+    fn needs_quickstart_for_passes_real_model() {
         assert!(
-            needs_onboarding_for("anthropic/claude-sonnet-4").is_none(),
+            needs_quickstart_for("anthropic/claude-sonnet-4").is_none(),
             "a real model id must not be flagged"
         );
         assert!(
-            needs_onboarding_for("  gpt-4  ").is_none(),
+            needs_quickstart_for("  gpt-4  ").is_none(),
             "leading/trailing whitespace around a real model id must not be flagged"
         );
     }
 
     #[test]
-    fn is_needs_onboarding_err_detects_marker_from_helper() {
-        let err = needs_onboarding_for("").expect("empty model produces marker");
+    fn is_needs_quickstart_err_detects_marker_from_helper() {
+        let err = needs_quickstart_for("").expect("empty model produces marker");
         assert!(
-            is_needs_onboarding_err(&err),
-            "the marker emitted by needs_onboarding_for must be detected"
+            is_needs_quickstart_err(&err),
+            "the marker emitted by needs_quickstart_for must be detected"
         );
     }
 
     #[test]
-    fn is_needs_onboarding_err_ignores_unrelated_errors() {
+    fn is_needs_quickstart_err_ignores_unrelated_errors() {
         let err = anyhow::Error::msg("upstream timeout: provider returned 504");
         assert!(
-            !is_needs_onboarding_err(&err),
-            "unrelated errors must not be misclassified as needs_onboarding"
+            !is_needs_quickstart_err(&err),
+            "unrelated errors must not be misclassified as needs_quickstart"
         );
         let err = anyhow::Error::msg("invalid api key");
-        assert!(!is_needs_onboarding_err(&err));
+        assert!(!is_needs_quickstart_err(&err));
     }
 
     #[test]
-    fn is_needs_onboarding_err_detects_via_substring() {
+    fn is_needs_quickstart_err_detects_via_substring() {
         // Defends the contract that the substring marker is the
         // detection key — not the exact string. Wrappers (e.g.
         // anyhow::Error::context) must not break the check.
         let err =
-            anyhow::Error::msg("provider call failed").context("needs_onboarding: empty model");
-        assert!(is_needs_onboarding_err(&err));
+            anyhow::Error::msg("provider call failed").context("needs_quickstart: empty model");
+        assert!(is_needs_quickstart_err(&err));
     }
 
     #[test]
-    fn needs_onboarding_channel_reply_resolves_via_fluent() {
-        // The Fluent key channel-needs-onboarding-reply must resolve
+    fn needs_quickstart_channel_reply_resolves_via_fluent() {
+        // The Fluent key channel-needs-quickstart-reply must resolve
         // to real text from the embedded en/cli.ftl, not the missing-
-        // key fallback `{channel-needs-onboarding-reply}` that
+        // key fallback `{channel-needs-quickstart-reply}` that
         // `missing_cli_string` produces. Guarding this in a test
         // keeps the i18n contract from quietly drifting if the key
         // gets renamed in lib.rs without a matching ftl edit.
-        let reply = needs_onboarding_channel_reply();
+        let reply = needs_quickstart_channel_reply();
         assert!(
             !reply.starts_with('{') && !reply.ends_with('}'),
             "fluent missing-key fallback leaked into channel reply: {reply:?}"
         );
         assert!(
-            reply.to_lowercase().contains("onboarding"),
-            "channel reply must mention onboarding so users know what's missing: {reply:?}"
+            reply.to_lowercase().contains("quickstart"),
+            "channel reply must mention Quickstart so users know what's missing: {reply:?}"
         );
     }
 }

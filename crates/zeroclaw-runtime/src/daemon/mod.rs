@@ -395,9 +395,9 @@ pub async fn run(
         // Open the ACP session DB at boot so the file exists from the
         // moment the daemon is up, not when (if ever) `zeroclaw acp`
         // runs. Best-effort: on failure, log and continue with `None`.
-        let acp_session_store: Option<std::sync::Arc<
-            zeroclaw_infra::acp_session_store::AcpSessionStore,
-        >> = match zeroclaw_infra::acp_session_store::AcpSessionStore::new(&config.data_dir) {
+        let acp_session_store: Option<
+            std::sync::Arc<zeroclaw_infra::acp_session_store::AcpSessionStore>,
+        > = match zeroclaw_infra::acp_session_store::AcpSessionStore::new(&config.data_dir) {
             Ok(s) => Some(std::sync::Arc::new(s)),
             Err(e) => {
                 ::zeroclaw_log::record!(

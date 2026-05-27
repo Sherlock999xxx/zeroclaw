@@ -1,4 +1,4 @@
-// Shared form renderer for a section's fields. Used by both /onboard and
+// Shared form renderer for a section's fields. Used by both /quickstart and
 // /config. Walks the entries returned by GET /api/config/list?prefix=...,
 // dispatches each input by `kind` (no value-sniffing), and submits all
 // changed fields as one PATCH on save.
@@ -700,7 +700,7 @@ const FieldForm = forwardRef<FieldFormHandle, FieldFormProps>(
       // Stable order: `enabled` first (drives whether anything below it
       // matters), then first-run required fields, then secrets, then
       // alphabetical by short label. Curating these standard leaves keeps
-      // onboarding from burying "model" or agent refs below advanced knobs.
+      // surfaces from burying "model" or agent refs below advanced knobs.
       const isEnabledLeaf = (e: ListResponseEntry) =>
         e.path.endsWith(".enabled") || e.path === "enabled";
       return [...entries].sort((a, b) => {

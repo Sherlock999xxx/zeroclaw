@@ -83,7 +83,7 @@ export async function apiFetch<T = unknown>(
   if (!response.ok) {
     // Try to parse a structured ConfigApiError envelope. Falls back to a
     // plain Error when the body is non-JSON or doesn't match the shape.
-    // Centralises the parsing so callers (including the onboarding flow)
+    // Centralises the parsing so callers (including the Quickstart flow)
     // never have to regex-match `error.message` to recover the structured
     // code — they just `instanceof ApiError` and read `.envelope.code`.
     const text = await response.text().catch(() => "");
@@ -269,7 +269,7 @@ export interface ListResponseEntry {
   is_secret: boolean;
   /** Variants for `kind === 'enum'` fields (drives <select> options). */
   enum_variants?: string[];
-  onboard_section?: string;
+  section?: string;
   /** Tab grouping from `ConfigTab` enum. Absent when `ConfigTab::None`. */
   tab?: string;
 }
@@ -976,7 +976,7 @@ export function createMapKey(
   );
 }
 
-// ── Onboard catalog (provider + model picker source of truth) ────────
+// ── Curated section catalog (provider + model picker source of truth) ────────
 
 export interface CatalogProvider {
   name: string;
@@ -1019,20 +1019,22 @@ export interface SectionInfo {
   help: string;
   /** True when the section requires picking an item before fields render. */
   has_picker: boolean;
-  /** True when the user has marked the section completed in onboard_state. */
+  /** True when the user has marked the section completed in the legacy
+   *  per-section ledger (on-disk key `onboard_state.completed_sections`,
+   *  retained for migration only). */
   completed: boolean;
   /** True when the section has enough usable config for first-run setup. */
   ready: boolean;
-  /** Display group for the sidebar (`Onboarding`, `Agent`, `Tools`, ...). */
+  /** Display group for the sidebar (`Quickstart`, `Agent`, `Tools`, ...). */
   group: string;
-  /** True when this section is part of the `/onboard` wizard (driven by
-   *  the canonical const in `zeroclaw_config::onboarding`). */
-  is_onboarding: boolean;
+  /** True when this section is part of the canonical Quickstart list (driven
+   *  by `zeroclaw_config::sections::QUICKSTART_SECTIONS`). */
+  is_quickstart: boolean;
   /** Editor shape (`direct_form` / `one_tier_alias_map` / `typed_family_map`
    *  / `backend_picker`). Server-emitted from `WizardSection::shape()` so
-   *  the dashboard explorer and the onboard wizard render the same UI for
-   *  the same section without hardcoded section keys on either side.
-   *  `null` / `undefined` for sections that aren't part of the canonical wizard. */
+   *  the dashboard explorer renders the same UI for the same section
+   *  without hardcoded section keys.
+   *  `null` / `undefined` for sections that aren't part of the canonical list. */
   shape?:
     | "direct_form"
     | "one_tier_alias_map"
@@ -1049,9 +1051,9 @@ export function getSections(): Promise<SectionsResponse> {
   return apiFetch<SectionsResponse>("/api/config/sections");
 }
 
-export interface OnboardStatusResponse {
+export interface SectionStatusResponse {
   /** True when no enabled agent can reply yet. */
-  needs_onboarding: boolean;
+  needs_quickstart: boolean;
   /** Stable machine-readable reason: `fresh_install`, `incomplete_agent`, or
    * `has_dispatchable_agent`. */
   reason: string;
@@ -1061,8 +1063,8 @@ export interface OnboardStatusResponse {
   missing: string[];
 }
 
-export function getOnboardStatus(): Promise<OnboardStatusResponse> {
-  return apiFetch<OnboardStatusResponse>("/api/config/status");
+export function getSectionStatus(): Promise<SectionStatusResponse> {
+  return apiFetch<SectionStatusResponse>("/api/config/status");
 }
 
 export interface AgentOptionsResponse {
@@ -1122,6 +1124,61 @@ export function selectSectionItem(
     },
   );
 }
+// ── Quickstart ───────────────────────────────────────────────────────
+
+export interface QuickstartState {
+  quickstart_completed: boolean;
+  agents: string[];
+  risk_profiles: string[];
+  runtime_profiles: string[];
+  model_providers: string[];
+  channels: string[];
+  storage: string[];
+}
+
+export function getQuickstartState(): Promise<QuickstartState> {
+  return apiFetch<QuickstartState>("/api/quickstart/state");
+}
+
+export interface QuickstartError {
+  step: string;
+  field: string;
+  message: string;
+}
+
+export type QuickstartValidateResult =
+  | { kind: "ok" }
+  | { kind: "errors"; errors: QuickstartError[] };
+
+export function quickstartValidate(submission: unknown): Promise<QuickstartValidateResult> {
+  return apiFetch<QuickstartValidateResult>("/api/quickstart/validate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(submission),
+  });
+}
+
+export interface AppliedAgent {
+  alias: string;
+  model_provider: string;
+  risk_profile: string;
+  runtime_profile: string;
+  channels: string[];
+  memory_backend: string;
+}
+
+export type QuickstartApplyResult =
+  | { kind: "applied"; agent: AppliedAgent; daemon_restarted: boolean }
+  | { kind: "errors"; errors: QuickstartError[] };
+
+export function quickstartApply(submission: unknown): Promise<QuickstartApplyResult> {
+  return apiFetch<QuickstartApplyResult>("/api/quickstart/apply", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(submission),
+  });
+}
+
 
 // ── Map-keyed alias CRUD ─────────────────────────────────────────────
 

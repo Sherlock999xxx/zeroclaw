@@ -206,9 +206,8 @@ pub async fn handle_api_status(
     let config = state.config.read().clone();
     let health = zeroclaw_runtime::health::snapshot();
 
-    // Per-alias map keyed by composite `<type>.<alias>` (v0.8.0). Every
-    // populated `[channels.<type>.<alias>]` is a separate dashboard row;
-    // collapsing them to one-per-type was a pre-v0.8.0 holdover.
+    // Per-alias map keyed by composite `<type>.<alias>`. Every
+    // populated `[channels.<type>.<alias>]` is a separate dashboard row.
     let mut channels = serde_json::Map::new();
     for info in config.channels_by_alias() {
         let composite = format!("{}.{}", info.channel_type, info.alias);
@@ -1153,7 +1152,7 @@ pub async fn handle_api_channels(
     }
 
     let config = state.config.read().clone();
-    // One entry per `[channels.<type>.<alias>]` block (v0.8.0). Owning
+    // One entry per `[channels.<type>.<alias>]` block. Owning
     // agent comes from the agents.<alias>.channels reverse lookup.
     let channels: Vec<serde_json::Value> = config
         .channels_by_alias()
@@ -1241,8 +1240,8 @@ pub async fn handle_api_sessions_list(
         .into_response();
     };
 
-    // Include every session that's attributable in v0.8.0 (agent_alias
-    // stamped, or a channel_id that resolves to an owning agent).
+    // Include every session that's attributable (agent_alias stamped,
+    // or a channel_id that resolves to an owning agent).
     // Pre-migration rows with neither set are skipped as orphans.
     let config = state.config.read().clone();
     let all_metadata = backend.list_sessions_with_metadata();

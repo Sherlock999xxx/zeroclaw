@@ -1,6 +1,6 @@
 //! ACP session persistence.
 //!
-//! Storage shape (see `tmp/acp-schema-design.md` for the design rationale):
+//! Storage shape:
 //!
 //! ```text
 //! acp_sessions
@@ -24,9 +24,7 @@ use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use rusqlite::{Connection, params};
 use std::path::Path;
-use zeroclaw_api::model_provider::{
-    ChatMessage, ConversationMessage, ToolCall, ToolResultMessage,
-};
+use zeroclaw_api::model_provider::{ChatMessage, ConversationMessage, ToolCall, ToolResultMessage};
 use zeroclaw_log::{Action, EventOutcome};
 
 /// Internal discriminator for `acp_tool_calls.event_kind`. The 'in' row
@@ -83,22 +81,17 @@ impl AcpSessionStore {
             .with_context(|| format!("Failed to open ACP session DB: {}", db_path.display()))?;
 
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;
+            "PRAGMA journal_mode = DELETE;
+             PRAGMA synchronous = FULL;
              PRAGMA foreign_keys = ON;
              PRAGMA temp_store = MEMORY;",
         )
         .context("Failed to configure ACP session DB pragmas")?;
 
-        // Schema is wipe-and-rebuild: pre-1.0, no migration burden. If any
-        // table predates this design, drop it and start fresh.
+        // Schema is create-if-missing: ACP sessions are long-lived user data
+        // and must survive daemon restarts. Never drop existing tables here.
         conn.execute_batch(
-            "DROP TABLE IF EXISTS acp_messages;
-             DROP TABLE IF EXISTS acp_tool_calls;
-             DROP TABLE IF EXISTS acp_session_events;
-             DROP TABLE IF EXISTS acp_sessions;
-
-             CREATE TABLE acp_sessions (
+            "CREATE TABLE IF NOT EXISTS acp_sessions (
                  id            INTEGER PRIMARY KEY AUTOINCREMENT,
                  session_uuid  TEXT NOT NULL UNIQUE,
                  agent_alias   TEXT NOT NULL,
@@ -107,10 +100,10 @@ impl AcpSessionStore {
                  created_at    TEXT NOT NULL,
                  last_activity TEXT NOT NULL
              );
-             CREATE INDEX idx_acp_sessions_uuid  ON acp_sessions(session_uuid);
-             CREATE INDEX idx_acp_sessions_alias ON acp_sessions(agent_alias);
+             CREATE INDEX IF NOT EXISTS idx_acp_sessions_uuid  ON acp_sessions(session_uuid);
+             CREATE INDEX IF NOT EXISTS idx_acp_sessions_alias ON acp_sessions(agent_alias);
 
-             CREATE TABLE acp_messages (
+             CREATE TABLE IF NOT EXISTS acp_messages (
                  id                INTEGER PRIMARY KEY AUTOINCREMENT,
                  session_id        INTEGER NOT NULL REFERENCES acp_sessions(id) ON DELETE CASCADE,
                  role              TEXT NOT NULL,
@@ -118,9 +111,9 @@ impl AcpSessionStore {
                  reasoning_content TEXT,
                  created_at        TEXT NOT NULL
              );
-             CREATE INDEX idx_acp_messages_session ON acp_messages(session_id, id);
+             CREATE INDEX IF NOT EXISTS idx_acp_messages_session ON acp_messages(session_id, id);
 
-             CREATE TABLE acp_tool_calls (
+             CREATE TABLE IF NOT EXISTS acp_tool_calls (
                  id           INTEGER PRIMARY KEY AUTOINCREMENT,
                  message_id   INTEGER NOT NULL REFERENCES acp_messages(id) ON DELETE CASCADE,
                  tool_call_id TEXT NOT NULL,
@@ -130,10 +123,10 @@ impl AcpSessionStore {
                  outcome      TEXT,
                  created_at   TEXT NOT NULL
              );
-             CREATE INDEX idx_acp_tool_calls_message ON acp_tool_calls(message_id, id);
-             CREATE INDEX idx_acp_tool_calls_lookup  ON acp_tool_calls(tool_call_id);
+             CREATE INDEX IF NOT EXISTS idx_acp_tool_calls_message ON acp_tool_calls(message_id, id);
+             CREATE INDEX IF NOT EXISTS idx_acp_tool_calls_lookup  ON acp_tool_calls(tool_call_id);
 
-             CREATE TABLE acp_session_events (
+             CREATE TABLE IF NOT EXISTS acp_session_events (
                  id         INTEGER PRIMARY KEY AUTOINCREMENT,
                  session_id INTEGER NOT NULL REFERENCES acp_sessions(id) ON DELETE CASCADE,
                  action     TEXT NOT NULL,
@@ -141,7 +134,7 @@ impl AcpSessionStore {
                  payload    TEXT,
                  created_at TEXT NOT NULL
              );
-             CREATE INDEX idx_acp_session_events_session ON acp_session_events(session_id, id);",
+             CREATE INDEX IF NOT EXISTS idx_acp_session_events_session ON acp_session_events(session_id, id);",
         )
         .context("Failed to create ACP session schema")?;
 
@@ -279,10 +272,7 @@ impl AcpSessionStore {
         Ok(out)
     }
 
-    fn load_messages(
-        conn: &Connection,
-        session_id: i64,
-    ) -> Result<Vec<ConversationMessage>> {
+    fn load_messages(conn: &Connection, session_id: i64) -> Result<Vec<ConversationMessage>> {
         // Pull all message rows.
         let mut msg_stmt = conn
             .prepare(
@@ -369,7 +359,11 @@ impl AcpSessionStore {
                 if !ins.is_empty() {
                     // Assistant turn that issued tool calls. The text may be empty.
                     out.push(ConversationMessage::AssistantToolCalls {
-                        text: if content.is_empty() { None } else { Some(content) },
+                        text: if content.is_empty() {
+                            None
+                        } else {
+                            Some(content)
+                        },
                         tool_calls: ins,
                         reasoning_content,
                     });
@@ -386,11 +380,7 @@ impl AcpSessionStore {
     /// Append all ConversationMessages from one completed turn, decomposing
     /// AssistantToolCalls / ToolResults variants into the appropriate tables.
     /// Single transaction.
-    pub fn append_turn(
-        &self,
-        session_uuid: &str,
-        messages: &[ConversationMessage],
-    ) -> Result<()> {
+    pub fn append_turn(&self, session_uuid: &str, messages: &[ConversationMessage]) -> Result<()> {
         if messages.is_empty() {
             return Ok(());
         }
@@ -823,7 +813,11 @@ mod tests {
         store
             .create_session("sess-activity", "alpha", "/tmp/proj")
             .unwrap();
-        let before = store.load_session("sess-activity").unwrap().unwrap().last_activity;
+        let before = store
+            .load_session("sess-activity")
+            .unwrap()
+            .unwrap()
+            .last_activity;
         std::thread::sleep(std::time::Duration::from_millis(10));
         store
             .append_turn(
@@ -831,7 +825,11 @@ mod tests {
                 &[ConversationMessage::Chat(ChatMessage::user("hi"))],
             )
             .unwrap();
-        let after = store.load_session("sess-activity").unwrap().unwrap().last_activity;
+        let after = store
+            .load_session("sess-activity")
+            .unwrap()
+            .unwrap()
+            .last_activity;
         assert!(after >= before);
     }
 
@@ -904,10 +902,18 @@ mod tests {
         store
             .create_session("sess-touch", "alpha", "/tmp/proj")
             .unwrap();
-        let before = store.load_session("sess-touch").unwrap().unwrap().last_activity;
+        let before = store
+            .load_session("sess-touch")
+            .unwrap()
+            .unwrap()
+            .last_activity;
         std::thread::sleep(std::time::Duration::from_millis(10));
         store.touch_session("sess-touch").unwrap();
-        let after = store.load_session("sess-touch").unwrap().unwrap().last_activity;
+        let after = store
+            .load_session("sess-touch")
+            .unwrap()
+            .unwrap()
+            .last_activity;
         assert!(after >= before);
     }
 
@@ -917,7 +923,10 @@ mod tests {
         store
             .create_session("sess-tok", "alpha", "/tmp/proj")
             .unwrap();
-        assert_eq!(store.load_session("sess-tok").unwrap().unwrap().token_count, 0);
+        assert_eq!(
+            store.load_session("sess-tok").unwrap().unwrap().token_count,
+            0
+        );
 
         store.set_token_count("sess-tok", 152_306).unwrap();
         assert_eq!(
@@ -928,7 +937,10 @@ mod tests {
 
         // Overwrite semantics (not cumulative).
         store.set_token_count("sess-tok", 42).unwrap();
-        assert_eq!(store.load_session("sess-tok").unwrap().unwrap().token_count, 42);
+        assert_eq!(
+            store.load_session("sess-tok").unwrap().unwrap().token_count,
+            42
+        );
     }
 
     #[test]
@@ -947,7 +959,9 @@ mod tests {
     #[test]
     fn append_event_writes_action_outcome_payload() {
         let (_tmp, store) = open_store();
-        store.create_session("sess-evt", "alpha", "/tmp/proj").unwrap();
+        store
+            .create_session("sess-evt", "alpha", "/tmp/proj")
+            .unwrap();
 
         store
             .append_event(

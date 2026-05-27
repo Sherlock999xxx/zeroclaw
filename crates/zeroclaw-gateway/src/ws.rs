@@ -677,12 +677,12 @@ fn needs_onboarding_ws_error(
     config: &zeroclaw_config::schema::Config,
 ) -> Option<serde_json::Value> {
     let model = config.resolve_default_model().unwrap_or_default();
-    crate::needs_onboarding_for(&model)?;
+    crate::needs_quickstart_for(&model)?;
     Some(serde_json::json!({
         "type": "error",
         "error": "needs_onboarding",
         "code": "NEEDS_ONBOARDING",
-        "message": crate::needs_onboarding_channel_reply(),
+        "message": crate::needs_quickstart_channel_reply(),
         "url": "/onboard",
     }))
 }

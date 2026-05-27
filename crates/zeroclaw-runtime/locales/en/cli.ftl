@@ -1,8 +1,8 @@
 cli-about = The fastest, smallest AI assistant.
 cli-no-command-provided = No command provided.
-cli-try-onboard = Try `zeroclaw onboard` to initialize your workspace.
+cli-try-quickstart = Try `zeroclaw quickstart` to create your first agent.
 
-cli-onboard-about = Initialize your workspace and configuration
+cli-quickstart-about = Create your first agent end-to-end
 cli-agent-about = Start the AI agent loop
 cli-gateway-about = Manage the gateway server (webhooks, websockets)
 cli-acp-about = Start the ACP server (JSON-RPC 2.0 over stdio)
@@ -342,7 +342,7 @@ cli-desktop-long-about =
 # Channel-side reply emitted when chat dispatch refuses because the
 # gateway has no model configured. Used by the gateway crate channel
 # webhook handlers (WhatsApp, Linq, WATI, Nextcloud Talk).
-channel-needs-onboarding-reply = This agent isn't fully set up yet. The operator needs to complete onboarding before I can reply.
+channel-needs-quickstart-reply = This agent isn't fully set up yet. The operator needs to run Quickstart before I can reply.
 
 channel-whatsapp-web-feature-missing-warning =   ⚠ WhatsApp Web is configured but the 'whatsapp-web' feature is not compiled in.
 channel-whatsapp-web-feature-missing-build =     Build/run with: cargo build --features whatsapp-web

@@ -1709,22 +1709,16 @@ impl Agent {
             // Outbound prompt size diagnostic — see streaming site for notes.
             {
                 let msg_count = prepared_messages.len();
-                let content_chars: usize = prepared_messages
-                    .iter()
-                    .map(|m| m.content.len())
-                    .sum();
+                let content_chars: usize = prepared_messages.iter().map(|m| m.content.len()).sum();
                 ::zeroclaw_log::record!(
                     DEBUG,
-                    ::zeroclaw_log::Event::new(
-                        module_path!(),
-                        ::zeroclaw_log::Action::Note,
-                    )
-                    .with_attrs(::serde_json::json!({
-                        "msg_count": msg_count,
-                        "content_chars": content_chars,
-                        "approx_tokens": content_chars / 4,
-                        "model": effective_model,
-                    })),
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note,)
+                        .with_attrs(::serde_json::json!({
+                            "msg_count": msg_count,
+                            "content_chars": content_chars,
+                            "approx_tokens": content_chars / 4,
+                            "model": effective_model,
+                        })),
                     "agent: outbound prompt size (non-streaming)"
                 );
             }
@@ -1940,22 +1934,16 @@ impl Agent {
             // thumb: 1 token ≈ 4 chars; treat with care.
             {
                 let msg_count = prepared_messages.len();
-                let content_chars: usize = prepared_messages
-                    .iter()
-                    .map(|m| m.content.len())
-                    .sum();
+                let content_chars: usize = prepared_messages.iter().map(|m| m.content.len()).sum();
                 ::zeroclaw_log::record!(
                     DEBUG,
-                    ::zeroclaw_log::Event::new(
-                        module_path!(),
-                        ::zeroclaw_log::Action::Note,
-                    )
-                    .with_attrs(::serde_json::json!({
-                        "msg_count": msg_count,
-                        "content_chars": content_chars,
-                        "approx_tokens": content_chars / 4,
-                        "model": effective_model,
-                    })),
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note,)
+                        .with_attrs(::serde_json::json!({
+                            "msg_count": msg_count,
+                            "content_chars": content_chars,
+                            "approx_tokens": content_chars / 4,
+                            "model": effective_model,
+                        })),
                     "agent: outbound prompt size (streaming)"
                 );
             }
