@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   type QuickstartError,
   type QuickstartStep,
-  getQuickstartState,
   quickstartApply,
   quickstartDismiss,
 } from "@/lib/api";
@@ -49,13 +48,13 @@ export default function Quickstart() {
   const lastStepRef = useRef<QuickstartStep | null>(null);
   const submittedRef = useRef(false);
 
-  useEffect(() => {
-    void getQuickstartState().then((s) => {
-      if (s.quickstart_completed || s.agents.length > 0) {
-        navigate("/", { replace: true });
-      }
-    });
-  }, [navigate]);
+  // The auto-trigger (route the user here on first launch with no agents)
+  // is owned by `App.tsx` — see the `getQuickstartState` call there. This
+  // page intentionally has no completion guard: per the Quickstart plan,
+  // returning users reach `/quickstart` via the nav to create another
+  // agent, so kicking them back to `/` here would break the primary
+  // returning-user case (`tmp/quickstart-plan.md` §"Auto-trigger /
+  // re-entry").
 
   // Fire a dismiss beacon when the page unmounts without a successful
   // Create. Closing the tab triggers `beforeunload`; clicking out
