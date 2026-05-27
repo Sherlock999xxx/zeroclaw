@@ -23,6 +23,7 @@ pub mod method {
     pub const CONFIG_LIST: &str = "config/list";
     pub const CONFIG_SET: &str = "config/set";
     pub const CONFIG_DELETE: &str = "config/delete";
+    pub const CONFIG_RELOAD: &str = "config/reload";
     pub const CONFIG_MAP_KEYS: &str = "config/map-keys";
     pub const CONFIG_MAP_KEY_CREATE: &str = "config/map-key-create";
     pub const CONFIG_MAP_KEY_DELETE: &str = "config/map-key-delete";
@@ -668,6 +669,12 @@ impl RpcClient {
         Ok(())
     }
 
+    /// Signal the daemon to reload in place. Mirrors `POST /admin/reload`.
+    pub async fn config_reload(&self) -> Result<ConfigReloadResult> {
+        self.call(method::CONFIG_RELOAD, serde_json::json!({}))
+            .await
+    }
+
     pub async fn config_sections(&self) -> Result<Vec<ConfigSectionEntry>> {
         let result: ConfigSectionsResult = self
             .call(method::CONFIG_SECTIONS, serde_json::json!({}))
@@ -1130,6 +1137,13 @@ pub struct ConfigSetResult {}
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ConfigDeleteResult {}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ConfigReloadResult {
+    #[allow(dead_code)]
+    pub reloading: bool,
+}
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

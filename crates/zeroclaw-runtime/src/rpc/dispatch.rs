@@ -1518,12 +1518,15 @@ impl RpcDispatcher {
     }
 
     fn handle_config_reload(&self) -> RpcResult {
-        if let Some(ref tx) = self.ctx.reload_tx {
-            let _ = tx.send(true);
-            to_result(ConfigReloadResult { reloading: true })
-        } else {
-            Err(rpc_err(INTERNAL_ERROR, "Reload not available"))
-        }
+        let Some(reload_tx) = self.ctx.reload_tx.clone() else {
+            return Err(rpc_err(INTERNAL_ERROR, "Reload not available"));
+        };
+        // Delay so the RPC reply flushes before the daemon tears down.
+        zeroclaw_spawn::spawn!(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let _ = reload_tx.send(true);
+        });
+        to_result(ConfigReloadResult { reloading: true })
     }
 
     fn handle_config_list(&self, params: &Value) -> RpcResult {

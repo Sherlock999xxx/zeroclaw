@@ -95,6 +95,8 @@ pub async fn run(
 ) -> Result<bool> {
     let mut mode = Mode::Dashboard;
     let mut show_help = false;
+    let mut reload_confirm = false;
+    let mut reload_status: Option<String> = None;
     let mut bar_area = Rect::default();
     let mut content_area = Rect::default();
     let mut disconnect_since: Option<std::time::Instant> = None;
@@ -170,6 +172,7 @@ pub async fn run(
             if show_help {
                 let mut node = HelpNode::entries(vec![
                     HelpEntry::new(vec!["F1–F5"], "Switch mode"),
+                    HelpEntry::key("Ctrl+R", "Reload daemon"),
                     HelpEntry::key("Ctrl+C", "Quit"),
                     HelpEntry::spacer(),
                 ]);
@@ -183,6 +186,13 @@ pub async fn run(
                 };
                 node.children.push(pane_node);
                 draw_help_modal(frame, frame.area(), &node);
+            }
+
+            if reload_confirm {
+                draw_reload_confirm_modal(frame, frame.area());
+            }
+            if let Some(msg) = &reload_status {
+                draw_reload_status_toast(frame, frame.area(), msg);
             }
         })?;
 
@@ -216,6 +226,49 @@ pub async fn run(
                 // Ctrl+C always quits
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     break;
+                }
+
+                // Reload-daemon confirmation modal — intercepts all keys
+                // while open. Mirrors the web dashboard's
+                // `ReloadDaemonButton` confirm flow.
+                if reload_confirm {
+                    match key.code {
+                        KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            reload_confirm = false;
+                            reload_status = Some(match rpc.config_reload().await {
+                                Ok(_) => "Daemon reload signalled — reconnecting…".into(),
+                                Err(e) => format!("Reload requested ({e})"),
+                            });
+                        }
+                        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                            reload_confirm = false;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                // Any pending reload-status toast clears on the next key.
+                if reload_status.is_some() {
+                    reload_status = None;
+                }
+
+                // Ctrl+R opens the reload-daemon confirmation modal,
+                // unless the active pane is in text-input mode (so it
+                // doesn't hijack an edit field).
+                if key.code == KeyCode::Char('r') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    let in_text_input = match mode {
+                        Mode::Dashboard => dashboard_pane.wants_text_input(),
+                        Mode::Config => config_app.wants_text_input(),
+                        Mode::Acp => acp_pane.wants_text_input(),
+                        Mode::Chat => chat_pane.wants_text_input(),
+                        Mode::Logs => logs_pane.wants_text_input(),
+                        Mode::Quickstart => quickstart.wants_text_input(),
+                    };
+                    if !in_text_input {
+                        reload_confirm = true;
+                        continue;
+                    }
                 }
 
                 // Help modal: any key dismisses it
@@ -566,4 +619,102 @@ fn draw_help_modal(frame: &mut ratatui::Frame, area: Rect, node: &HelpNode) {
     )));
 
     frame.render_widget(Paragraph::new(text_lines), inner);
+}
+
+fn draw_reload_confirm_modal(frame: &mut ratatui::Frame, area: Rect) {
+    let body_lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            "The daemon process stays running (same PID), but every",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "subsystem tears down and re-initializes from the on-disk",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled("config:", Style::default().fg(Color::White))),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  • Gateway listener stops and rebinds",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "  • Channel listeners (Matrix, Slack, etc.) respawn",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "  • MCP servers, scheduler, heartbeat re-init",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "  • Provider clients pick up new API keys / model defaults",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "The RPC socket will briefly drop. The TUI will reconnect.",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let box_w = area.width.saturating_sub(8).min(64);
+    let box_h = (body_lines.len() as u16 + 4).min(area.height.saturating_sub(4));
+    let x = area.x + area.width.saturating_sub(box_w) / 2;
+    let y = area.y + area.height.saturating_sub(box_h) / 2;
+    let rect = Rect::new(x, y, box_w, box_h);
+
+    frame.render_widget(Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title(Span::styled(
+            " Reload daemon? ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let body = Paragraph::new(body_lines).wrap(ratatui::widgets::Wrap { trim: false });
+    let body_rect = Rect::new(
+        inner.x.saturating_add(1),
+        inner.y,
+        inner.width.saturating_sub(2),
+        inner.height.saturating_sub(1),
+    );
+    frame.render_widget(body, body_rect);
+
+    let footer_rect = Rect::new(
+        inner.x.saturating_add(1),
+        inner.y + inner.height.saturating_sub(1),
+        inner.width.saturating_sub(2),
+        1,
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            "Enter / y = reload   Esc / n = cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+        footer_rect,
+    );
+}
+
+fn draw_reload_status_toast(frame: &mut ratatui::Frame, area: Rect, msg: &str) {
+    let text = format!(" {msg} ");
+    let box_w = (text.chars().count() as u16 + 2).min(area.width);
+    let box_h = 3u16.min(area.height);
+    let x = area.x + area.width.saturating_sub(box_w) / 2;
+    let y = area.y + area.height.saturating_sub(box_h).saturating_sub(1);
+    let rect = Rect::new(x, y, box_w, box_h);
+
+    frame.render_widget(Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    frame.render_widget(
+        Paragraph::new(Span::styled(text, Style::default().fg(Color::White))),
+        inner,
+    );
 }
