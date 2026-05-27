@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   type QuickstartError,
+  type QuickstartStep,
   getQuickstartState,
   quickstartApply,
+  quickstartDismiss,
 } from "@/lib/api";
 
 type Risk = "locked-down" | "balanced" | "yolo";
@@ -41,6 +43,11 @@ export default function Quickstart() {
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<QuickstartError[]>([]);
   const [success, setSuccess] = useState<string | null>(null);
+  const runIdRef = useRef<string>(
+    `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`,
+  );
+  const lastStepRef = useRef<QuickstartStep | null>(null);
+  const submittedRef = useRef(false);
 
   useEffect(() => {
     void getQuickstartState().then((s) => {
@@ -50,8 +57,29 @@ export default function Quickstart() {
     });
   }, [navigate]);
 
-  const update = <K extends keyof FormState>(k: K, v: FormState[K]) =>
+  // Fire a dismiss beacon when the page unmounts without a successful
+  // Create. Closing the tab triggers `beforeunload`; clicking out
+  // through React-Router triggers the cleanup function.
+  useEffect(() => {
+    const fire = () => {
+      if (submittedRef.current) return;
+      quickstartDismiss({
+        run_id: runIdRef.current,
+        surface: "web",
+        last_step: lastStepRef.current,
+      });
+    };
+    window.addEventListener("beforeunload", fire);
+    return () => {
+      window.removeEventListener("beforeunload", fire);
+      fire();
+    };
+  }, []);
+
+  const update = <K extends keyof FormState>(k: K, v: FormState[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
+    lastStepRef.current = stepForKey(k);
+  };
 
   const submit = async () => {
     setBusy(true);
@@ -82,6 +110,7 @@ export default function Quickstart() {
       return;
     }
     setSuccess(res.agent.alias);
+    submittedRef.current = true;
   };
 
   if (success) {
@@ -195,6 +224,24 @@ export default function Quickstart() {
       </button>
     </div>
   );
+}
+
+function stepForKey(key: keyof FormState): QuickstartStep {
+  switch (key) {
+    case "providerType":
+    case "providerAlias":
+    case "defaultModel":
+    case "apiKey":
+      return "model_provider";
+    case "risk":
+      return "risk_profile";
+    case "runtime":
+      return "runtime_profile";
+    case "memory":
+      return "memory";
+    case "agentName":
+      return "agent";
+  }
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

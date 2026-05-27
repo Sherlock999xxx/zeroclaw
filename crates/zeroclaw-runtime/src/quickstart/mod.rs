@@ -29,7 +29,7 @@ pub enum Surface {
 }
 
 impl Surface {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Surface::Web => "web",
             Surface::Tui => "tui",
@@ -302,7 +302,37 @@ pub async fn apply_with_surface(
     Ok(applied)
 }
 
-/// Implicit-completion rule: the Quickstart auto-launches only when
+/// Record a `dismissed` event for a run that exited without a
+/// Create. Surfaces call this when the user closes the Quickstart
+/// page / leaves the modal stack before submitting. `last_step` is
+/// optional and names whichever selector the user got furthest with;
+/// pass `None` for "didn't progress past the first selector."
+pub fn record_dismissed(run_id: &str, surface: Surface, last_step: Option<QuickstartStep>) {
+    let last_step_str = last_step
+        .map(|s| match s {
+            QuickstartStep::ModelProvider => "model_provider",
+            QuickstartStep::RiskProfile => "risk_profile",
+            QuickstartStep::RuntimeProfile => "runtime_profile",
+            QuickstartStep::Memory => "memory",
+            QuickstartStep::Channels => "channels",
+            QuickstartStep::Agent => "agent",
+        })
+        .unwrap_or("none");
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+            .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+            .with_attrs(::serde_json::json!({
+                "quickstart.run_id": run_id,
+                "quickstart.surface": surface.as_str(),
+                "last_step": last_step_str,
+                "dismissed": true,
+            })),
+        "quickstart: dismissed"
+    );
+}
+
+
 /// `onboard_state.quickstart_completed` is false **and** no
 /// `agents.*` entries exist. Returning users with existing agents
 /// never see the auto-trigger even if the flag was never flipped.

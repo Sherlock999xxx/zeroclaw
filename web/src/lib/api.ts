@@ -1179,6 +1179,37 @@ export function quickstartApply(submission: unknown): Promise<QuickstartApplyRes
   });
 }
 
+export type QuickstartStep =
+  | "model_provider"
+  | "risk_profile"
+  | "runtime_profile"
+  | "memory"
+  | "channels"
+  | "agent";
+
+export interface QuickstartDismissRequest {
+  run_id: string;
+  surface: "web" | "tui" | "cli";
+  last_step?: QuickstartStep | null;
+}
+
+/// Beacon fired when the user closes the Quickstart page without
+/// submitting a Create. The runtime records this as a `Note` event in
+/// the same stream as the apply lifecycle so dashboard / SSE
+/// consumers can see drop-off rates. Best-effort: failures are
+/// swallowed.
+export function quickstartDismiss(req: QuickstartDismissRequest): void {
+  // `keepalive: true` lets the request survive the navigation that
+  // typically triggers this — same trick `navigator.sendBeacon` uses,
+  // but goes through the existing auth path.
+  void apiFetch<void>("/api/quickstart/dismiss", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+    keepalive: true,
+  } as RequestInit).catch(() => {});
+}
+
 
 // ── Map-keyed alias CRUD ─────────────────────────────────────────────
 

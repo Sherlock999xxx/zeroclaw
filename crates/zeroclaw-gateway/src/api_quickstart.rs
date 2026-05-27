@@ -16,10 +16,11 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use zeroclaw_config::presets::BuilderSubmission;
 use zeroclaw_runtime::quickstart::{
-    AppliedAgent, QuickstartError, Surface, apply_with_surface, validate_only_with_surface,
+    AppliedAgent, QuickstartError, QuickstartStep, Surface, apply_with_surface, record_dismissed,
+    validate_only_with_surface,
 };
 
 use super::AppState;
@@ -102,6 +103,37 @@ pub async fn handle_validate(
         Err(errors) => ValidateResult::Errors { errors },
     };
     (StatusCode::OK, Json(body)).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DismissRequest {
+    pub run_id: String,
+    /// Surface name as emitted in earlier events for this run. Echoed
+    /// into the dismiss event so the SSE stream can correlate the
+    /// dismissal back to the same `(run_id, surface)` pair.
+    pub surface: String,
+    /// Furthest step the user reached. `None` = didn't progress past
+    /// the first selector.
+    #[serde(default)]
+    pub last_step: Option<QuickstartStep>,
+}
+
+pub async fn handle_dismiss(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<DismissRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+    let surface = match req.surface.as_str() {
+        "web" => Surface::Web,
+        "tui" => Surface::Tui,
+        "cli" => Surface::Cli,
+        _ => Surface::Web,
+    };
+    record_dismissed(&req.run_id, surface, req.last_step);
+    (StatusCode::NO_CONTENT, ()).into_response()
 }
 
 pub async fn handle_apply(

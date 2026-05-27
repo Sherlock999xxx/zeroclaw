@@ -1355,6 +1355,10 @@ pub async fn run_gateway(
             post(api_quickstart::handle_apply),
         )
         .route(
+            "/api/quickstart/dismiss",
+            post(api_quickstart::handle_dismiss),
+        )
+        .route(
             "/api/personality/templates",
             get(api_personality::handle_templates),
         )
