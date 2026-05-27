@@ -19,6 +19,7 @@ pub mod pairing;
 pub mod paths;
 pub mod platform;
 pub mod policy;
+pub mod presets;
 pub mod provider_aliases;
 pub mod providers;
 pub mod scattered_types;
