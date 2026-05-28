@@ -111,10 +111,29 @@ impl FileExplorerState {
     }
 
     /// Create a directory picker that fetches entries from the remote daemon (WSS).
+    ///
+    /// Unlike `new_dir_picker`, this sets `remote_rpc` **before** the first
+    /// `load_entries()` call so the listing comes from the remote daemon
+    /// rather than the local filesystem.
     #[allow(dead_code)]
     pub fn new_dir_picker_remote(start_dir: PathBuf, rpc: Arc<crate::client::RpcClient>) -> Self {
-        let mut state = Self::new_dir_picker(start_dir);
-        state.remote_rpc = Some(rpc);
+        let mut state = Self {
+            cwd: start_dir,
+            entries: Vec::new(),
+            list_state: ListState::default(),
+            selected: HashSet::new(),
+            show_hidden: false,
+            error: None,
+            search_query: String::new(),
+            searching: false,
+            dir_picker: true,
+            remote_rpc: Some(rpc),
+            last_list_area: Rect::default(),
+        };
+        state.load_entries();
+        if !state.entries.is_empty() {
+            state.list_state.select(Some(0));
+        }
         state
     }
 
