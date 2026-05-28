@@ -278,10 +278,9 @@ pub struct ModelProviderChoice {
     /// users override when stacking multiple aliases of the same
     /// provider type (e.g. `anthropic-work`, `anthropic-personal`).
     pub alias: String,
-    /// Default model id for this provider entry. Written to both the
-    /// provider record (`providers.models.<type>.<alias>.model`) and
-    /// the agent record (`agents.<name>.model`) at apply time.
-    pub default_model: String,
+    /// Model id written to `providers.models.<type>.<alias>.model` and
+    /// `agents.<name>.model` at apply time.
+    pub model: String,
     /// API key for cloud providers. `None` for local providers like
     /// Ollama; required (and inline-validated) for cloud providers.
     /// Stored in config via the secrets layer, never logged.
@@ -485,7 +484,7 @@ mod tests {
             model_provider: SelectorChoice::Fresh(ModelProviderChoice {
                 provider_type: "anthropic".into(),
                 alias: "anthropic".into(),
-                default_model: "claude-sonnet-4-5".into(),
+                model: "claude-sonnet-4-5".into(),
                 api_key: Some("sk-test".into()),
                 base_url: None,
             }),

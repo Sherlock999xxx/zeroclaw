@@ -719,14 +719,12 @@ impl RpcClient {
         Ok(result.templates)
     }
 
-    pub async fn catalog_models(&self, provider: &str) -> Result<Vec<String>> {
-        let result: CatalogModelsResult = self
-            .call(
-                method::CONFIG_CATALOG_MODELS,
-                serde_json::json!({ "model_provider": provider }),
-            )
-            .await?;
-        Ok(result.models)
+    pub async fn catalog_models(&self, provider: &str) -> Result<CatalogModelsResult> {
+        self.call(
+            method::CONFIG_CATALOG_MODELS,
+            serde_json::json!({ "model_provider": provider }),
+        )
+        .await
     }
 
     // ── Personality helpers ──────────────────────────────────────
@@ -1189,6 +1187,8 @@ pub struct ConfigTemplatesResult {
 #[serde(rename_all = "snake_case")]
 pub struct CatalogModelsResult {
     pub models: Vec<String>,
+    #[serde(default)]
+    pub live: bool,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]

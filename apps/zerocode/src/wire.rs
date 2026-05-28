@@ -26,7 +26,7 @@ use serde_json::Value;
 pub struct ModelProviderChoice {
     pub provider_type: String,
     pub alias: String,
-    pub default_model: String,
+    pub model: String,
     pub api_key: Option<String>,
     pub base_url: Option<String>,
 }

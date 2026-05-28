@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  type ModelsResponse,
   type QuickstartError,
   type QuickstartState,
   type QuickstartStep,
   type QuickstartTypeOption,
+  getCatalogModels,
   getQuickstartState,
   quickstartApply,
   quickstartDismiss,
@@ -21,7 +23,7 @@ const MEMORY_OPTS: Memory[] = ["sqlite", "none"];
 interface FormState {
   providerType: string;
   providerAlias: string;
-  defaultModel: string;
+  model: string;
   apiKey: string;
   /** Empty string = user hasn't picked yet ([ ]); a preset name = [✓]. */
   risk: Risk | "";
@@ -33,7 +35,7 @@ interface FormState {
 const DEFAULT_FORM: FormState = {
   providerType: "",
   providerAlias: "",
-  defaultModel: "",
+  model: "",
   apiKey: "",
   risk: "",
   runtime: "",
@@ -48,20 +50,13 @@ export default function Quickstart() {
   const [errors, setErrors] = useState<QuickstartError[]>([]);
   const [success, setSuccess] = useState<string | null>(null);
   const [quickstartState, setQuickstartState] = useState<QuickstartState | null>(null);
+  const [catalog, setCatalog] = useState<ModelsResponse | null>(null);
   const runIdRef = useRef<string>(
     `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`,
   );
   const lastStepRef = useRef<QuickstartStep | null>(null);
   const submittedRef = useRef(false);
 
-  // Fetch the picker option lists once on mount. The daemon supplies
-  // `model_provider_types` and `channel_types` from its canonical
-  // registries (`zeroclaw_providers::list_model_providers()` and the
-  // schema-side `ChannelsConfig` inventory). We render whatever it
-  // returns — the web surface keeps no hardcoded provider/channel
-  // list of its own. We deliberately do NOT pre-select the first
-  // row: the form starts empty (`[ ]` everywhere) and only earns
-  // `[✓]` once the user explicitly picks.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -70,14 +65,35 @@ export default function Quickstart() {
         if (cancelled) return;
         setQuickstartState(state);
       } catch {
-        // Endpoint failures leave the picker empty; the user sees
-        // an empty <select> and the error surfaces on submit.
+        /* empty pickers + error surfaces on submit */
       }
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  // Fetch the model catalog when the provider type changes. `live=true`
+  // means render a picker; `live=false` means the input falls back to
+  // free text via the empty datalist.
+  useEffect(() => {
+    if (!form.providerType) {
+      setCatalog(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await getCatalogModels(form.providerType);
+        if (!cancelled) setCatalog(res);
+      } catch {
+        if (!cancelled) setCatalog(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [form.providerType]);
 
   // The auto-trigger (route the user here on first launch with no agents)
   // is owned by `App.tsx` — see the `getQuickstartState` call there. This
@@ -116,16 +132,18 @@ export default function Quickstart() {
     setErrors([]);
     const submission = {
       model_provider: {
-        kind: "fresh",
-        provider_type: form.providerType,
-        alias: form.providerAlias,
-        default_model: form.defaultModel,
-        api_key: form.apiKey || null,
-        base_url: null,
+        mode: "fresh",
+        value: {
+          provider_type: form.providerType,
+          alias: form.providerAlias,
+          model: form.model,
+          api_key: form.apiKey || null,
+          base_url: null,
+        },
       },
-      risk_profile: { kind: "fresh", value: form.risk },
-      runtime_profile: { kind: "fresh", value: form.runtime },
-      memory: { kind: "fresh", value: { kind: form.memory } },
+      risk_profile: { mode: "fresh", value: form.risk },
+      runtime_profile: { mode: "fresh", value: form.runtime },
+      memory: { mode: "fresh", value: form.memory },
       channels: [],
       agent: {
         name: form.agentName,
@@ -176,15 +194,14 @@ export default function Quickstart() {
             onChange={(e) => {
               const next = e.target.value;
               update("providerType", next);
-              // Keep alias in sync with the kind until the user
-              // overrides it. Mirrors the TUI Quickstart's auto-fill
-              // pattern so the two surfaces produce the same
-              // starting form state for the same picker choice.
-              setForm((f) =>
-                f.providerAlias === "" || f.providerAlias === f.providerType
-                  ? { ...f, providerAlias: next }
-                  : f,
-              );
+              setForm((f) => ({
+                ...f,
+                providerAlias:
+                  f.providerAlias === "" || f.providerAlias === f.providerType
+                    ? next
+                    : f.providerAlias,
+                model: "",
+              }));
             }}
           >
             <option value="" disabled>
@@ -205,12 +222,18 @@ export default function Quickstart() {
             onChange={(e) => update("providerAlias", e.target.value)}
           />
         </Field>
-        <Field label="Default model">
+        <Field label="Model">
           <input
             className="input"
-            value={form.defaultModel}
-            onChange={(e) => update("defaultModel", e.target.value)}
+            value={form.model}
+            onChange={(e) => update("model", e.target.value)}
+            list="qs-model-catalog"
+            placeholder={form.providerType ? "pick or type a model id" : ""}
           />
+          <datalist id="qs-model-catalog">
+            {catalog?.live &&
+              catalog.models.map((m) => <option key={m} value={m} />)}
+          </datalist>
         </Field>
         <Field label="API key">
           <input
@@ -282,7 +305,7 @@ function isProviderDone(form: FormState): boolean {
   return (
     form.providerType !== "" &&
     form.providerAlias.trim() !== "" &&
-    form.defaultModel.trim() !== ""
+    form.model.trim() !== ""
   );
 }
 
@@ -300,7 +323,7 @@ function stepForKey(key: keyof FormState): QuickstartStep {
   switch (key) {
     case "providerType":
     case "providerAlias":
-    case "defaultModel":
+    case "model":
     case "apiKey":
       return "model_provider";
     case "risk":

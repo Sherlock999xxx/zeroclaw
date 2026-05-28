@@ -777,12 +777,12 @@ fn apply_model_provider(
         SelectorChoice::Fresh(choice) => {
             if choice.provider_type.trim().is_empty()
                 || choice.alias.trim().is_empty()
-                || choice.default_model.trim().is_empty()
+                || choice.model.trim().is_empty()
             {
                 errors.push(QuickstartError::new(
                     QuickstartStep::ModelProvider,
                     "",
-                    "provider type, alias, and default model are required",
+                    "provider type, alias, and model are required",
                 ));
                 return None;
             }
@@ -814,12 +814,11 @@ fn apply_model_provider(
                 ));
                 return None;
             }
-            if let Err(err) =
-                config.set_prop_persistent(&format!("{prefix}.model"), &choice.default_model)
+            if let Err(err) = config.set_prop_persistent(&format!("{prefix}.model"), &choice.model)
             {
                 errors.push(QuickstartError::new(
                     QuickstartStep::ModelProvider,
-                    "default_model",
+                    "model",
                     err.to_string(),
                 ));
                 return None;
@@ -1192,6 +1191,32 @@ fn section_has_alias(config: &Config, prefix: &str, family: &str, alias: &str) -
     false
 }
 
+/// Live model catalog for a provider type. `(models, live)`:
+/// `live=true` means surfaces should render a picker; `live=false`
+/// means fall back to free text. Tries `ModelProvider::list_models()`
+/// first, then the family catalog table.
+pub async fn model_catalog(model_provider: &str) -> (Vec<String>, bool) {
+    if let Ok(handle) = zeroclaw_providers::create_model_provider(model_provider, None)
+        && let Ok(models) = handle.list_models().await
+        && !models.is_empty()
+    {
+        return (models, true);
+    }
+    match zeroclaw_providers::catalog::list_models_for_family(model_provider).await {
+        Ok(models) if !models.is_empty() => (models, true),
+        _ => (Vec::new(), false),
+    }
+}
+
+/// `true` for model_provider families that need no remote credential.
+#[must_use]
+pub fn model_provider_is_local(model_provider: &str) -> bool {
+    zeroclaw_providers::list_model_providers()
+        .iter()
+        .find(|p| p.name == model_provider)
+        .is_some_and(|p| p.local)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1242,7 +1267,7 @@ mod tests {
             model_provider: SelectorChoice::Fresh(ModelProviderChoice {
                 provider_type: "anthropic".into(),
                 alias: "anthropic".into(),
-                default_model: "claude-sonnet-4-5".into(),
+                model: "claude-sonnet-4-5".into(),
                 api_key: Some("sk-test".into()),
                 base_url: None,
             }),

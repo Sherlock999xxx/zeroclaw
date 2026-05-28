@@ -65,35 +65,8 @@ pub async fn handle_catalog_models(
         return e.into_response();
     }
     let _ = state;
-    let local = model_provider_family_is_local(&q.model_provider);
-
-    // Try provider construction + list_models first (covers credentialed
-    // /models endpoints). Fall back to the family catalog table when
-    // construction or list_models fails — this is the path that covers
-    // quickstart mode where the operator hasn't supplied a credential
-    // and the provider has typed required fields (Azure resource,
-    // Bedrock region, …) that haven't been populated yet.
-    let provider_path = match zeroclaw_providers::create_model_provider(&q.model_provider, None) {
-        Ok(h) => match h.list_models().await {
-            Ok(ms) if !ms.is_empty() => Some(ms),
-            _ => None,
-        },
-        Err(_) => None,
-    };
-
-    let (models, live) = match provider_path {
-        Some(ms) => (ms, true),
-        None => {
-            match zeroclaw_providers::catalog::list_models_for_family(&q.model_provider).await {
-                Ok(ms) => (ms, true),
-                Err(e) => {
-                    ::zeroclaw_log::record!(DEBUG, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"model_provider": q.model_provider, "error": format!("{}", e)})), "model catalog fetch failed");
-                    (Vec::new(), false)
-                }
-            }
-        }
-    };
-
+    let local = zeroclaw_runtime::quickstart::model_provider_is_local(&q.model_provider);
+    let (models, live) = zeroclaw_runtime::quickstart::model_catalog(&q.model_provider).await;
     axum::Json(CatalogModelsResult {
         model_provider: q.model_provider,
         models,
@@ -189,7 +162,10 @@ fn quickstart_agent_missing_requirements(
             .is_some_and(|m| !m.is_empty());
         if !has_model {
             missing.push(format!("Choose a model for model provider `{model_ref}`."));
-        } else if !model_provider_alias_usable(provider, model_provider_family_is_local(family)) {
+        } else if !model_provider_alias_usable(
+            provider,
+            zeroclaw_runtime::quickstart::model_provider_is_local(family),
+        ) {
             missing.push(format!(
                 "Set credential/auth for model provider `{model_ref}`."
             ));
@@ -703,15 +679,11 @@ fn any_usable_model_provider(cfg: &zeroclaw_config::schema::Config) -> bool {
         .models
         .iter_entries()
         .any(|(family, _, base)| {
-            model_provider_alias_usable(base, model_provider_family_is_local(family))
+            model_provider_alias_usable(
+                base,
+                zeroclaw_runtime::quickstart::model_provider_is_local(family),
+            )
         })
-}
-
-fn model_provider_family_is_local(family: &str) -> bool {
-    zeroclaw_providers::list_model_providers()
-        .iter()
-        .find(|provider| provider.name == family)
-        .is_some_and(|provider| provider.local)
 }
 
 fn provider_type_badge(

@@ -48,7 +48,7 @@ fn builder_submission_round_trips() {
         model_provider: presets::SelectorChoice::Fresh(presets::ModelProviderChoice {
             provider_type: "anthropic".into(),
             alias: "anthropic".into(),
-            default_model: "claude-sonnet-4-5".into(),
+            model: "claude-sonnet-4-5".into(),
             api_key: Some("sk-test".into()),
             base_url: None,
         }),
@@ -288,4 +288,22 @@ fn section_shape_round_trips_via_json() {
         mirror.is_ok(),
         "SectionShape parse mismatch between canonical and mirror"
     );
+}
+
+/// Verify the catalog-models RPC result round-trips through the
+/// TUI mirror with `live` and the models list intact. Pins the
+/// wire contract the daemon (`crates/zeroclaw-runtime/src/rpc/
+/// dispatch.rs::handle_config_catalog_models`) emits.
+#[test]
+fn catalog_models_round_trips_through_tui_mirror() {
+    let raw = json!({
+        "model_provider": "anthropic",
+        "models": ["claude-opus-4-7", "claude-sonnet-4-5"],
+        "local": false,
+        "live": true,
+    });
+    let mirror: zerocode::client::CatalogModelsResult = serde_json::from_value(raw)
+        .expect("CatalogModelsResult mirror must accept the daemon's wire shape");
+    assert!(mirror.live, "live flag must survive deserialization");
+    assert_eq!(mirror.models, vec!["claude-opus-4-7", "claude-sonnet-4-5"]);
 }

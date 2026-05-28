@@ -317,7 +317,7 @@ enum Commands {
         #[arg(long)]
         model_provider: Option<String>,
 
-        /// Default model id for the new provider entry.
+        /// Model id for the new provider entry.
         #[arg(long)]
         model: Option<String>,
 
@@ -981,7 +981,7 @@ async fn run_quickstart_cli(
             kind: String,
             display_name: String,
             alias: String,
-            default_model: String,
+            model: String,
             api_key: Option<String>,
             base_url: Option<String>,
         },
@@ -1073,7 +1073,7 @@ async fn run_quickstart_cli(
                 kind: found.kind.clone(),
                 display_name: found.display_name.clone(),
                 alias: found.kind.clone(),
-                default_model: m.to_string(),
+                model: m.to_string(),
                 api_key: api_key.clone(),
                 base_url: None,
             });
@@ -1114,9 +1114,9 @@ async fn run_quickstart_cli(
             Some(ProviderChoice::Fresh {
                 display_name,
                 alias,
-                default_model,
+                model,
                 ..
-            }) => format!("{display_name} (alias: {alias}, model: {default_model})"),
+            }) => format!("{display_name} (alias: {alias}, model: {model})"),
             Some(ProviderChoice::Existing { alias_ref }) => {
                 format!("use existing {alias_ref}")
             }
@@ -1297,18 +1297,39 @@ async fn run_quickstart_cli(
                 };
                 // Field shape from the canonical schema.
                 let descriptors = field_shape(FieldSection::ModelProvider, &chosen.kind);
-                let mut default_model = String::new();
+                let mut model = String::new();
                 let mut api_key_buf: Option<String> = None;
                 let mut base_url_buf: Option<String> = None;
                 let mut aborted = false;
                 for d in &descriptors {
-                    let collected = prompt_for_field(d, None)?;
+                    // For the model field, upgrade the descriptor with a
+                    // live catalog so `prompt_for_field` renders a picker
+                    // instead of a free-text input. Empty catalog (live=false)
+                    // leaves the descriptor unchanged → free-text fallback.
+                    let upgraded;
+                    let d_used = if d.key.eq_ignore_ascii_case("model") {
+                        let (models, live) =
+                            zeroclaw_runtime::quickstart::model_catalog(&chosen.kind).await;
+                        if live && !models.is_empty() {
+                            upgraded = zeroclaw_runtime::quickstart::FieldDescriptor {
+                                kind: zeroclaw_config::traits::PropKind::Enum,
+                                enum_variants: Some(models),
+                                ..d.clone()
+                            };
+                            &upgraded
+                        } else {
+                            d
+                        }
+                    } else {
+                        d
+                    };
+                    let collected = prompt_for_field(d_used, None)?;
                     let Some(value) = collected else {
                         aborted = true;
                         break;
                     };
                     if d.key.eq_ignore_ascii_case("model") {
-                        default_model = value;
+                        model = value;
                     } else if d.is_secret && !value.is_empty() {
                         api_key_buf = Some(value);
                     } else if (d.key.eq_ignore_ascii_case("uri")
@@ -1322,24 +1343,24 @@ async fn run_quickstart_cli(
                 if aborted {
                     continue;
                 }
-                if default_model.is_empty() {
+                if model.is_empty() {
                     // Schema didn't surface a model field for this
                     // provider — ask explicitly so the submission
                     // is complete.
                     let Ok(m) = Input::<String>::new()
-                        .with_prompt(format!("Default model id for {}", chosen.display_name))
+                        .with_prompt(format!("Model id for {}", chosen.display_name))
                         .allow_empty(false)
                         .interact_text()
                     else {
                         continue;
                     };
-                    default_model = m;
+                    model = m;
                 }
                 form.provider = Some(ProviderChoice::Fresh {
                     kind: chosen.kind.clone(),
                     display_name: chosen.display_name.clone(),
                     alias,
-                    default_model,
+                    model,
                     api_key: api_key_buf,
                     base_url: base_url_buf,
                 });
@@ -1599,14 +1620,14 @@ async fn run_quickstart_cli(
         ProviderChoice::Fresh {
             kind,
             alias,
-            default_model,
+            model,
             api_key,
             base_url,
             ..
         } => SelectorChoice::Fresh(ModelProviderChoice {
             provider_type: kind,
             alias,
-            default_model,
+            model,
             api_key,
             base_url,
         }),

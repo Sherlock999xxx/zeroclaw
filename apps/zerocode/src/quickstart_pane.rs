@@ -247,7 +247,7 @@ struct FormState {
     provider_type: String,
     provider_alias: String,
     provider_mode: SelectorMode,
-    default_model: String,
+    model: String,
     api_key: Option<String>,
     risk: String,
     risk_mode: SelectorMode,
@@ -279,7 +279,7 @@ impl FormState {
             provider_type: String::new(),
             provider_alias: String::new(),
             provider_mode: SelectorMode::Fresh,
-            default_model: String::new(),
+            model: String::new(),
             api_key: None,
             risk: String::new(),
             risk_mode: SelectorMode::Fresh,
@@ -301,7 +301,7 @@ impl FormState {
                 SelectorMode::Fresh => {
                     !self.provider_type.is_empty()
                         && !self.provider_alias.is_empty()
-                        && !self.default_model.is_empty()
+                        && !self.model.is_empty()
                 }
                 SelectorMode::Existing => {
                     !self.provider_type.is_empty() && !self.provider_alias.is_empty()
@@ -323,7 +323,7 @@ impl FormState {
                 } else {
                     format!(
                         "{} ({}) — {}",
-                        self.provider_type, self.provider_alias, self.default_model
+                        self.provider_type, self.provider_alias, self.model
                     )
                 }
             }
@@ -355,7 +355,7 @@ impl FormState {
             SelectorMode::Fresh => SelectorChoice::Fresh(ModelProviderChoice {
                 provider_type: self.provider_type.clone(),
                 alias: self.provider_alias.clone(),
-                default_model: self.default_model.clone(),
+                model: self.model.clone(),
                 api_key: self.api_key.clone(),
                 base_url: None,
             }),
@@ -951,13 +951,41 @@ impl QuickstartPane {
                     }
                     self.revalidate().await;
                 }
+                KeyCode::Left => {
+                    if let Some(row) = f.fields.get_mut(f.cursor)
+                        && let Some(variants) = row.descriptor.enum_variants.as_deref()
+                        && !variants.is_empty()
+                    {
+                        let cur = variants.iter().position(|v| v == &row.buf).unwrap_or(0);
+                        let next = if cur == 0 {
+                            variants.len() - 1
+                        } else {
+                            cur - 1
+                        };
+                        row.buf = variants[next].clone();
+                    }
+                }
+                KeyCode::Right => {
+                    if let Some(row) = f.fields.get_mut(f.cursor)
+                        && let Some(variants) = row.descriptor.enum_variants.as_deref()
+                        && !variants.is_empty()
+                    {
+                        let cur = variants.iter().position(|v| v == &row.buf).unwrap_or(0);
+                        let next = (cur + 1) % variants.len();
+                        row.buf = variants[next].clone();
+                    }
+                }
                 KeyCode::Backspace => {
-                    if let Some(row) = f.fields.get_mut(f.cursor) {
+                    if let Some(row) = f.fields.get_mut(f.cursor)
+                        && row.descriptor.enum_variants.is_none()
+                    {
                         row.buf.pop();
                     }
                 }
                 KeyCode::Char(c) => {
-                    if let Some(row) = f.fields.get_mut(f.cursor) {
+                    if let Some(row) = f.fields.get_mut(f.cursor)
+                        && row.descriptor.enum_variants.is_none()
+                    {
                         row.buf.push(c);
                     }
                 }
@@ -1031,7 +1059,7 @@ impl QuickstartPane {
             // path — the runtime resolves the alias against the live
             // config at apply time. Leave them empty so they don't
             // overwrite the existing alias's values.
-            self.form.default_model.clear();
+            self.form.model.clear();
             self.form.api_key = None;
         }
     }
@@ -1086,10 +1114,40 @@ impl QuickstartPane {
                 return;
             }
         };
+        // For the model-provider section, upgrade the `model` row with
+        // live catalog options so it renders as a picker. Empty catalog
+        // → free-text fallback (descriptor unchanged).
+        let model_catalog: Option<Vec<String>> =
+            if matches!(section, QuickstartFieldSection::ModelProvider) {
+                match self.rpc.catalog_models(&type_key).await {
+                    Ok(res) if res.live && !res.models.is_empty() => Some(res.models),
+                    _ => None,
+                }
+            } else {
+                None
+            };
         let rows: Vec<FieldFormRow> = fields
             .into_iter()
-            .map(|d| {
-                let buf = d.default.clone().unwrap_or_default();
+            .map(|mut d| {
+                if let Some(ref models) = model_catalog
+                    && d.key.eq_ignore_ascii_case("model")
+                {
+                    d.kind = crate::client::QuickstartFieldKind::Enum;
+                    d.enum_variants = Some(models.clone());
+                }
+                // For enum fields, default the buffer to the first
+                // variant so the user lands on a valid value. ←/→
+                // cycles through the list.
+                let buf = if let Some(variants) = d.enum_variants.as_deref()
+                    && !variants.is_empty()
+                {
+                    d.default
+                        .clone()
+                        .filter(|v| variants.contains(v))
+                        .unwrap_or_else(|| variants[0].clone())
+                } else {
+                    d.default.clone().unwrap_or_default()
+                };
                 FieldFormRow { descriptor: d, buf }
             })
             .collect();
@@ -1143,7 +1201,7 @@ impl QuickstartPane {
                 self.form.provider_type = f.type_key.clone();
                 self.form.provider_alias = f.alias.clone();
                 self.form.provider_mode = SelectorMode::Fresh;
-                self.form.default_model = pick("model");
+                self.form.model = pick("model");
                 self.form.api_key = api_key;
             }
             Selector::Channels => {
@@ -1477,11 +1535,20 @@ fn draw_modal(
                     } else {
                         display
                     };
+                    let is_enum = row.descriptor.enum_variants.is_some();
                     lines.push(Line::from(vec![
                         Span::styled(glyph, Style::default().fg(Color::Yellow)),
                         Span::styled(format!("{:14}", row.descriptor.label), label_style),
                         Span::styled("  ", Style::default()),
+                        Span::styled(
+                            if is_enum { "‹ " } else { "" },
+                            Style::default().fg(Color::Yellow),
+                        ),
                         Span::styled(display, Style::default().fg(Color::Gray)),
+                        Span::styled(
+                            if is_enum { " ›" } else { "" },
+                            Style::default().fg(Color::Yellow),
+                        ),
                         if is_cursor {
                             Span::styled("█", Style::default().fg(Color::Yellow))
                         } else {
@@ -1498,7 +1565,7 @@ fn draw_modal(
                 (
                     format!(" {} ", f.selector.title()),
                     lines,
-                    "Tab/↑/↓ move   Enter accept   Esc cancel",
+                    "Tab/↑/↓ move   ←/→ pick on ‹enum›   Enter accept   Esc cancel",
                     cursor_lines,
                 )
             }

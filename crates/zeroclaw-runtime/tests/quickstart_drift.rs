@@ -19,7 +19,7 @@ fn fixture_submission() -> BuilderSubmission {
         model_provider: SelectorChoice::Fresh(ModelProviderChoice {
             provider_type: "anthropic".into(),
             alias: "drift_test".into(),
-            default_model: "claude-sonnet-4-5".into(),
+            model: "claude-sonnet-4-5".into(),
             api_key: Some("sk-drift-test".into()),
             base_url: None,
         }),

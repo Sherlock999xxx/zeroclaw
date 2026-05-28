@@ -388,11 +388,7 @@ impl RpcDispatcher {
                     let result = handle.handle_session_prompt(&params_clone).await;
                     if !is_notif {
                         match result {
-                            Ok(_) => {
-                                handle
-                                    .send_result(id_clone, serde_json::json!({}))
-                                    .await
-                            }
+                            Ok(_) => handle.send_result(id_clone, serde_json::json!({})).await,
                             Err(e) => handle.send_error(id_clone, e.code, &e.message).await,
                         }
                     }
@@ -2184,19 +2180,13 @@ impl RpcDispatcher {
 
     async fn handle_config_catalog_models(&self, params: &Value) -> RpcResult {
         let req: CatalogModelsParams = parse_params(params)?;
-        let family = &req.model_provider;
-        let local = matches!(
-            family.as_str(),
-            "ollama" | "llamacpp" | "lmstudio" | "vllm" | "sglang"
-        );
-        let models = zeroclaw_providers::catalog::list_models_for_family(family)
-            .await
-            .map_err(|e| rpc_err(INTERNAL_ERROR, format!("Catalog models failed: {e}")))?;
+        let local = crate::quickstart::model_provider_is_local(&req.model_provider);
+        let (models, live) = crate::quickstart::model_catalog(&req.model_provider).await;
         to_result(CatalogModelsResult {
             model_provider: req.model_provider,
             models,
             local,
-            live: true,
+            live,
         })
     }
 

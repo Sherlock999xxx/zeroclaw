@@ -1738,10 +1738,13 @@ impl<'a> App<'a> {
                 let _ = self.draw(term);
 
                 match self.rpc.catalog_models(&family).await {
-                    Ok(models) if !models.is_empty() => {
-                        self.select_cursor =
-                            models.iter().position(|m| m == &field_current).unwrap_or(0);
-                        self.select_items = models;
+                    Ok(res) if !res.models.is_empty() => {
+                        self.select_cursor = res
+                            .models
+                            .iter()
+                            .position(|m| m == &field_current)
+                            .unwrap_or(0);
+                        self.select_items = res.models;
                         self.status_msg = None;
                     }
                     Ok(_) => {

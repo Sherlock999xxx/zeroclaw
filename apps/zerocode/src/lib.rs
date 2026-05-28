@@ -14,5 +14,6 @@
 mod theme;
 mod widgets;
 
+pub mod client;
 pub mod jsonrpc;
 pub mod wire;
