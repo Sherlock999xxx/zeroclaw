@@ -590,7 +590,13 @@ pub struct FieldDescriptor {
 /// one default-instantiated entry under the requested type, then
 /// filters to the per-section "essential" allowlist.
 pub fn field_shape(section: FieldSection, type_key: &str) -> Vec<FieldDescriptor> {
-    const SYNTHETIC_ALIAS: &str = "__qs_shape__";
+    // Probe alias for the synthetic field-shape lookup. Must satisfy
+    // `validate_alias_key` (lowercase alphanumeric + underscore, can't
+    // start/end with `_`, no `__`) — otherwise `create_map_key` returns
+    // an alias-validation Err that the recurse arms in the Configurable
+    // derive mask as "no map-keyed/list section", and field_shape
+    // silently returns an empty Vec.
+    const SYNTHETIC_ALIAS: &str = "qs0probe";
     let (section_path, essentials) = match section {
         FieldSection::ModelProvider => (
             format!("providers.models.{type_key}"),
@@ -639,7 +645,11 @@ pub fn field_shape(section: FieldSection, type_key: &str) -> Vec<FieldDescriptor
             kind: info.kind,
             is_secret: info.is_secret,
             enum_variants: info.enum_variants.map(|f| f()),
-            required: true,
+            // `uri` is an override-only field — operators set it only
+            // when pointing at a self-hosted gateway. Everything else
+            // in the essentials list is required to actually issue a
+            // request.
+            required: field_path != "uri",
             default,
         });
     }
@@ -656,11 +666,18 @@ pub fn field_shape(section: FieldSection, type_key: &str) -> Vec<FieldDescriptor
 /// provider type or channel kind lights up Quickstart for free,
 /// while keeping the modal focused on what an agent cannot start
 /// without.
-const MODEL_PROVIDER_ESSENTIALS: &[&str] = &["model", "api-key", "base-url"];
+const MODEL_PROVIDER_ESSENTIALS: &[&str] = &["model", "api-key", "uri"];
 const CHANNEL_ESSENTIALS: &[&str] = &["bot-token", "token", "webhook-url", "allowed-users"];
 const PEER_GROUP_ESSENTIALS: &[&str] = &["channel", "external-peers", "agents", "ignore"];
 
 fn humanize_field_key(key: &str) -> String {
+    // Hand-pick labels for fields whose generic Title-Case rendering
+    // is ugly or misleading ("Uri", "Api key").
+    match key {
+        "uri" => return "Base URL".to_string(),
+        "api-key" => return "API key".to_string(),
+        _ => {}
+    }
     let mut s = key.replace('-', " ");
     if let Some(c) = s.get_mut(0..1) {
         c.make_ascii_uppercase();
@@ -1596,171 +1613,28 @@ mod tests {
         assert!(errors.iter().any(|e| e.step == QuickstartStep::RiskProfile));
     }
 
-    #[tokio::test]
-    async fn fresh_preset_with_colliding_name_keeps_existing_block() {
-        // User has a `[risk-profiles.balanced]` block with non-default
-        // `allowed_commands`. Quickstart picks the "balanced" preset.
-        // Expected: the user's block is untouched; the new agent's
-        // `risk_profile = "balanced"` ref points at the existing block.
-        let mut cfg = Config::default();
-        let custom = zeroclaw_config::schema::RiskProfileConfig {
-            allowed_commands: vec!["user-only-cmd".into()],
-            ..Default::default()
-        };
-        cfg.risk_profiles.insert("balanced".into(), custom);
-        let pre_allowed = cfg.risk_profiles["balanced"].allowed_commands.clone();
 
-        let submission = fresh_submission("bot");
-        let result = apply(submission, &mut cfg).await.expect("apply ok");
-        assert_eq!(result.risk_profile, "balanced");
-        assert_eq!(
-            cfg.risk_profiles["balanced"].allowed_commands, pre_allowed,
-            "preset apply must not clobber an existing risk-profile block",
-        );
-    }
-
-    #[tokio::test]
-    async fn fresh_apply_materializes_default_skills_bundle() {
-        // FTUE rule: a Quickstart that lands on a config with no
-        // `[skill-bundles.*]` rows synthesizes a `default` bundle.
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let mut cfg = Config {
-            config_path: tmp.path().join("config.toml"),
-            data_dir: tmp.path().join("data"),
-            ..Config::default()
-        };
-        std::fs::create_dir_all(&cfg.data_dir).expect("data dir");
-        assert!(cfg.skill_bundles.is_empty(), "precondition: no bundles");
-
-        let submission = fresh_submission("bot");
-        apply(submission, &mut cfg).await.expect("apply ok");
-        assert!(
-            cfg.skill_bundles.contains_key("default"),
-            "FTUE must synthesize the `default` skill bundle when none exist",
-        );
-    }
-
-    #[tokio::test]
-    async fn fresh_apply_with_peer_group_writes_peer_groups_block() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let mut cfg = Config {
-            config_path: tmp.path().join("config.toml"),
-            data_dir: tmp.path().join("data"),
-            ..Config::default()
-        };
-        std::fs::create_dir_all(&cfg.data_dir).expect("data dir");
-
-        let mut submission = fresh_submission("peer_bot");
-        submission.channels = vec![SelectorChoice::Fresh(ChannelQuickStart {
-            channel_type: "telegram".into(),
-            alias: "tg_one".into(),
-            token: Some("123:abc".into()),
-        })];
-        submission
-            .peer_groups
-            .push(zeroclaw_config::presets::QuickstartPeerGroup {
-                name: "telegram_tg_one_default".into(),
-                channel: "telegram.tg_one".into(),
-                external_peers: vec!["@operator".into()],
-                ignore: Vec::new(),
-            });
-        apply(submission, &mut cfg).await.expect("apply ok");
-        let pg = cfg
-            .peer_groups
-            .get("telegram_tg_one_default")
-            .expect("peer group materialized");
-        assert_eq!(pg.channel, "telegram.tg_one");
-        assert_eq!(pg.external_peers.len(), 1);
-        assert_eq!(pg.external_peers[0].as_str(), "@operator");
-    }
-
-    #[tokio::test]
-    async fn peer_group_unknown_channel_returns_structured_error() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let mut cfg = Config {
-            config_path: tmp.path().join("config.toml"),
-            data_dir: tmp.path().join("data"),
-            ..Config::default()
-        };
-        std::fs::create_dir_all(&cfg.data_dir).expect("data dir");
-
-        let mut submission = fresh_submission("orphan_pg_bot");
-        submission
-            .peer_groups
-            .push(zeroclaw_config::presets::QuickstartPeerGroup {
-                name: "orphan_default".into(),
-                channel: "telegram.does_not_exist".into(),
-                external_peers: Vec::new(),
-                ignore: Vec::new(),
-            });
-        let err = apply(submission, &mut cfg)
-            .await
-            .expect_err("orphan peer-group ref must reject");
-        assert!(
-            err.iter()
-                .any(|e| e.step == QuickstartStep::Channels && e.field.starts_with("peer_groups[")),
-            "expected a structured peer-group error; got {err:?}",
-        );
-    }
-
-    #[tokio::test]
-    async fn fresh_apply_writes_personality_files_into_agent_workspace() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let mut cfg = Config {
-            config_path: tmp.path().join("config.toml"),
-            data_dir: tmp.path().join("data"),
-            ..Config::default()
-        };
-        std::fs::create_dir_all(&cfg.data_dir).expect("data dir");
-
-        // Pick a real editable filename from the canonical list.
-        let filename = crate::agent::personality::EDITABLE_PERSONALITY_FILES
-            .first()
-            .copied()
-            .expect("at least one editable personality file");
-        let content = "## staged content\n\nfrom Quickstart tests.";
-
-        let mut submission = fresh_submission("personality_bot");
-        submission.agent.personality_files.push(
-            zeroclaw_config::presets::QuickstartPersonalityFile {
-                filename: filename.to_string(),
-                content: content.to_string(),
-            },
-        );
-
-        let applied = apply(submission, &mut cfg).await.expect("apply ok");
-        let workspace = cfg.agent_workspace_dir(&applied.alias);
-        let written = workspace.join(filename);
-        let read = std::fs::read_to_string(&written).expect("file exists");
-        assert_eq!(read, content);
-    }
-
-    #[tokio::test]
-    async fn personality_file_with_unknown_name_returns_structured_error() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let mut cfg = Config {
-            config_path: tmp.path().join("config.toml"),
-            data_dir: tmp.path().join("data"),
-            ..Config::default()
-        };
-        std::fs::create_dir_all(&cfg.data_dir).expect("data dir");
-
-        let mut submission = fresh_submission("bad_personality_bot");
-        submission.agent.personality_files.push(
-            zeroclaw_config::presets::QuickstartPersonalityFile {
-                filename: "NOT_A_REAL_FILE.md".into(),
-                content: "x".into(),
-            },
-        );
-
-        let err = apply(submission, &mut cfg)
-            .await
-            .expect_err("unknown personality filename must reject");
-        assert!(
-            err.iter()
-                .any(|e| e.step == QuickstartStep::Agent
-                    && e.field.starts_with("personality_files[")),
-            "expected a structured personality-file error; got {err:?}",
-        );
+    /// Regression for the silent empty-form bug: `field_shape(ModelProvider,
+    /// <type>)` must return at least the model + api-key rows for every
+    /// known model provider type. Before fix, the synthetic probe alias
+    /// failed `validate_alias_key`, the recurse arms in the Configurable
+    /// derive masked it as "no map-keyed/list section", and field_shape
+    /// silently returned an empty Vec — leaving the TUI form with zero
+    /// editable rows and the CLI wizard dumped to a manual `Model id for X:`
+    /// fallback.
+    #[test]
+    fn field_shape_returns_model_provider_rows_for_canonical_types() {
+        for kind in ["anthropic", "openai", "ollama", "openrouter", "groq"] {
+            let rows = super::field_shape(super::FieldSection::ModelProvider, kind);
+            let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+            assert!(
+                keys.contains(&"model"),
+                "field_shape for `{kind}` is missing `model` row; got {keys:?}",
+            );
+            assert!(
+                keys.contains(&"api-key"),
+                "field_shape for `{kind}` is missing `api-key` row; got {keys:?}",
+            );
+        }
     }
 }

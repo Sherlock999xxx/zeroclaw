@@ -1360,9 +1360,17 @@ async fn run_quickstart_cli(
                     continue;
                 }
                 if model.is_empty() {
-                    // Schema didn't surface a model field for this
-                    // provider — ask explicitly so the submission
-                    // is complete.
+                    // Defensive: every provider's schema should yield
+                    // a `model` field, but if `field_shape` ever
+                    // returns no model row this prevents an empty
+                    // submission silently shipping. The message is
+                    // intentionally alarming — if a user ever sees it
+                    // there's a schema regression worth filing.
+                    eprintln!(
+                        "WARN: schema produced no `model` field for `{}` — \
+                         falling back to manual entry. Please report this.",
+                        chosen.kind,
+                    );
                     let Ok(m) = Input::<String>::new()
                         .with_prompt(format!("Model id for {}", chosen.display_name))
                         .allow_empty(false)
@@ -1886,6 +1894,27 @@ async fn run_quickstart_cli(
 /// Used by both the model-provider field form and the channel field
 /// form so the two sub-flows share a single prompt implementation.
 #[cfg(feature = "agent-runtime")]
+/// Recognize a `providers.models.<type>.<alias>.model` config path and
+/// return `<type>` if the family is in the canonical model-provider
+/// registry. Used by `config set` to offer a live model picker when
+/// no value is supplied. Returns `None` for any other path shape or
+/// an unknown provider family.
+fn model_path_provider_type(path: &str) -> Option<&'static str> {
+    let parts: Vec<&str> = path.split('.').collect();
+    if parts.len() != 5
+        || parts[0] != "providers"
+        || parts[1] != "models"
+        || parts[4] != "model"
+    {
+        return None;
+    }
+    let family = parts[2];
+    zeroclaw_providers::list_model_providers()
+        .iter()
+        .find(|p| p.name == family)
+        .map(|p| p.name)
+}
+
 fn prompt_for_field(
     desc: &zeroclaw_runtime::quickstart::FieldDescriptor,
     seed: Option<&str>,
@@ -1898,11 +1927,24 @@ fn prompt_for_field(
         format!("{} ({})", desc.label, desc.help)
     };
     if desc.is_secret {
-        let pw = Password::new()
-            .with_prompt(prompt)
+        // dialoguer 0.12 has no Esc-cancellable Password — only Ctrl+C
+        // (returns `ErrorKind::Interrupted` wrapped in `dialoguer::Error::IO`).
+        // Map that to `Ok(None)` so the caller treats it as "user backed
+        // out" instead of bubbling a confusing IO-error message.
+        match Password::new()
+            .with_prompt(prompt.clone())
             .allow_empty_password(true)
-            .interact()?;
-        return Ok(Some(pw));
+            .interact()
+        {
+            Ok(pw) => return Ok(Some(pw)),
+            Err(e) => {
+                let io: std::io::Error = e.into();
+                if io.kind() == std::io::ErrorKind::Interrupted {
+                    return Ok(None);
+                }
+                return Err(io.into());
+            }
+        }
     }
     if let (PropKind::Enum, Some(variants)) = (&desc.kind, &desc.enum_variants) {
         let Some(i) = FuzzySelect::new()
@@ -1926,7 +1968,18 @@ fn prompt_for_field(
     {
         input = input.default(d.to_string());
     }
-    Ok(Some(input.interact_text()?))
+    // Same Ctrl+C-as-cancel mapping as the Password branch above.
+    match input.interact_text() {
+        Ok(v) => Ok(Some(v)),
+        Err(e) => {
+            let io: std::io::Error = e.into();
+            if io.kind() == std::io::ErrorKind::Interrupted {
+                Ok(None)
+            } else {
+                Err(io.into())
+            }
+        }
+    }
 }
 
 /// Pick a preset selector — used by both Risk and Runtime since
@@ -3744,6 +3797,40 @@ async fn main() -> Result<()> {
                     config.set_prop_persistent(&path, &secret_value)?;
                 } else if let Some(val) = value {
                     config.set_prop_persistent(&path, &val)?;
+                } else if let Some(provider_type) = model_path_provider_type(&path) {
+                    // `config set providers.models.<type>.<alias>.model`
+                    // with no value: fetch the live catalog and offer a
+                    // FuzzySelect, mirroring the quickstart picker UX so
+                    // the operator doesn't need to remember model ids by
+                    // hand. Falls back to free text on `live=false`
+                    // (unknown provider, fetch failed, catalog empty).
+                    use dialoguer::{FuzzySelect, Input};
+                    let (models, live) =
+                        zeroclaw_runtime::quickstart::model_catalog(provider_type).await;
+                    if live && !models.is_empty() {
+                        let current = config.get_prop(&path).unwrap_or_default();
+                        let default = models.iter().position(|m| m == &current).unwrap_or(0);
+                        let Some(idx) = FuzzySelect::new()
+                            .with_prompt(format!("Model id for {provider_type}"))
+                            .items(&models)
+                            .default(default)
+                            .max_length(models.len().max(1))
+                            .interact_opt()?
+                        else {
+                            anyhow::bail!("cancelled");
+                        };
+                        config.set_prop_persistent(&path, &models[idx])?;
+                    } else {
+                        eprintln!(
+                            "  no live catalog for `{provider_type}` — \
+                             enter the model id manually."
+                        );
+                        let m = Input::<String>::new()
+                            .with_prompt(format!("Model id for {provider_type}"))
+                            .allow_empty(false)
+                            .interact_text()?;
+                        config.set_prop_persistent(&path, &m)?;
+                    }
                 } else {
                     let field_info = config.prop_fields().into_iter().find(|f| f.name == path);
                     let variants = field_info.as_ref().and_then(|info| {
