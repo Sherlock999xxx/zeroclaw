@@ -71,15 +71,14 @@ impl Mode {
         }
     }
 
-    fn key(self) -> &'static str {
-        match self {
-            Mode::Dashboard => "F1",
-            Mode::Config => "F2",
-            Mode::Acp => "F3",
-            Mode::Chat => "F4",
-            Mode::Logs => "F5",
-            Mode::Quickstart => "F6",
-        }
+    fn cycle(self, offset: isize) -> Mode {
+        let len = MODES.len() as isize;
+        let cur = MODES
+            .iter()
+            .position(|m| *m == self)
+            .expect("mode missing from MODES") as isize;
+        let next = ((cur + offset).rem_euclid(len)) as usize;
+        MODES[next]
     }
 }
 
@@ -171,7 +170,7 @@ pub async fn run(
             // Help modal overlay (drawn last so it sits on top).
             if show_help {
                 let mut node = HelpNode::entries(vec![
-                    HelpEntry::new(vec!["F1–F5"], "Switch mode"),
+                    HelpEntry::new(vec!["Ctrl+←", "Ctrl+→"], "Cycle mode"),
                     HelpEntry::key("Ctrl+R", "Reload daemon"),
                     HelpEntry::key("Ctrl+C", "Quit"),
                     HelpEntry::spacer(),
@@ -282,16 +281,16 @@ pub async fn run(
                     continue;
                 }
 
-                // Global keys: F1–F6 switch modes
-                let switch_to: Option<Mode> = match key.code {
-                    KeyCode::F(1) => Some(Mode::Dashboard),
-                    KeyCode::F(2) => Some(Mode::Config),
-                    KeyCode::F(3) => Some(Mode::Acp),
-                    KeyCode::F(4) => Some(Mode::Chat),
-                    KeyCode::F(5) => Some(Mode::Logs),
-                    KeyCode::F(6) => Some(Mode::Quickstart),
-                    _ => None,
-                };
+                let switch_to: Option<Mode> =
+                    if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        match key.code {
+                            KeyCode::Left => Some(mode.cycle(-1)),
+                            KeyCode::Right => Some(mode.cycle(1)),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
                 if let Some(next) = switch_to {
                     if mode == Mode::Quickstart && next != Mode::Quickstart {
                         quickstart.dismiss_beacon().await;
@@ -346,7 +345,7 @@ pub async fn run(
                 if matches!(mouse.kind, MouseEventKind::Down(_)) {
                     let labels: Vec<(&str, String)> = MODES
                         .iter()
-                        .map(|m| (m.key(), format!(" {} ", m.name())))
+                        .map(|m| ("", format!(" {} ", m.name())))
                         .collect();
                     let label_refs: Vec<(&str, &str)> =
                         labels.iter().map(|(k, l)| (*k, l.as_str())).collect();
@@ -405,13 +404,11 @@ pub async fn run(
 fn draw_mode_bar(frame: &mut ratatui::Frame, area: Rect, active: Mode) {
     let mut spans = Vec::new();
     for m in &MODES {
-        let key_style = theme::dim_style();
         let label_style = if *m == active {
             theme::selected_style().add_modifier(Modifier::BOLD)
         } else {
             theme::body_style()
         };
-        spans.push(Span::styled(m.key(), key_style));
         spans.push(Span::styled(format!(" {} ", m.name()), label_style));
         spans.push(Span::raw(" "));
     }
