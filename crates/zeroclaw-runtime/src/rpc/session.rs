@@ -4,9 +4,16 @@ use crate::agent::agent::Agent;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use zeroclaw_infra::session_queue::SessionActorQueue;
+
+/// Grace period between a TUI / zerocode transport disconnect and the
+/// daemon dropping that connection's sessions. Long enough to ride out
+/// a network blip or a quick TUI restart with the same `tui_id`; short
+/// enough that genuinely abandoned sessions don't grow daemon RSS for
+/// long. Reclaimed early on reconnect via [`SessionStore::reclaim`].
+pub const SESSION_DISCONNECT_GRACE: Duration = Duration::from_secs(120);
 
 /// Per-session runtime overrides. All fields are optional — `None` means
 /// "use config default". Overrides are session-scoped, do not persist,
@@ -40,6 +47,8 @@ pub struct RpcSession {
     pub overrides: SessionOverrides,
     pub uploads: HashMap<String, UploadEntry>,
     pub chat_mode: crate::rpc::types::ChatMode,
+    pub owner_tui_id: Option<String>,
+    pub evict_at: Option<Instant>,
 }
 
 impl RpcSession {
@@ -58,7 +67,16 @@ impl RpcSession {
             overrides: SessionOverrides::default(),
             uploads: HashMap::new(),
             chat_mode,
+            owner_tui_id: None,
+            evict_at: None,
         }
+    }
+
+    /// Bind this session to a TUI owner; transport-disconnect cleanup
+    /// uses this to mark orphaned sessions for grace-period eviction.
+    pub fn with_owner(mut self, tui_id: Option<String>) -> Self {
+        self.owner_tui_id = tui_id;
+        self
     }
 }
 
@@ -217,11 +235,81 @@ impl SessionStore {
     }
 
     pub async fn remove(&self, id: &str) -> bool {
-        self.cancel_tokens
+        if let Some(token) = self
+            .cancel_tokens
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .remove(id);
+            .remove(id)
+        {
+            token.cancel();
+        }
         self.sessions.lock().await.remove(id).is_some()
+    }
+
+    /// Mark every session owned by `tui_id` as orphaned, scheduling it for
+    /// eviction at `now + grace`. Called from the transport-disconnect
+    /// path; the grace window lets a reconnect of the same TUI reclaim
+    /// these sessions before they are dropped.
+    pub async fn mark_orphaned(&self, tui_id: &str, grace: std::time::Duration) -> usize {
+        let deadline = Instant::now() + grace;
+        let mut sessions = self.sessions.lock().await;
+        let mut count = 0usize;
+        for s in sessions.values_mut() {
+            if s.owner_tui_id.as_deref() == Some(tui_id) {
+                s.evict_at = Some(deadline);
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Cancel any pending eviction for sessions owned by `tui_id`. Called
+    /// when the same TUI ID reconnects within the grace window.
+    pub async fn reclaim(&self, tui_id: &str) -> usize {
+        let mut sessions = self.sessions.lock().await;
+        let mut count = 0usize;
+        for s in sessions.values_mut() {
+            if s.owner_tui_id.as_deref() == Some(tui_id) && s.evict_at.is_some() {
+                s.evict_at = None;
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Drop every session whose pending eviction deadline has passed. Any
+    /// in-flight turn has its cancel token fired before the agent goes,
+    /// so spawned tasks wind down instead of holding the agent past
+    /// eviction. Returns the number of sessions removed.
+    pub async fn evict_expired(&self) -> usize {
+        let now = Instant::now();
+        let mut sessions = self.sessions.lock().await;
+        let stale: Vec<String> = sessions
+            .iter()
+            .filter(|(_, s)| s.evict_at.is_some_and(|d| now >= d))
+            .map(|(k, _)| k.clone())
+            .collect();
+        if stale.is_empty() {
+            return 0;
+        }
+        {
+            let mut tokens = self
+                .cancel_tokens
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            for id in &stale {
+                if let Some(token) = tokens.remove(id) {
+                    token.cancel();
+                }
+            }
+        }
+        let mut evicted = 0usize;
+        for id in &stale {
+            if sessions.remove(id).is_some() {
+                evicted += 1;
+            }
+        }
+        evicted
     }
 
     pub async fn list_ids(&self) -> Vec<String> {

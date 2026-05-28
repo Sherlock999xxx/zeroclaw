@@ -8,6 +8,7 @@
 
 use super::context::RpcContext;
 use super::dispatch::RpcDispatcher;
+use super::session::SESSION_DISCONNECT_GRACE;
 use super::transport::RpcTransport;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -162,6 +163,25 @@ pub async fn run_local_listener(
 
                     if let Some(tui_id) = dispatcher.tui_id() {
                         ctx.tui_registry.unregister(tui_id);
+                        let orphaned = ctx
+                            .sessions
+                            .mark_orphaned(tui_id, SESSION_DISCONNECT_GRACE)
+                            .await;
+                        if orphaned > 0 {
+                            ::zeroclaw_log::record!(
+                                INFO,
+                                ::zeroclaw_log::Event::new(
+                                    module_path!(),
+                                    ::zeroclaw_log::Action::Note,
+                                )
+                                .with_attrs(::serde_json::json!({
+                                    "tui_id": tui_id,
+                                    "orphaned_sessions": orphaned,
+                                    "grace_secs": SESSION_DISCONNECT_GRACE.as_secs(),
+                                })),
+                                "TUI disconnected; sessions queued for eviction"
+                            );
+                        }
                     }
 
                     count.fetch_sub(1, Ordering::Relaxed);

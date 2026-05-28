@@ -354,7 +354,36 @@ pub async fn run(
         use zeroclaw_infra::session_queue::SessionActorQueue;
 
         let session_queue = std::sync::Arc::new(SessionActorQueue::new(32, 30, 600));
-        let sessions = std::sync::Arc::new(SessionStore::new(64, session_queue));
+        let sessions = std::sync::Arc::new(SessionStore::new(64, session_queue.clone()));
+
+        {
+            let reaper_sessions = std::sync::Arc::clone(&sessions);
+            let reaper_queue = std::sync::Arc::clone(&session_queue);
+            zeroclaw_spawn::spawn!(async move {
+                const TICK: std::time::Duration = std::time::Duration::from_secs(15);
+                let mut interval = tokio::time::interval(TICK);
+                interval.tick().await;
+                loop {
+                    interval.tick().await;
+                    let evicted = reaper_sessions.evict_expired().await;
+                    let queue_evicted = reaper_queue.evict_idle().await;
+                    if evicted > 0 || queue_evicted > 0 {
+                        ::zeroclaw_log::record!(
+                            INFO,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Note,
+                            )
+                            .with_attrs(::serde_json::json!({
+                                "evicted_sessions": evicted,
+                                "evicted_queue_slots": queue_evicted,
+                            })),
+                            "Session reaper swept orphaned entries"
+                        );
+                    }
+                }
+            });
+        }
         let session_backend = zeroclaw_infra::make_session_backend(
             &config.data_dir,
             &config.channels.session_backend,

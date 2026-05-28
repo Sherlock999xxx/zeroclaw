@@ -531,6 +531,18 @@ impl RpcDispatcher {
         };
 
         let tui_sig = self.ctx.tui_registry.sign(&tui_id);
+        let reclaimed = self.ctx.sessions.reclaim(&tui_id).await;
+        if reclaimed > 0 {
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({
+                        "tui_id": tui_id,
+                        "reclaimed_sessions": reclaimed,
+                    })),
+                "TUI reconnected within grace; sessions reclaimed"
+            );
+        }
         self.ctx
             .tui_registry
             .register(super::tui_identity::TuiEntry {
@@ -666,7 +678,8 @@ impl RpcDispatcher {
             .sessions
             .insert(
                 session_id.clone(),
-                super::session::RpcSession::new(agent, &req.agent_alias, &cwd, chat_mode.clone()),
+                super::session::RpcSession::new(agent, &req.agent_alias, &cwd, chat_mode.clone())
+                    .with_owner(self.tui_id.clone()),
             )
             .await
             .map_err(|_| rpc_err(SESSION_LIMIT_REACHED, "Session limit reached"))?;
