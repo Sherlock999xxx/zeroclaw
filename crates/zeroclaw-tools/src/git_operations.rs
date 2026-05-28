@@ -625,8 +625,47 @@ impl GitOperationsTool {
 
         let output = match action {
             "push" | "save" => {
-                self.run_git_command(&["stash", "push", "-m", "auto-stash"], working_dir)
-                    .await
+                // Build args: stash push [-m MSG] [-k] [--] [PATHSPEC...]
+                // `keep_index` preserves the staged area inside the working
+                // tree after stashing — needed to stash only unstaged
+                // changes and keep the index intact for the next commit.
+                // `paths` (space-separated) scopes the stash to specific
+                // pathspecs, leaving everything else untouched.
+                let message = args
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("auto-stash")
+                    .to_string();
+                let keep_index = args
+                    .get("keep_index")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let include_untracked = args
+                    .get("include_untracked")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let paths_raw = args
+                    .get("paths")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let mut cmd: Vec<String> =
+                    vec!["stash".into(), "push".into(), "-m".into(), message];
+                if keep_index {
+                    cmd.push("-k".into());
+                }
+                if include_untracked {
+                    cmd.push("-u".into());
+                }
+                if !paths_raw.is_empty() {
+                    cmd.push("--".into());
+                    for p in paths_raw.split_whitespace() {
+                        cmd.push(p.to_string());
+                    }
+                }
+                let cmd_refs: Vec<&str> = cmd.iter().map(String::as_str).collect();
+                self.run_git_command(&cmd_refs, working_dir).await
             }
             "pop" => self.run_git_command(&["stash", "pop"], working_dir).await,
             "list" => self.run_git_command(&["stash", "list"], working_dir).await,
@@ -844,11 +883,11 @@ impl Tool for GitOperationsTool {
                 },
                 "message": {
                     "type": "string",
-                    "description": "Commit message (for 'commit' operation)"
+                    "description": "Commit message (for 'commit' operation); stash message (for 'stash push', defaults to 'auto-stash')"
                 },
                 "paths": {
                     "type": "string",
-                    "description": "File paths to stage (for 'add' operation)"
+                    "description": "Space-separated file paths. For 'add', files to stage. For 'stash push', pathspecs to scope the stash to — without this, the entire working tree is stashed."
                 },
                 "branch": {
                     "type": "string",
@@ -878,6 +917,14 @@ impl Tool for GitOperationsTool {
                 "index": {
                     "type": "integer",
                     "description": "Stash index (for 'stash' with 'drop' action)"
+                },
+                "keep_index": {
+                    "type": "boolean",
+                    "description": "For 'stash push': preserve staged changes in the working tree after stashing — only unstaged changes go into the stash."
+                },
+                "include_untracked": {
+                    "type": "boolean",
+                    "description": "For 'stash push': also stash untracked files (-u). Without this, `git stash push` only touches tracked files."
                 },
                 "path": {
                     "type": "string",
@@ -1475,6 +1522,222 @@ mod tests {
         assert!(
             worktrees[0]["path"].as_str().is_some_and(|p| !p.is_empty()),
             "Main worktree must have a non-empty path"
+        );
+    }
+
+    /// Helper: bootstrap a usable repo (init + identity + initial commit on
+    /// `master`) so subsequent stash tests have something to stash against.
+    /// `tracked_files` are added & committed so they appear as tracked
+    /// modifications when later edited — `git stash` only handles tracked
+    /// files by default, so all stash test fixtures must use this seam.
+    async fn bootstrap_repo(dir: &std::path::Path, tracked_files: &[&str]) {
+        for args in [
+            &["init", "-b", "master"][..],
+            &["config", "user.email", "test@test.com"][..],
+            &["config", "user.name", "Test"][..],
+        ] {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap();
+        }
+        std::fs::write(dir.join("README.md"), "hello").unwrap();
+        for f in tracked_files {
+            std::fs::write(dir.join(f), "initial").unwrap();
+        }
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+    }
+
+    /// `stash push` with no extra args stashes everything tracked — staged
+    /// and unstaged. Regression guard: this is the legacy behaviour and
+    /// must keep working when no `keep_index` / `paths` are supplied.
+    #[tokio::test]
+    async fn stash_push_default_stashes_staged_and_unstaged() {
+        let tmp = TempDir::new().unwrap();
+        bootstrap_repo(tmp.path(), &["staged.txt", "unstaged.txt"]).await;
+
+        std::fs::write(tmp.path().join("staged.txt"), "s-modified").unwrap();
+        std::fs::write(tmp.path().join("unstaged.txt"), "u-modified").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "staged.txt"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+
+        let tool = test_tool(tmp.path());
+        let result = tool
+            .execute(json!({"operation": "stash", "action": "push"}))
+            .await
+            .unwrap();
+        assert!(result.success, "stash push failed: {:?}", result.error);
+
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        let status_out = String::from_utf8_lossy(&status.stdout);
+        assert!(
+            status_out.trim().is_empty(),
+            "expected clean working tree after default stash, got: {status_out:?}"
+        );
+    }
+
+    /// `stash push` with `keep_index: true` stashes only unstaged changes
+    /// and leaves the index intact. This is the fix for the tool's
+    /// "stashes everything indiscriminately" bug.
+    #[tokio::test]
+    async fn stash_push_with_keep_index_preserves_staged() {
+        let tmp = TempDir::new().unwrap();
+        bootstrap_repo(tmp.path(), &["staged.txt", "unstaged.txt"]).await;
+
+        std::fs::write(tmp.path().join("staged.txt"), "s-modified").unwrap();
+        std::fs::write(tmp.path().join("unstaged.txt"), "u-modified").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "staged.txt"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+
+        let tool = test_tool(tmp.path());
+        let result = tool
+            .execute(json!({
+                "operation": "stash",
+                "action": "push",
+                "keep_index": true,
+            }))
+            .await
+            .unwrap();
+        assert!(result.success, "stash push -k failed: {:?}", result.error);
+
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        let status_out = String::from_utf8_lossy(&status.stdout).to_string();
+        // `staged.txt` modification still present and staged (`M ` prefix);
+        // `unstaged.txt` modification was stashed away — file matches HEAD.
+        assert!(
+            status_out.contains("M  staged.txt"),
+            "staged modification should remain staged, status: {status_out:?}"
+        );
+        assert!(
+            !status_out.contains("unstaged.txt"),
+            "unstaged modification should have been stashed, status: {status_out:?}"
+        );
+    }
+
+    /// `stash push` with `paths` scopes the stash to specific pathspecs.
+    /// Files outside the pathspec stay in the working tree.
+    #[tokio::test]
+    async fn stash_push_with_paths_scopes_to_pathspec() {
+        let tmp = TempDir::new().unwrap();
+        bootstrap_repo(tmp.path(), &["a.txt", "b.txt"]).await;
+
+        std::fs::write(tmp.path().join("a.txt"), "a-modified").unwrap();
+        std::fs::write(tmp.path().join("b.txt"), "b-modified").unwrap();
+
+        let tool = test_tool(tmp.path());
+        let result = tool
+            .execute(json!({
+                "operation": "stash",
+                "action": "push",
+                "paths": "a.txt",
+            }))
+            .await
+            .unwrap();
+        assert!(
+            result.success,
+            "stash push -- a.txt failed: {:?}",
+            result.error
+        );
+
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        let status_out = String::from_utf8_lossy(&status.stdout).to_string();
+        assert!(
+            !status_out.contains("a.txt"),
+            "a.txt should have been stashed, status: {status_out:?}"
+        );
+        assert!(
+            status_out.contains("b.txt"),
+            "b.txt should remain modified, status: {status_out:?}"
+        );
+    }
+
+    /// `stash push` with a custom `message` records that message instead
+    /// of the default `auto-stash`.
+    #[tokio::test]
+    async fn stash_push_with_custom_message() {
+        let tmp = TempDir::new().unwrap();
+        bootstrap_repo(tmp.path(), &["a.txt"]).await;
+        std::fs::write(tmp.path().join("a.txt"), "a-modified").unwrap();
+
+        let tool = test_tool(tmp.path());
+        let result = tool
+            .execute(json!({
+                "operation": "stash",
+                "action": "push",
+                "message": "scoped-fix-wip",
+            }))
+            .await
+            .unwrap();
+        assert!(result.success, "stash push -m failed: {:?}", result.error);
+
+        let list = std::process::Command::new("git")
+            .args(["stash", "list"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        let list_out = String::from_utf8_lossy(&list.stdout).to_string();
+        assert!(
+            list_out.contains("scoped-fix-wip"),
+            "custom stash message missing from list, got: {list_out:?}"
+        );
+    }
+
+    /// `stash push` with `include_untracked: true` also stashes untracked
+    /// files — `git stash` ignores them by default.
+    #[tokio::test]
+    async fn stash_push_with_include_untracked_captures_new_files() {
+        let tmp = TempDir::new().unwrap();
+        bootstrap_repo(tmp.path(), &[]).await;
+        std::fs::write(tmp.path().join("new.txt"), "untracked").unwrap();
+
+        let tool = test_tool(tmp.path());
+        let result = tool
+            .execute(json!({
+                "operation": "stash",
+                "action": "push",
+                "include_untracked": true,
+            }))
+            .await
+            .unwrap();
+        assert!(result.success, "stash push -u failed: {:?}", result.error);
+
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        let status_out = String::from_utf8_lossy(&status.stdout);
+        assert!(
+            status_out.trim().is_empty(),
+            "expected clean tree after -u stash, got: {status_out:?}"
         );
     }
 }
