@@ -983,8 +983,11 @@ async fn run_quickstart_cli(
             display_name: String,
             alias: String,
             model: String,
-            api_key: Option<String>,
-            base_url: Option<String>,
+            /// Round-trip of every non-`model` descriptor value the
+            /// daemon's `field_shape()` emitted, keyed by descriptor
+            /// key. The CLI doesn't know what these mean — the daemon
+            /// authored them and consumes them on the way back.
+            fields: std::collections::HashMap<String, String>,
         },
         Existing {
             alias_ref: String,
@@ -1071,13 +1074,17 @@ async fn run_quickstart_cli(
     {
         let needs_key = !found.local && api_key.is_none();
         if !needs_key {
+            let mut fields: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            if let Some(key) = api_key.as_deref().filter(|s| !s.is_empty()) {
+                fields.insert("api-key".to_string(), key.to_string());
+            }
             form.provider = Some(ProviderChoice::Fresh {
                 kind: found.kind.clone(),
                 display_name: found.display_name.clone(),
-                alias: found.kind.clone(),
+                alias: "default".to_string(),
                 model: m.to_string(),
-                api_key: api_key.clone(),
-                base_url: None,
+                fields,
             });
         }
     }
@@ -1305,7 +1312,7 @@ async fn run_quickstart_cli(
                 let chosen = &providers[pi];
                 let Ok(alias) = Input::<String>::new()
                     .with_prompt(format!("Alias for {}", chosen.display_name))
-                    .default(chosen.kind.clone())
+                    .default("default".to_string())
                     .allow_empty(false)
                     .interact_text()
                 else {
@@ -1314,8 +1321,8 @@ async fn run_quickstart_cli(
                 // Field shape from the canonical schema.
                 let descriptors = field_shape(FieldSection::ModelProvider, &chosen.kind);
                 let mut model = String::new();
-                let mut api_key_buf: Option<String> = None;
-                let mut base_url_buf: Option<String> = None;
+                let mut field_buf: std::collections::HashMap<String, String> =
+                    std::collections::HashMap::new();
                 let mut aborted = false;
                 for d in &descriptors {
                     // For the model field, upgrade the descriptor with a
@@ -1344,16 +1351,14 @@ async fn run_quickstart_cli(
                         aborted = true;
                         break;
                     };
+                    // `model` is hoisted to a top-level field on
+                    // ProviderChoice for the summary line. Every other
+                    // descriptor flows through `field_buf` keyed by
+                    // its schema identifier — no cherry-picking.
                     if d.key.eq_ignore_ascii_case("model") {
                         model = value;
-                    } else if d.is_secret && !value.is_empty() {
-                        api_key_buf = Some(value);
-                    } else if (d.key.eq_ignore_ascii_case("uri")
-                        || d.key.eq_ignore_ascii_case("base-url")
-                        || d.key.eq_ignore_ascii_case("base_url"))
-                        && !value.is_empty()
-                    {
-                        base_url_buf = Some(value);
+                    } else if !value.is_empty() {
+                        field_buf.insert(d.key.clone(), value);
                     }
                 }
                 if aborted {
@@ -1385,8 +1390,7 @@ async fn run_quickstart_cli(
                     display_name: chosen.display_name.clone(),
                     alias,
                     model,
-                    api_key: api_key_buf,
-                    base_url: base_url_buf,
+                    fields: field_buf,
                 });
             }
             Action::Risk => {
@@ -1803,25 +1807,14 @@ async fn run_quickstart_cli(
             kind,
             alias,
             model,
-            api_key,
-            base_url,
+            fields,
             ..
-        } => {
-            let mut fields: std::collections::HashMap<String, String> =
-                std::collections::HashMap::new();
-            if let Some(value) = api_key.filter(|s| !s.is_empty()) {
-                fields.insert("api-key".into(), value);
-            }
-            if let Some(value) = base_url.filter(|s| !s.is_empty()) {
-                fields.insert("uri".into(), value);
-            }
-            SelectorChoice::Fresh(ModelProviderChoice {
-                provider_type: kind,
-                alias,
-                model,
-                fields,
-            })
-        }
+        } => SelectorChoice::Fresh(ModelProviderChoice {
+            provider_type: kind,
+            alias,
+            model,
+            fields,
+        }),
         ProviderChoice::Existing { alias_ref } => SelectorChoice::Existing(alias_ref),
     };
     let risk_profile = match form.risk.expect("risk satisfied") {
