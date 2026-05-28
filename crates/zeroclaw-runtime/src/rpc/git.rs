@@ -10,7 +10,12 @@ pub fn branch_for(start: &Path) -> Option<String> {
     let head = head.trim();
 
     if let Some(refname) = head.strip_prefix("ref: ") {
-        Some(refname.rsplit('/').next()?.to_string())
+        let name = refname
+            .strip_prefix("refs/heads/")
+            .or_else(|| refname.strip_prefix("refs/tags/"))
+            .or_else(|| refname.strip_prefix("refs/remotes/"))
+            .unwrap_or(refname);
+        Some(name.to_string())
     } else if head.len() >= 7 && head.chars().all(|c| c.is_ascii_hexdigit()) {
         Some(head[..7].to_string())
     } else {
@@ -57,13 +62,26 @@ mod tests {
     }
 
     #[test]
-    fn nested_branch_name_keeps_only_leaf() {
+    fn nested_branch_name_is_preserved() {
         let td = TempDir::new().unwrap();
         write(
             &td.path().join(".git/HEAD"),
             "ref: refs/heads/feat/some-thing\n",
         );
-        assert_eq!(branch_for(td.path()).as_deref(), Some("some-thing"));
+        assert_eq!(branch_for(td.path()).as_deref(), Some("feat/some-thing"));
+    }
+
+    #[test]
+    fn integration_prefix_is_preserved() {
+        let td = TempDir::new().unwrap();
+        write(
+            &td.path().join(".git/HEAD"),
+            "ref: refs/heads/integration/zeroclaw-tui\n",
+        );
+        assert_eq!(
+            branch_for(td.path()).as_deref(),
+            Some("integration/zeroclaw-tui"),
+        );
     }
 
     #[test]
