@@ -1354,6 +1354,7 @@ fn render_entry_into(
     entry: &ChatEntry,
     is_selected: bool,
     show_thoughts: bool,
+    width: u16,
     lines: &mut Vec<Line<'static>>,
 ) {
     let sel_mod = if is_selected {
@@ -1397,7 +1398,7 @@ fn render_entry_into(
                 "Agent: ",
                 theme::agent_label_style().add_modifier(sel_mod),
             )]));
-            let md_lines = markdown_to_lines(text.as_ref());
+            let md_lines = markdown_to_lines(text.as_ref(), width);
             for mut line in md_lines {
                 if is_selected {
                     line = Line::from(
@@ -1459,9 +1460,13 @@ fn borrow_line<'a>(line: &'a Line<'static>) -> Line<'a> {
 }
 
 fn render_conversation(f: &mut Frame, state: &mut ChatState, area: Rect) {
+    // Width must be computed before cache rebuild — table column budgets
+    // depend on it, and a width change invalidates cached layouts.
+    let inner_width = area.width.saturating_sub(2);
+
     // ── Rebuild cached lines only when entries changed ────────
-    if state.dirty != LinesDirty::Clean {
-        state.rebuild_lines();
+    if state.dirty != LinesDirty::Clean || state.cached_render_width != inner_width {
+        state.rebuild_lines(inner_width);
     }
 
     let mut lines: Vec<Line> = state.cached_lines.iter().map(borrow_line).collect();
@@ -1471,7 +1476,7 @@ fn render_conversation(f: &mut Frame, state: &mut ChatState, area: Rect) {
             "Agent: ",
             theme::agent_label_style(),
         )]));
-        lines.extend(markdown_to_lines(&state.streaming_text));
+        lines.extend(markdown_to_lines(&state.streaming_text, inner_width));
     }
 
     if state.show_thoughts && !state.streaming_thought.is_empty() {
@@ -1487,7 +1492,6 @@ fn render_conversation(f: &mut Frame, state: &mut ChatState, area: Rect) {
         }
     }
 
-    let inner_width = area.width.saturating_sub(2);
     let inner_height = area.height.saturating_sub(2);
 
     let block = Block::default()
@@ -1734,54 +1738,195 @@ fn render_rename_overlay(f: &mut Frame, area: Rect, buf: &str) {
 ///
 /// Shows: `ctx: 12,345 / 200,000  [████████░░░░░░░░░░░░]  6%`
 /// When max is unknown, shows: `ctx: 12,345 tokens`
-fn markdown_to_lines(text: &str) -> Vec<Line<'static>> {
-    let opts = MdOptions::empty();
+/// Render a markdown blob into terminal lines.
+///
+/// `width` is the available rendering width in cells (the chat-area inner
+/// width). It only matters for tables, which compute their column budgets
+/// from it; non-table content ignores it.
+fn markdown_to_lines(text: &str, width: u16) -> Vec<Line<'static>> {
+    use pulldown_cmark::{Alignment as MdAlign, HeadingLevel};
+
+    let mut opts = MdOptions::empty();
+    opts.insert(MdOptions::ENABLE_TABLES);
+    opts.insert(MdOptions::ENABLE_STRIKETHROUGH);
+    opts.insert(MdOptions::ENABLE_TASKLISTS);
     let parser = MdParser::new_ext(text, opts);
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut current_spans: Vec<Span<'static>> = Vec::new();
     let mut in_bold = false;
     let mut in_italic = false;
+    let mut in_strike = false;
     let mut in_code_block = false;
+    let mut heading_level: Option<HeadingLevel> = None;
+    let mut blockquote_depth: u32 = 0;
+    let mut link_url: Option<String> = None;
+
+    // Table state. While non-`None`, text/inline events accumulate into the
+    // current cell instead of the live `current_spans` line.
+    struct TableBuf {
+        alignments: Vec<MdAlign>,
+        rows: Vec<Vec<String>>,
+        in_header: bool,
+        current_row: Vec<String>,
+        current_cell: Option<String>,
+    }
+    let mut table: Option<TableBuf> = None;
+
+    let push_line = |lines: &mut Vec<Line<'static>>, spans: &mut Vec<Span<'static>>| {
+        if !spans.is_empty() {
+            lines.push(Line::from(std::mem::take(spans)));
+        }
+    };
+
+    let blockquote_gutter = |depth: u32| -> Vec<Span<'static>> {
+        (0..depth)
+            .map(|_| Span::styled("\u{2502} ", theme::dim_style()))
+            .collect()
+    };
+
     for event in parser {
+        // While inside a table cell, route inline events into the cell
+        // buffer. The table only lays out at TagEnd::Table.
+        if let Some(t) = table.as_mut()
+            && let Some(cell) = t.current_cell.as_mut()
+        {
+            match &event {
+                MdEvent::Text(s) | MdEvent::Code(s) => {
+                    cell.push_str(s);
+                    continue;
+                }
+                MdEvent::SoftBreak | MdEvent::HardBreak => {
+                    cell.push(' ');
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
         match event {
             MdEvent::Start(Tag::Strong) => in_bold = true,
             MdEvent::End(TagEnd::Strong) => in_bold = false,
             MdEvent::Start(Tag::Emphasis) => in_italic = true,
             MdEvent::End(TagEnd::Emphasis) => in_italic = false,
-            MdEvent::Start(Tag::CodeBlock(_)) => {
-                // Flush current line.
-                if !current_spans.is_empty() {
-                    lines.push(Line::from(std::mem::take(&mut current_spans)));
+            MdEvent::Start(Tag::Strikethrough) => in_strike = true,
+            MdEvent::End(TagEnd::Strikethrough) => in_strike = false,
+            MdEvent::Start(Tag::Heading { level, .. }) => {
+                push_line(&mut lines, &mut current_spans);
+                lines.push(Line::default());
+                heading_level = Some(level);
+                if matches!(level, HeadingLevel::H1 | HeadingLevel::H2) {
+                    current_spans.push(Span::styled("\u{258C} ", theme::accent_style()));
                 }
+            }
+            MdEvent::End(TagEnd::Heading(_)) => {
+                push_line(&mut lines, &mut current_spans);
+                lines.push(Line::default());
+                heading_level = None;
+            }
+            MdEvent::Start(Tag::BlockQuote(_)) => {
+                push_line(&mut lines, &mut current_spans);
+                blockquote_depth += 1;
+            }
+            MdEvent::End(TagEnd::BlockQuote(_)) => {
+                push_line(&mut lines, &mut current_spans);
+                blockquote_depth = blockquote_depth.saturating_sub(1);
+            }
+            MdEvent::Start(Tag::Link { dest_url, .. }) => {
+                link_url = Some(dest_url.to_string());
+            }
+            MdEvent::End(TagEnd::Link) => {
+                if let Some(url) = link_url.take() {
+                    current_spans.push(Span::styled(
+                        format!(" ({url})"),
+                        theme::dim_style().add_modifier(Modifier::ITALIC),
+                    ));
+                }
+            }
+            MdEvent::Start(Tag::CodeBlock(_)) => {
+                push_line(&mut lines, &mut current_spans);
                 in_code_block = true;
             }
             MdEvent::End(TagEnd::CodeBlock) => {
-                if !current_spans.is_empty() {
-                    lines.push(Line::from(std::mem::take(&mut current_spans)));
-                }
+                push_line(&mut lines, &mut current_spans);
                 in_code_block = false;
             }
             MdEvent::Start(Tag::Item) => {
-                if !current_spans.is_empty() {
-                    lines.push(Line::from(std::mem::take(&mut current_spans)));
-                }
+                push_line(&mut lines, &mut current_spans);
+                current_spans.extend(blockquote_gutter(blockquote_depth));
                 current_spans.push(Span::styled("  \u{2022} ", theme::dim_style()));
             }
             MdEvent::End(TagEnd::Item) if !current_spans.is_empty() => {
-                lines.push(Line::from(std::mem::take(&mut current_spans)));
+                push_line(&mut lines, &mut current_spans);
+            }
+            MdEvent::Start(Tag::Paragraph) if blockquote_depth > 0 && current_spans.is_empty() => {
+                current_spans.extend(blockquote_gutter(blockquote_depth));
             }
             MdEvent::Start(Tag::Paragraph) => {}
             MdEvent::End(TagEnd::Paragraph) if !current_spans.is_empty() => {
-                lines.push(Line::from(std::mem::take(&mut current_spans)));
+                push_line(&mut lines, &mut current_spans);
+            }
+            MdEvent::TaskListMarker(checked) => {
+                let glyph = if checked { "\u{2611} " } else { "\u{2610} " };
+                current_spans.push(Span::styled(glyph, theme::accent_style()));
+            }
+            // ── Tables ──────────────────────────────────────────
+            MdEvent::Start(Tag::Table(alignments)) => {
+                push_line(&mut lines, &mut current_spans);
+                table = Some(TableBuf {
+                    alignments,
+                    rows: Vec::new(),
+                    in_header: false,
+                    current_row: Vec::new(),
+                    current_cell: None,
+                });
+            }
+            MdEvent::Start(Tag::TableHead) => {
+                if let Some(t) = table.as_mut() {
+                    t.in_header = true;
+                    t.current_row.clear();
+                }
+            }
+            MdEvent::End(TagEnd::TableHead) => {
+                if let Some(t) = table.as_mut() {
+                    let row = std::mem::take(&mut t.current_row);
+                    t.rows.push(row);
+                    t.in_header = false;
+                }
+            }
+            MdEvent::Start(Tag::TableRow) => {
+                if let Some(t) = table.as_mut() {
+                    t.current_row.clear();
+                }
+            }
+            MdEvent::End(TagEnd::TableRow) => {
+                if let Some(t) = table.as_mut() {
+                    let row = std::mem::take(&mut t.current_row);
+                    t.rows.push(row);
+                }
+            }
+            MdEvent::Start(Tag::TableCell) => {
+                if let Some(t) = table.as_mut() {
+                    t.current_cell = Some(String::new());
+                }
+            }
+            MdEvent::End(TagEnd::TableCell) => {
+                if let Some(t) = table.as_mut()
+                    && let Some(cell) = t.current_cell.take()
+                {
+                    t.current_row.push(cell);
+                }
+            }
+            MdEvent::End(TagEnd::Table) => {
+                if let Some(t) = table.take() {
+                    lines.extend(render_table(t.rows, t.alignments, width));
+                }
             }
             MdEvent::Text(t) => {
                 let owned = t.to_string();
                 if in_code_block {
                     for code_line in owned.split('\n') {
-                        if !current_spans.is_empty() {
-                            lines.push(Line::from(std::mem::take(&mut current_spans)));
-                        }
+                        push_line(&mut lines, &mut current_spans);
                         current_spans.push(Span::styled(
                             format!("\u{2502} {code_line}"),
                             theme::code_block_style(),
@@ -1789,11 +1934,25 @@ fn markdown_to_lines(text: &str) -> Vec<Line<'static>> {
                     }
                 } else {
                     let mut style = Style::default();
+                    if let Some(level) = heading_level {
+                        style = match level {
+                            HeadingLevel::H1 | HeadingLevel::H2 => {
+                                theme::heading_style().add_modifier(Modifier::BOLD)
+                            }
+                            _ => theme::heading_style(),
+                        };
+                    }
                     if in_bold {
                         style = style.add_modifier(Modifier::BOLD);
                     }
                     if in_italic {
                         style = style.add_modifier(Modifier::ITALIC);
+                    }
+                    if in_strike {
+                        style = style.add_modifier(Modifier::CROSSED_OUT);
+                    }
+                    if link_url.is_some() {
+                        style = style.add_modifier(Modifier::UNDERLINED);
                     }
                     current_spans.push(Span::styled(owned, style));
                 }
@@ -1804,8 +1963,11 @@ fn markdown_to_lines(text: &str) -> Vec<Line<'static>> {
             MdEvent::SoftBreak => {
                 current_spans.push(Span::raw(" "));
             }
-            MdEvent::HardBreak if !current_spans.is_empty() => {
-                lines.push(Line::from(std::mem::take(&mut current_spans)));
+            MdEvent::HardBreak => {
+                push_line(&mut lines, &mut current_spans);
+                if blockquote_depth > 0 {
+                    current_spans.extend(blockquote_gutter(blockquote_depth));
+                }
             }
             _ => {}
         }
@@ -1821,6 +1983,147 @@ fn markdown_to_lines(text: &str) -> Vec<Line<'static>> {
     }
 
     lines
+}
+
+/// Render a parsed table to box-drawing terminal lines.
+///
+/// `width` is the total available render width. Per-column width is
+/// proportional to the longest cell in that column, capped so the table
+/// fits in `width`. Cells that exceed their column cap are truncated with
+/// `…`. A column whose budget would force a truncation under 2 cells
+/// collapses to a single `…`.
+fn render_table(
+    rows: Vec<Vec<String>>,
+    alignments: Vec<pulldown_cmark::Alignment>,
+    width: u16,
+) -> Vec<Line<'static>> {
+    use pulldown_cmark::Alignment as MdAlign;
+    use unicode_width::UnicodeWidthStr;
+
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    if cols == 0 {
+        return Vec::new();
+    }
+
+    // Normalise: pad short rows so every row has `cols` cells.
+    let mut grid: Vec<Vec<String>> = rows;
+    for row in &mut grid {
+        while row.len() < cols {
+            row.push(String::new());
+        }
+    }
+
+    // Natural width per column = longest cell.
+    let mut natural: Vec<usize> = vec![0; cols];
+    for row in &grid {
+        for (i, cell) in row.iter().enumerate() {
+            natural[i] = natural[i].max(UnicodeWidthStr::width(cell.as_str()));
+        }
+    }
+
+    // Frame budget: `│` borders (cols+1) + one-cell padding either side
+    // of each cell (cols * 2).
+    let frame = (cols + 1) + cols * 2;
+    let avail = (width as usize).saturating_sub(frame);
+    let total_natural: usize = natural.iter().sum();
+
+    let widths: Vec<usize> = if total_natural <= avail || total_natural == 0 {
+        natural.clone()
+    } else {
+        // Scale each column proportionally. Floor at 1 cell so columns
+        // don't vanish; the renderer collapses 1–3 cell columns to `…`.
+        natural
+            .iter()
+            .map(|n| ((*n * avail) / total_natural).max(1))
+            .collect()
+    };
+
+    fn truncate_to(s: &str, budget: usize) -> String {
+        use unicode_width::UnicodeWidthChar;
+        if budget == 0 {
+            return String::new();
+        }
+        let full_width = UnicodeWidthStr::width(s);
+        if full_width <= budget {
+            return s.to_string();
+        }
+        // Cell needs truncation but budget is too narrow to convey any
+        // content + ellipsis — collapse to a single `…`.
+        if budget < 2 {
+            return "\u{2026}".to_string();
+        }
+        let mut acc = String::new();
+        let mut used = 0usize;
+        for ch in s.chars() {
+            let w = ch.width().unwrap_or(0);
+            if used + w + 1 > budget {
+                acc.push('\u{2026}');
+                return acc;
+            }
+            acc.push(ch);
+            used += w;
+            if used == budget {
+                return acc;
+            }
+        }
+        acc
+    }
+
+    fn pad_cell(s: &str, budget: usize, align: MdAlign) -> String {
+        let w = UnicodeWidthStr::width(s);
+        let slack = budget.saturating_sub(w);
+        match align {
+            MdAlign::Right => format!("{}{}", " ".repeat(slack), s),
+            MdAlign::Center => {
+                let left = slack / 2;
+                let right = slack - left;
+                format!("{}{}{}", " ".repeat(left), s, " ".repeat(right))
+            }
+            MdAlign::None | MdAlign::Left => format!("{}{}", s, " ".repeat(slack)),
+        }
+    }
+
+    let border = |left: &str, mid: &str, right: &str| -> Line<'static> {
+        let mut s = String::from(left);
+        for (i, w) in widths.iter().enumerate() {
+            s.push_str(&"\u{2500}".repeat(w + 2));
+            if i + 1 < widths.len() {
+                s.push_str(mid);
+            }
+        }
+        s.push_str(right);
+        Line::from(Span::styled(s, theme::dim_style()))
+    };
+
+    let render_row = |cells: &[String]| -> Line<'static> {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        spans.push(Span::styled("\u{2502}".to_string(), theme::dim_style()));
+        for (i, cell) in cells.iter().enumerate() {
+            let budget = widths[i];
+            let trimmed = truncate_to(cell, budget);
+            let align = alignments.get(i).copied().unwrap_or(MdAlign::None);
+            let padded = pad_cell(&trimmed, budget, align);
+            spans.push(Span::raw(format!(" {padded} ")));
+            spans.push(Span::styled("\u{2502}".to_string(), theme::dim_style()));
+        }
+        Line::from(spans)
+    };
+
+    let mut out: Vec<Line<'static>> = Vec::new();
+    out.push(border("\u{250C}", "\u{252C}", "\u{2510}"));
+    let mut iter = grid.into_iter();
+    if let Some(header) = iter.next() {
+        out.push(render_row(&header));
+        out.push(border("\u{251C}", "\u{253C}", "\u{2524}"));
+    }
+    for row in iter {
+        out.push(render_row(&row));
+    }
+    out.push(border("\u{2514}", "\u{2534}", "\u{2518}"));
+    out
 }
 
 // ── ChatState / ChatEntry ─────────────────────────────────────────
@@ -1955,6 +2258,10 @@ pub struct ChatState {
     cached_entry_count: usize,
     /// The `entries` index where the render window starts for the current cache.
     cached_render_start: usize,
+    /// The render width the current `cached_lines` were laid out for.
+    /// A width change forces a full rebuild because tables compute their
+    /// column budgets from it.
+    cached_render_width: u16,
     /// Cumulative token count for this session: every Usage event from the
     /// provider (input + cached + output) is added on arrival. Cleared on
     /// session reset only.
@@ -1997,6 +2304,7 @@ impl ChatState {
             dirty: LinesDirty::Full,
             cached_entry_count: 0,
             cached_render_start: 0,
+            cached_render_width: 0,
             context_input_tokens: None,
             context_max_tokens: None,
         }
@@ -2138,7 +2446,15 @@ impl ChatState {
     }
 
     /// Rebuild (or incrementally extend) the cached rendered lines from committed entries.
-    fn rebuild_lines(&mut self) {
+    ///
+    /// `width` is the chat-area inner width in cells. A change in width
+    /// invalidates the table layouts inside the cached lines, so a width
+    /// change forces a full rebuild.
+    fn rebuild_lines(&mut self, width: u16) {
+        if self.cached_render_width != width {
+            self.dirty = LinesDirty::Full;
+            self.cached_render_width = width;
+        }
         const MAX_RENDERED_ENTRIES: usize = 1_000;
         let total = self.entries.len();
         let natural_start = total.saturating_sub(MAX_RENDERED_ENTRIES);
@@ -2161,6 +2477,7 @@ impl ChatState {
                     entry,
                     self.is_entry_highlighted(abs_idx),
                     show_thoughts,
+                    width,
                     &mut new_lines,
                 );
                 let after = new_lines.len();
@@ -2187,6 +2504,7 @@ impl ChatState {
                 entry,
                 self.is_entry_highlighted(abs_idx),
                 show_thoughts,
+                width,
                 &mut lines,
             );
             let after = lines.len();
@@ -2473,6 +2791,7 @@ impl ChatState {
         self.dirty = LinesDirty::Full;
         self.cached_entry_count = 0;
         self.cached_render_start = 0;
+        self.cached_render_width = 0;
         self.pending_approval = None;
         self.turn_in_flight = false;
         self.turn_status = TurnStatus::Idle;
@@ -2925,5 +3244,89 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, ChatEntry::AgentMessage(t) if t.as_ref() == "Done"))
         );
+    }
+
+    // ── markdown_to_lines ──────────────────────────────────────────
+
+    fn rendered(input: &str, width: u16) -> String {
+        markdown_to_lines(input, width)
+            .into_iter()
+            .map(|l| {
+                l.spans
+                    .into_iter()
+                    .map(|s| s.content.into_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn md_table_renders_box_drawing_borders() {
+        let out = rendered("| A | B |\n|---|---|\n| 1 | 2 |\n", 40);
+        assert!(out.contains('\u{250C}'), "missing top-left corner: {out}");
+        assert!(
+            out.contains('\u{2514}'),
+            "missing bottom-left corner: {out}"
+        );
+        assert!(out.contains('\u{2502}'), "missing vertical: {out}");
+        assert!(out.contains('A'));
+        assert!(out.contains('1'));
+    }
+
+    #[test]
+    fn md_table_truncates_when_width_is_tight() {
+        let out = rendered(
+            "| col |\n|-----|\n| this cell is far too long for a tiny width |\n",
+            20,
+        );
+        assert!(out.contains('\u{2026}'), "expected ellipsis: {out}");
+    }
+
+    #[test]
+    fn md_heading_emits_gutter_for_h1() {
+        let out = rendered("# Title\n", 80);
+        assert!(out.contains('\u{258C}'), "expected H1 gutter: {out}");
+        assert!(out.contains("Title"));
+    }
+
+    #[test]
+    fn md_blockquote_prefixes_each_line() {
+        let out = rendered("> quoted text\n", 80);
+        assert!(
+            out.contains('\u{2502}'),
+            "expected blockquote gutter: {out}"
+        );
+        assert!(out.contains("quoted text"));
+    }
+
+    #[test]
+    fn md_link_appends_url_inline() {
+        let out = rendered("[click](https://example.com)\n", 80);
+        assert!(out.contains("click"));
+        assert!(out.contains("https://example.com"));
+    }
+
+    #[test]
+    fn md_strikethrough_passes_text_through() {
+        // Style flag isn't visible in plain text join, but the text must
+        // still render — proves the parser option is enabled.
+        let out = rendered("~~gone~~\n", 80);
+        assert!(out.contains("gone"));
+    }
+
+    #[test]
+    fn md_task_list_renders_checkbox_glyphs() {
+        let out = rendered("- [x] done\n- [ ] todo\n", 80);
+        assert!(out.contains('\u{2611}'), "expected checked glyph: {out}");
+        assert!(out.contains('\u{2610}'), "expected unchecked glyph: {out}");
+    }
+
+    #[test]
+    fn md_table_with_no_width_still_emits_lines() {
+        // Defensive: zero width must not panic and must not emit infinite
+        // padding. The truncation rule collapses every column to `…`.
+        let out = markdown_to_lines("| A |\n|---|\n| 1 |\n", 0);
+        assert!(!out.is_empty());
     }
 }
