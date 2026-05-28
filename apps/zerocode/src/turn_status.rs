@@ -31,6 +31,9 @@ pub enum TurnStatus {
     CallingTool(String),
     /// Approval request is blocking the turn.
     WaitingForApproval,
+    /// Cancel request fired; awaiting `TurnComplete` so input stays gated
+    /// until the daemon actually winds the turn down.
+    Cancelling,
 }
 
 impl TurnStatus {
@@ -43,6 +46,7 @@ impl TurnStatus {
             TurnStatus::Responding => Some("responding".into()),
             TurnStatus::CallingTool(name) => Some(format!("calling tool {name}")),
             TurnStatus::WaitingForApproval => None,
+            TurnStatus::Cancelling => Some("cancelling".into()),
         }
     }
 

@@ -2437,7 +2437,26 @@ impl Agent {
                     .await;
             }
 
-            let results = self.execute_tools(&calls).await;
+            let results = if let Some(ref token) = cancel_token {
+                tokio::select! {
+                    biased;
+                    () = token.cancelled() => {
+                        self.append_streamed_assistant_message_to_history(
+                            "[interrupted by user]".to_string(),
+                            &mut new_msgs,
+                            &mut committed_response,
+                        );
+                        return Err(StreamedTurnError {
+                            error: crate::agent::loop_::ToolLoopCancelled.into(),
+                            committed_response,
+                            new_messages: new_msgs,
+                        });
+                    }
+                    results = self.execute_tools(&calls) => results,
+                }
+            } else {
+                self.execute_tools(&calls).await
+            };
 
             // Notify about each tool result
             for result in &results {

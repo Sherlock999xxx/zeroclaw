@@ -553,23 +553,23 @@ impl Chat {
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if state.turn_in_flight {
-                    let _ = self.rpc.session_cancel(&state.session_id).await;
-                    state.turn_in_flight = false;
-                    state.turn_status = TurnStatus::Idle;
+                    if !matches!(state.turn_status, TurnStatus::Cancelling) {
+                        let _ = self.rpc.session_cancel(&state.session_id).await;
+                        state.turn_status = TurnStatus::Cancelling;
+                    }
                 } else {
                     return true;
                 }
             }
             KeyCode::Esc => {
                 if state.in_browse_mode() {
-                    // Return to input mode from browse mode.
                     state.exit_browse_mode();
-                } else if state.turn_in_flight {
+                } else if state.turn_in_flight
+                    && !matches!(state.turn_status, TurnStatus::Cancelling)
+                {
                     let _ = self.rpc.session_cancel(&state.session_id).await;
-                    state.turn_in_flight = false;
-                    state.turn_status = TurnStatus::Idle;
+                    state.turn_status = TurnStatus::Cancelling;
                 }
-                // Esc never quits the TUI — use q or Ctrl+C for that.
             }
             KeyCode::Enter if state.pending_approval().is_some() => {
                 if let Some(pa) = state.take_pending_approval() {

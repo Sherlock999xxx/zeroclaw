@@ -12,6 +12,7 @@ use zeroclaw_api::tool::{Tool, ToolResult};
 const DEFAULT_SHELL_TIMEOUT_SECS: u64 = 60;
 /// Maximum output size in bytes (1MB).
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
+const POST_EXIT_DRAIN: Duration = Duration::from_millis(250);
 
 /// Drop guard that SIGTERMs then SIGKILLs the process group whose leader
 /// is `pid`. The shell tool puts every command in its own process group
@@ -330,7 +331,7 @@ impl Tool for ShellTool {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let child = match cmd.spawn() {
+        let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
                 return Ok(ToolResult {
@@ -341,20 +342,32 @@ impl Tool for ShellTool {
             }
         };
 
-        // RAII: kill the whole process group on any exit (success,
-        // timeout, outer future drop).
         #[cfg(unix)]
         let _group_guard = ChildGroupGuard::new(child.id());
 
-        let result =
-            tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await;
+        let stdout_handle = child.stdout.take();
+        let stderr_handle = child.stderr.take();
 
-        match result {
-            Ok(Ok(output)) => {
-                let mut stdout = decode_output(&output.stdout);
-                let mut stderr = decode_output(&output.stderr);
+        let drain_stdout = drain_capped(stdout_handle, MAX_OUTPUT_BYTES);
+        let drain_stderr = drain_capped(stderr_handle, MAX_OUTPUT_BYTES);
+        let wait_fut = async {
+            let status = child.wait().await?;
+            let (out, err) = tokio::join!(
+                tokio::time::timeout(POST_EXIT_DRAIN, drain_stdout),
+                tokio::time::timeout(POST_EXIT_DRAIN, drain_stderr),
+            );
+            Ok::<_, std::io::Error>((
+                status,
+                out.unwrap_or_default(),
+                err.unwrap_or_default(),
+            ))
+        };
 
-                // Truncate output to prevent OOM
+        match tokio::time::timeout(Duration::from_secs(timeout_secs), wait_fut).await {
+            Ok(Ok((status, stdout_bytes, stderr_bytes))) => {
+                let mut stdout = decode_output(&stdout_bytes);
+                let mut stderr = decode_output(&stderr_bytes);
+
                 if stdout.len() > MAX_OUTPUT_BYTES {
                     let mut b = MAX_OUTPUT_BYTES.min(stdout.len());
                     while b > 0 && !stdout.is_char_boundary(b) {
@@ -373,7 +386,7 @@ impl Tool for ShellTool {
                 }
 
                 Ok(ToolResult {
-                    success: output.status.success(),
+                    success: status.success(),
                     output: stdout,
                     error: if stderr.is_empty() {
                         None
@@ -396,6 +409,32 @@ impl Tool for ShellTool {
             }),
         }
     }
+}
+
+async fn drain_capped<R>(reader: Option<R>, cap: usize) -> Vec<u8>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let Some(mut reader) = reader else {
+        return Vec::new();
+    };
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) => break,
+            Ok(n) => {
+                let take = n.min(cap.saturating_sub(buf.len()).max(1));
+                buf.extend_from_slice(&chunk[..take]);
+                if buf.len() >= cap {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    buf
 }
 
 #[cfg(test)]
