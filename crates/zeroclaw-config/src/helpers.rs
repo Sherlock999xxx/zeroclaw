@@ -418,6 +418,32 @@ pub fn validate_alias_key(key: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Resolve a CLI-typed config path to its canonical form.
+///
+/// Field segments derived from the schema are kebab-case; aliases are
+/// snake-only per [`validate_alias_key`]. For each known canonical
+/// path, segments are compared pairwise: equal verbatim, OR equal
+/// after swapping `_`/`-` only when the canonical segment contains a
+/// `-` (i.e. is a schema-derived field name, not an alias). Returns
+/// `raw` unchanged when no canonical path matches.
+#[must_use]
+pub fn resolve_field_path(known_paths: &[String], raw: &str) -> String {
+    let raw_segs: Vec<&str> = raw.split('.').collect();
+    for known in known_paths {
+        let known_segs: Vec<&str> = known.split('.').collect();
+        if known_segs.len() != raw_segs.len() {
+            continue;
+        }
+        let all_match = known_segs.iter().zip(raw_segs.iter()).all(|(k, r)| {
+            k == r || (k.contains('-') && k.replace('-', "_") == **r)
+        });
+        if all_match {
+            return known.clone();
+        }
+    }
+    raw.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,5 +616,50 @@ mod tests {
                 "expected rejection of char {ch:?} in alias key"
             );
         }
+    }
+
+    #[test]
+    fn resolve_field_path_canonicalizes_snake_field_segments() {
+        let known = vec![
+            "providers.models.anthropic.my_bot.api-key".to_string(),
+            "providers.models.anthropic.my_bot.model".to_string(),
+        ];
+        // User typed snake `api_key`; alias `my_bot` stays untouched
+        // because the canonical segment has no `-`.
+        assert_eq!(
+            resolve_field_path(&known, "providers.models.anthropic.my_bot.api_key"),
+            "providers.models.anthropic.my_bot.api-key",
+        );
+    }
+
+    #[test]
+    fn resolve_field_path_passes_through_canonical_input() {
+        let known = vec!["providers.models.anthropic.my_bot.api-key".to_string()];
+        assert_eq!(
+            resolve_field_path(&known, "providers.models.anthropic.my_bot.api-key"),
+            "providers.models.anthropic.my_bot.api-key",
+        );
+    }
+
+    #[test]
+    fn resolve_field_path_returns_raw_when_no_match() {
+        let known: Vec<String> = vec![];
+        assert_eq!(
+            resolve_field_path(&known, "no.such.path"),
+            "no.such.path"
+        );
+    }
+
+    #[test]
+    fn resolve_field_path_does_not_corrupt_snake_alias() {
+        // `my_bot` is an alias; user typed it correctly; we must not
+        // turn it into `my-bot` while resolving an api_key snake input.
+        let known = vec!["providers.models.anthropic.my_bot.api-key".to_string()];
+        let resolved = resolve_field_path(
+            &known,
+            "providers.models.anthropic.my_bot.api_key",
+        );
+        assert!(resolved.contains("my_bot"));
+        assert!(!resolved.contains("my-bot"));
     }
 }

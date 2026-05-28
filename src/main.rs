@@ -3704,6 +3704,9 @@ async fn main() -> Result<()> {
                 Ok(())
             }
             ConfigCommands::Get { path, json } => {
+                let known_paths: Vec<String> =
+                    config.prop_fields().into_iter().map(|f| f.name).collect();
+                let path = zeroclaw_config::helpers::resolve_field_path(&known_paths, &path);
                 if Config::prop_is_secret(&path) {
                     let entries = config.prop_fields();
                     let populated = entries
@@ -3767,6 +3770,9 @@ async fn main() -> Result<()> {
                 json,
             } => {
                 crate::config::migration::ensure_disk_at_current_version(&config.config_path)?;
+                let known_paths: Vec<String> =
+                    config.prop_fields().into_iter().map(|f| f.name).collect();
+                let path = zeroclaw_config::helpers::resolve_field_path(&known_paths, &path);
                 if no_interactive {
                     let val = value.ok_or_else(|| {
                         ::zeroclaw_log::record!(
