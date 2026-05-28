@@ -216,6 +216,9 @@ pub async fn run(
             if mode == Mode::Dashboard {
                 dashboard_pane.tick().await;
             }
+            if mode == Mode::Logs {
+                logs_pane.tick().await;
+            }
             continue;
         }
 

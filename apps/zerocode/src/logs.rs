@@ -570,9 +570,27 @@ impl<'a> Logs<'a> {
         filtered.get(sel).copied()
     }
 
+    /// Per-tick work: drain any newly-arrived events, update follow-mode
+    /// selection, and re-fetch the detail pane body if the selected event
+    /// shifted. Async because the detail fetch is an RPC call.
+    pub(crate) async fn tick(&mut self) {
+        self.drain_notifications();
+        let filtered = self.filtered_indices();
+        if self.follow && !filtered.is_empty() {
+            self.list_state.select(Some(filtered.len() - 1));
+        }
+        if self.detail_open {
+            self.sync_detail_to_selection().await;
+        }
+    }
+
     // ── Drawing ──────────────────────────────────────────────────
 
     pub(crate) fn draw(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+        // Drain again so events that arrived between the last tick and this
+        // draw are still rendered this frame. The follow auto-select also
+        // runs here so the highlight stays glued to the tail — but the
+        // detail body is fetched only in `tick`.
         self.drain_notifications();
 
         let filtered = self.filtered_indices();
