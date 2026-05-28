@@ -731,6 +731,13 @@ impl RpcDispatcher {
 
     async fn handle_session_close(&self, params: &Value) -> RpcResult {
         let req: SessionIdParams = parse_params(params)?;
+        if let Some(agent) = self.ctx.sessions.get_agent(&req.session_id).await {
+            agent
+                .lock()
+                .await
+                .channel_handles()
+                .unregister_channel("rpc");
+        }
         if !self.ctx.sessions.remove(&req.session_id).await {
             return Err(rpc_err(SESSION_NOT_FOUND, "Session not found"));
         }
@@ -1220,7 +1227,13 @@ impl RpcDispatcher {
 
     async fn handle_session_delete(&self, params: &Value) -> RpcResult {
         let req: SessionIdParams = parse_params(params)?;
-        // Remove from in-memory store.
+        if let Some(agent) = self.ctx.sessions.get_agent(&req.session_id).await {
+            agent
+                .lock()
+                .await
+                .channel_handles()
+                .unregister_channel("rpc");
+        }
         self.ctx.sessions.remove(&req.session_id).await;
         // Remove from persistent backend — try raw id, then prefixed variants.
         if let Some(ref backend) = self.ctx.session_backend {
@@ -2200,14 +2213,23 @@ impl RpcDispatcher {
             .ok_or_else(|| rpc_err(INTERNAL_ERROR, "Event streaming is not available"))?;
         let mut rx = event_tx.subscribe();
         let rpc = self.rpc.clone();
-        // Spawn a forwarding task that lives until the subscriber drops.
         zeroclaw_spawn::spawn!(async move {
-            while let Ok(event) = rx.recv().await {
-                let notification = JsonRpcNotification::new(notification::LOGS_EVENT, event);
-                if let Ok(json) = serde_json::to_string(&notification)
-                    && !rpc.send_raw(json).await
-                {
-                    break;
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = rpc.closed() => break,
+                    event = rx.recv() => match event {
+                        Ok(event) => {
+                            let notification =
+                                JsonRpcNotification::new(notification::LOGS_EVENT, event);
+                            if let Ok(json) = serde_json::to_string(&notification)
+                                && !rpc.send_raw(json).await
+                            {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    },
                 }
             }
         });

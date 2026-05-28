@@ -164,6 +164,13 @@ impl RpcOutbound {
         self.writer_tx.send(json).await.is_ok()
     }
 
+    /// Resolve when the writer end is closed (peer dropped). Useful for
+    /// long-lived forwarders that need to exit on disconnect even when
+    /// there is no payload to send.
+    pub async fn closed(&self) {
+        self.writer_tx.closed().await;
+    }
+
     /// Send a JSON-RPC notification (no `id`, no response expected).
     pub async fn notify(&self, method: &'static str, params: Value) {
         let n = JsonRpcNotification::new(method, params);

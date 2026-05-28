@@ -786,8 +786,6 @@ impl<'a> Logs<'a> {
             KeyCode::Esc | KeyCode::Enter => {
                 self.detail_open = false;
                 self.detail_scroll = 0;
-                // Drop the lazy-loaded full payload so long sessions
-                // never accumulate detail bodies after the pane closes.
                 self.detail = None;
                 self.detail_request_id = None;
             }
@@ -835,10 +833,12 @@ impl<'a> Logs<'a> {
             KeyCode::Char('j') | KeyCode::Down => {
                 self.move_selection_down();
                 self.detail_scroll = 0;
+                self.sync_detail_to_selection().await;
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.move_selection_up();
                 self.detail_scroll = 0;
+                self.sync_detail_to_selection().await;
             }
             KeyCode::Char('f') => self.follow = !self.follow,
             _ => {}
@@ -864,24 +864,29 @@ impl<'a> Logs<'a> {
                 self.detail_open = true;
                 self.detail_scroll = 0;
                 self.detail_pct = 50;
-                // Lazy-fetch the full event body. Cleared on close.
-                self.fetch_detail_for_selection().await;
+                self.sync_detail_to_selection().await;
             }
-            KeyCode::Char('j') | KeyCode::Down => self.move_selection_down(),
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.move_selection_down();
+                self.sync_detail_to_selection().await;
+            }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.move_selection_up();
                 self.maybe_load_older().await;
+                self.sync_detail_to_selection().await;
             }
             KeyCode::Char('G') | KeyCode::End => {
                 if filtered_len > 0 {
                     self.list_state.select(Some(filtered_len - 1));
                 }
                 self.follow = true;
+                self.sync_detail_to_selection().await;
             }
             KeyCode::Char('g') | KeyCode::Home => {
                 self.follow = false;
                 self.list_state.select(Some(0));
                 self.maybe_load_older().await;
+                self.sync_detail_to_selection().await;
             }
             KeyCode::Char('f') => self.follow = !self.follow,
             KeyCode::Char('+') | KeyCode::Char('=') => {
@@ -899,12 +904,14 @@ impl<'a> Logs<'a> {
                 let i = self.list_state.selected().unwrap_or(0);
                 self.list_state
                     .select(Some((i + 20).min(filtered_len.saturating_sub(1))));
+                self.sync_detail_to_selection().await;
             }
             KeyCode::PageUp => {
                 self.follow = false;
                 let i = self.list_state.selected().unwrap_or(0);
                 self.list_state.select(Some(i.saturating_sub(20)));
                 self.maybe_load_older().await;
+                self.sync_detail_to_selection().await;
             }
             _ => {}
         }
@@ -983,33 +990,29 @@ impl<'a> Logs<'a> {
 
     // ── Navigation helpers ───────────────────────────────────────
 
-    /// Lazy-load the full event body for the currently-selected row
-    /// via `logs/get`. Stores the result in `self.detail` for the
-    /// detail pane to render. Called when the detail pane opens
-    /// (Enter); not invoked on cursor movement, so scrolling the
-    /// list never fires a round-trip.
-    async fn fetch_detail_for_selection(&mut self) {
+    async fn sync_detail_to_selection(&mut self) {
+        if !self.detail_open {
+            return;
+        }
         let Some(idx) = self.selected_event_idx() else {
             self.detail = None;
             self.detail_request_id = None;
             return;
         };
         let id = self.events[idx].id.clone();
+        if self.detail_request_id.as_deref() == Some(id.as_str()) && self.detail.is_some() {
+            return;
+        }
+        self.detail = None;
         self.detail_request_id = Some(id.clone());
-        match self.rpc.logs_get(&id).await {
-            Ok(res) => {
-                // Drop the response if the user moved the selection
-                // before the daemon answered — a stale fetch must not
-                // overwrite the body for whatever row is now selected.
-                if self.detail_request_id.as_deref() == Some(id.as_str()) {
-                    self.detail = Some(LogDetail::new(res.event));
-                }
-            }
-            Err(_) => {
-                if self.detail_request_id.as_deref() == Some(id.as_str()) {
-                    self.detail = None;
-                }
-            }
+        let fetched = self
+            .rpc
+            .logs_get(&id)
+            .await
+            .ok()
+            .map(|r| LogDetail::new(r.event));
+        if self.detail_request_id.as_deref() == Some(id.as_str()) {
+            self.detail = fetched;
         }
     }
 

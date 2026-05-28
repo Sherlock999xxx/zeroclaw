@@ -434,9 +434,10 @@ pub fn resolve_field_path(known_paths: &[String], raw: &str) -> String {
         if known_segs.len() != raw_segs.len() {
             continue;
         }
-        let all_match = known_segs.iter().zip(raw_segs.iter()).all(|(k, r)| {
-            k == r || (k.contains('-') && k.replace('-', "_") == **r)
-        });
+        let all_match = known_segs
+            .iter()
+            .zip(raw_segs.iter())
+            .all(|(k, r)| k == r || (k.contains('-') && k.replace('-', "_") == **r));
         if all_match {
             return known.clone();
         }
@@ -644,10 +645,7 @@ mod tests {
     #[test]
     fn resolve_field_path_returns_raw_when_no_match() {
         let known: Vec<String> = vec![];
-        assert_eq!(
-            resolve_field_path(&known, "no.such.path"),
-            "no.such.path"
-        );
+        assert_eq!(resolve_field_path(&known, "no.such.path"), "no.such.path");
     }
 
     #[test]
@@ -655,10 +653,7 @@ mod tests {
         // `my_bot` is an alias; user typed it correctly; we must not
         // turn it into `my-bot` while resolving an api_key snake input.
         let known = vec!["providers.models.anthropic.my_bot.api-key".to_string()];
-        let resolved = resolve_field_path(
-            &known,
-            "providers.models.anthropic.my_bot.api_key",
-        );
+        let resolved = resolve_field_path(&known, "providers.models.anthropic.my_bot.api_key");
         assert!(resolved.contains("my_bot"));
         assert!(!resolved.contains("my-bot"));
     }

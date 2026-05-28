@@ -1901,11 +1901,7 @@ async fn run_quickstart_cli(
 /// an unknown provider family.
 fn model_path_provider_type(path: &str) -> Option<&'static str> {
     let parts: Vec<&str> = path.split('.').collect();
-    if parts.len() != 5
-        || parts[0] != "providers"
-        || parts[1] != "models"
-        || parts[4] != "model"
-    {
+    if parts.len() != 5 || parts[0] != "providers" || parts[1] != "models" || parts[4] != "model" {
         return None;
     }
     let family = parts[2];

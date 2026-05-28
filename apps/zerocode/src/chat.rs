@@ -1335,33 +1335,42 @@ fn render_entry_into(
     }
 }
 
+fn borrow_line<'a>(line: &'a Line<'static>) -> Line<'a> {
+    let spans: Vec<Span<'a>> = line
+        .spans
+        .iter()
+        .map(|s| Span::styled(s.content.as_ref(), s.style))
+        .collect();
+    let mut out = Line::from(spans).style(line.style);
+    if let Some(a) = line.alignment {
+        out = out.alignment(a);
+    }
+    out
+}
+
 fn render_conversation(f: &mut Frame, state: &mut ChatState, area: Rect) {
     // ── Rebuild cached lines only when entries changed ────────
     if state.dirty != LinesDirty::Clean {
         state.rebuild_lines();
     }
 
-    // ── Assemble final lines: cached + streaming ─────────────
-    let mut lines: Vec<Line> = state.cached_lines.clone();
+    let mut lines: Vec<Line> = state.cached_lines.iter().map(borrow_line).collect();
 
-    // Streaming text (in-flight agent response).
     if !state.streaming_text.is_empty() {
-        let prefix = Line::from(vec![Span::styled("Agent: ", theme::agent_label_style())]);
-        lines.push(prefix);
+        lines.push(Line::from(vec![Span::styled(
+            "Agent: ",
+            theme::agent_label_style(),
+        )]));
         lines.extend(markdown_to_lines(&state.streaming_text));
     }
 
-    // Streaming thought (in-flight).
     if state.show_thoughts && !state.streaming_thought.is_empty() {
         lines.push(Line::from(vec![
             Span::styled("(thinking) ", theme::thought_style()),
-            Span::styled(state.streaming_thought.clone(), theme::dim_style()),
+            Span::styled(state.streaming_thought.as_str(), theme::dim_style()),
         ]));
     }
 
-    // When the approval overlay is visible it covers the bottom
-    // APPROVAL_OVERLAY_HEIGHT rows.  Push blank lines so the diff/content
-    // above it stays readable and the user can scroll to see it.
     if state.pending_approval().is_some() {
         for _ in 0..APPROVAL_OVERLAY_HEIGHT {
             lines.push(Line::default());

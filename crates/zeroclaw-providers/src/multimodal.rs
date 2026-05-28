@@ -14,48 +14,60 @@ const ALLOWED_IMAGE_MIME_TYPES: &[&str] = &[
     "image/bmp",
 ];
 
-/// Per-path cache for resolved local image data URIs.
-///
-/// Keyed by absolute path. The cached value stores the file size and
-/// modification time at the time of resolution; if either changes the
-/// entry is considered stale and the file is re-read. Files under an
-/// `uploads/` directory are content-addressed (SHA-256 name) and
-/// therefore immutable — their metadata is stored as `(0, 0)` so they
-/// are never re-checked after the first successful read.
-///
-/// The cache lives on the `Agent` and is reused across turns and tool
-/// iterations, so each unique local image is read from disk at most once
-/// per session (or once per modification for mutable files).
+/// Per-path cache for resolved local image data URIs. Keyed by absolute
+/// path; stores `(len, mtime)` for freshness checks (`(0, 0)` sentinel
+/// = immutable upload). LRU evicts by both entry count and total bytes.
 #[derive(Debug, Default)]
 pub struct LocalImageCache {
-    /// path → (file_len, mtime_secs, data_uri)
     entries: HashMap<String, (u64, i64, String)>,
+    order: std::collections::VecDeque<String>,
+    bytes: usize,
 }
+
+const LOCAL_IMAGE_CACHE_MAX_ENTRIES: usize = 32;
+const LOCAL_IMAGE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 impl LocalImageCache {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Look up a cached data URI. Returns `Some(&data_uri)` if the entry
-    /// exists and the file metadata still matches, `None` otherwise.
-    fn get(&self, path: &str, len: u64, mtime: i64) -> Option<&str> {
-        if let Some((cached_len, cached_mtime, data_uri)) = self.entries.get(path) {
-            // Immutable uploads are stored with sentinel (0, 0) — always valid.
-            if (*cached_len == 0 && *cached_mtime == 0)
-                || (*cached_len == len && *cached_mtime == mtime)
-            {
-                return Some(data_uri.as_str());
-            }
+    fn get(&mut self, path: &str, len: u64, mtime: i64) -> Option<&str> {
+        let (cached_len, cached_mtime, _) = self.entries.get(path)?;
+        let immutable = *cached_len == 0 && *cached_mtime == 0;
+        let fresh = *cached_len == len && *cached_mtime == mtime;
+        if !immutable && !fresh {
+            return None;
         }
-        None
+        if let Some(pos) = self.order.iter().position(|p| p == path) {
+            let key = self.order.remove(pos).expect("position valid");
+            self.order.push_back(key);
+        }
+        self.entries.get(path).map(|(_, _, uri)| uri.as_str())
     }
 
     fn insert(&mut self, path: String, len: u64, mtime: i64, data_uri: String) {
-        self.entries.insert(path, (len, mtime, data_uri));
+        if let Some((_, _, old)) = self.entries.remove(&path) {
+            self.bytes = self.bytes.saturating_sub(old.len());
+            if let Some(pos) = self.order.iter().position(|p| p == &path) {
+                self.order.remove(pos);
+            }
+        }
+        self.bytes += data_uri.len();
+        self.entries.insert(path.clone(), (len, mtime, data_uri));
+        self.order.push_back(path);
+        while self.entries.len() > LOCAL_IMAGE_CACHE_MAX_ENTRIES
+            || self.bytes > LOCAL_IMAGE_CACHE_MAX_BYTES
+        {
+            let Some(victim) = self.order.pop_front() else {
+                break;
+            };
+            if let Some((_, _, uri)) = self.entries.remove(&victim) {
+                self.bytes = self.bytes.saturating_sub(uri.len());
+            }
+        }
     }
 
-    /// Number of cached entries (for diagnostics).
     pub fn len(&self) -> usize {
         self.entries.len()
     }

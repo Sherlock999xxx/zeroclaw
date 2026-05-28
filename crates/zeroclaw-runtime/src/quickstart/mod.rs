@@ -1613,7 +1613,6 @@ mod tests {
         assert!(errors.iter().any(|e| e.step == QuickstartStep::RiskProfile));
     }
 
-
     /// Regression for the silent empty-form bug: `field_shape(ModelProvider,
     /// <type>)` must return at least the model + api-key rows for every
     /// known model provider type. Before fix, the synthetic probe alias
