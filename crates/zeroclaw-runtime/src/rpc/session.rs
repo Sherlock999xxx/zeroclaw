@@ -13,7 +13,7 @@ use zeroclaw_infra::session_queue::SessionActorQueue;
 /// a network blip or a quick TUI restart with the same `tui_id`; short
 /// enough that genuinely abandoned sessions don't grow daemon RSS for
 /// long. Reclaimed early on reconnect via [`SessionStore::reclaim`].
-pub const SESSION_DISCONNECT_GRACE: Duration = Duration::from_secs(120);
+pub const SESSION_DISCONNECT_GRACE: Duration = Duration::from_secs(1);
 
 /// Per-session runtime overrides. All fields are optional — `None` means
 /// "use config default". Overrides are session-scoped, do not persist,
