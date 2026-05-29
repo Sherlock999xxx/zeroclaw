@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Bot,
+  Check,
   ChevronRight,
   Cpu,
   FileText,
@@ -434,8 +435,14 @@ function Section({
         >
           {icon}
         </span>
-        <h2 className="font-semibold flex-1">
-          {done ? "[✓]" : "[ ]"} {title}
+        <h2 className="font-semibold flex-1 flex items-center gap-2">
+          {done && (
+            <Check
+              className="h-4 w-4"
+              style={{ color: "var(--color-status-success)" }}
+            />
+          )}
+          {title}
         </h2>
         {summary && (
           <span className="text-xs" style={MUTED}>
