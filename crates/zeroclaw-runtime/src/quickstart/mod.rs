@@ -1653,6 +1653,28 @@ mod tests {
     }
 
     #[test]
+    fn apply_serializes_provider_fields_as_snake_case() {
+        let mut cfg = Config::default();
+        let submission = fresh_submission("bot");
+        let mut staged = Vec::new();
+        let mut errors = Vec::new();
+        let applied = apply_into(&mut cfg, &submission, &mut staged, &mut errors, None);
+        assert!(errors.is_empty(), "apply_into errors: {errors:?}");
+        assert!(applied.is_some(), "apply_into should yield an agent");
+        // The submission carries the web-shaped kebab field key `api-key`.
+        // It must land on disk as the snake serde field `api_key`.
+        let toml = toml::to_string(&cfg).expect("serialize config");
+        assert!(
+            toml.contains("api_key"),
+            "expected snake `api_key` in serialized config:\n{toml}"
+        );
+        assert!(
+            !toml.contains("api-key"),
+            "kebab `api-key` leaked into serialized config:\n{toml}"
+        );
+    }
+
+    #[test]
     fn validate_only_passes_on_fresh_submission() {
         let cfg = Config::default();
         let submission = fresh_submission("bot");
