@@ -708,7 +708,7 @@ impl Agent {
             return (strip_think_tags(response.text_or_empty()), Vec::new());
         }
 
-        if self.config.strict_tool_parsing && response.tool_calls.is_empty() {
+        if self.config.resolved.strict_tool_parsing && response.tool_calls.is_empty() {
             return (strip_think_tags(response.text_or_empty()), Vec::new());
         }
 
@@ -1117,7 +1117,7 @@ impl Agent {
                 &provider_runtime_options,
             )?;
 
-        let dispatcher_choice = agent_cfg.tool_dispatcher.as_str();
+        let dispatcher_choice = agent_cfg.resolved.tool_dispatcher.as_str();
         let tool_dispatcher: Box<dyn ToolDispatcher> = match dispatcher_choice {
             "native" => Box::new(NativeToolDispatcher),
             "xml" => Box::new(XmlToolDispatcher),
@@ -1229,7 +1229,7 @@ impl Agent {
     }
 
     fn trim_history(&mut self) {
-        let max = self.config.max_history_messages;
+        let max = self.config.resolved.max_history_messages;
         if self.history.len() <= max {
             return;
         }
@@ -1346,8 +1346,8 @@ impl Agent {
     }
 
     fn build_system_prompt(&self) -> Result<String> {
-        let expose_text_tool_protocol =
-            !self.config.strict_tool_parsing || self.tool_dispatcher.should_send_tool_specs();
+        let expose_text_tool_protocol = !self.config.resolved.strict_tool_parsing
+            || self.tool_dispatcher.should_send_tool_specs();
         let no_tools: Vec<Box<dyn Tool>> = Vec::new();
         let prompt_tools = if expose_text_tool_protocol {
             &self.tools
@@ -1689,7 +1689,7 @@ impl Agent {
                 .iter()
                 .any(|call| mgr.needs_approval(call.name.as_str()))
         });
-        if !self.config.parallel_tools || approval_required {
+        if !self.config.resolved.parallel_tools || approval_required {
             let mut results = Vec::with_capacity(calls.len());
             for call in calls {
                 results.push(self.execute_tool_call(call).await);
@@ -1719,7 +1719,7 @@ impl Agent {
         }
 
         // Fallback: auto-classify by complexity when no rule matched.
-        if let Some(ref ac) = self.config.auto_classify {
+        if let Some(ref ac) = self.config.resolved.auto_classify {
             let tier = super::eval::estimate_complexity(user_message);
             if let Some(hint) = ac.hint_for(tier)
                 && self.available_hints.contains(&hint.to_string())
@@ -1808,7 +1808,7 @@ impl Agent {
 
         let effective_model = self.classify_model(user_message);
 
-        for _ in 0..self.config.max_tool_iterations {
+        for _ in 0..self.config.resolved.max_tool_iterations {
             let messages = self.tool_dispatcher.to_provider_messages(&self.history);
             let prepared_messages = self.prepare_provider_messages(&messages).await?;
 
@@ -1921,7 +1921,7 @@ impl Agent {
 
         anyhow::bail!(
             "Agent exceeded maximum tool iterations ({})",
-            self.config.max_tool_iterations
+            self.config.resolved.max_tool_iterations
         )
     }
 
@@ -2022,7 +2022,7 @@ impl Agent {
         let mut committed_response = String::new();
 
         // ── Turn loop ──────────────────────────────────────────────────
-        for _ in 0..self.config.max_tool_iterations {
+        for _ in 0..self.config.resolved.max_tool_iterations {
             // Early exit if the caller cancelled this turn (e.g. user abort)
             if cancel_token
                 .as_ref()
@@ -2498,7 +2498,7 @@ impl Agent {
         Err(StreamedTurnError {
             error: anyhow::Error::msg(format!(
                 "Agent exceeded maximum tool iterations ({})",
-                self.config.max_tool_iterations
+                self.config.resolved.max_tool_iterations
             )),
             committed_response,
             new_messages: new_msgs,
@@ -3168,7 +3168,10 @@ mod tests {
         let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
         let calls = Arc::new(AtomicUsize::new(0));
         let agent_config = zeroclaw_config::schema::AliasedAgentConfig {
-            strict_tool_parsing: true,
+            resolved: zeroclaw_config::schema::ResolvedRuntime {
+                strict_tool_parsing: true,
+                ..Default::default()
+            },
             ..zeroclaw_config::schema::AliasedAgentConfig::default()
         };
         let mut agent = Agent::builder()
@@ -4606,7 +4609,10 @@ mod tests {
         // 5 entries (AC, TR, AC, TR, AC) > 4 → drop_count = 1 → AC1 dropped,
         // TR1 left as an orphan unless the trim guards against it.
         let agent_config = zeroclaw_config::schema::AliasedAgentConfig {
-            max_history_messages: 4,
+            resolved: zeroclaw_config::schema::ResolvedRuntime {
+                max_history_messages: 4,
+                ..Default::default()
+            },
             ..zeroclaw_config::schema::AliasedAgentConfig::default()
         };
 
@@ -4708,7 +4714,10 @@ mod tests {
         // Position 5 = AC3 → NEW guard should bump to 6 (drop AC3)
         // Position 6 = TR3 → NEW guard should bump to 7 (drop TR3)
         let agent_config = zeroclaw_config::schema::AliasedAgentConfig {
-            max_history_messages: 3,
+            resolved: zeroclaw_config::schema::ResolvedRuntime {
+                max_history_messages: 3,
+                ..Default::default()
+            },
             ..zeroclaw_config::schema::AliasedAgentConfig::default()
         };
 
@@ -5634,7 +5643,10 @@ mod tests {
         // Use a small limit so that pre-filling to the limit forces a trim on
         // the very first new turn.
         let agent_config = zeroclaw_config::schema::AliasedAgentConfig {
-            max_history_messages: 4,
+            resolved: zeroclaw_config::schema::ResolvedRuntime {
+                max_history_messages: 4,
+                ..Default::default()
+            },
             ..zeroclaw_config::schema::AliasedAgentConfig::default()
         };
 

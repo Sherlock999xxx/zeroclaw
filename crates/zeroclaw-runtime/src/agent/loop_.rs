@@ -2913,7 +2913,7 @@ pub async fn run(
         .agent(agent_alias)
         .with_context(|| format!("agents.{agent_alias} is not configured"))?
         .clone();
-    crate::agent::thinking::validate_thinking_config(&agent.thinking);
+    crate::agent::thinking::validate_thinking_config(&agent.resolved.thinking);
     let risk_profile = config
         .risk_profile_for_agent(agent_alias)
         .with_context(|| {
@@ -3426,7 +3426,7 @@ pub async fn run(
         let native_tools = model_provider.supports_native_tools();
         let expose_text_tool_protocol = apply_text_tool_prompt_policy(
             native_tools,
-            agent.strict_tool_parsing,
+            agent.resolved.strict_tool_parsing,
             &mut tool_descs,
             &mut deferred_section,
         );
@@ -3524,11 +3524,11 @@ pub async fn run(
             let thinking_level = crate::agent::thinking::resolve_thinking_level(
                 thinking_directive,
                 None,
-                &agent.thinking,
+                &agent.resolved.thinking,
             );
             let thinking_params = crate::agent::thinking::apply_thinking_level_with_config(
                 thinking_level,
-                &agent.thinking,
+                &agent.resolved.thinking,
             );
             let effective_temperature: Option<f64> = temperature.map(|t| {
                 crate::agent::thinking::clamp_temperature(
@@ -3604,17 +3604,17 @@ pub async fn run(
             ];
 
             // Prune history for token efficiency (when enabled).
-            if agent.history_pruning.enabled {
+            if agent.resolved.history_pruning.enabled {
                 let _stats = crate::agent::history_pruner::prune_history(
                     &mut history,
-                    &agent.history_pruning,
+                    &agent.resolved.history_pruning,
                 );
             }
 
             // Compute per-turn excluded MCP tools from tool_filter_groups.
             let excluded_tools = compute_excluded_mcp_tools(
                 &tools_registry,
-                &agent.tool_filter_groups,
+                &agent.resolved.tool_filter_groups,
                 &effective_msg,
             );
 
@@ -3639,18 +3639,18 @@ pub async fn run(
                                 channel_name,
                                 None,
                                 &config.multimodal,
-                                agent.max_tool_iterations,
+                                agent.resolved.max_tool_iterations,
                                 None,
                                 None,
                                 None,
                                 &excluded_tools,
-                                &agent.tool_call_dedup_exempt,
+                                &agent.resolved.tool_call_dedup_exempt,
                                 activated_handle.as_ref(),
                                 Some(model_switch_callback.clone()),
                                 &config.pacing,
-                                agent.strict_tool_parsing,
-                                agent.max_tool_result_chars,
-                                agent.max_context_tokens,
+                                agent.resolved.strict_tool_parsing,
+                                agent.resolved.max_tool_result_chars,
+                                agent.resolved.max_context_tokens,
                                 None, // shared_budget
                                 None, // channel: CLI mode — uses prompt_cli
                                 None, // receipt_generator
@@ -3878,11 +3878,11 @@ pub async fn run(
                 let thinking_level = crate::agent::thinking::resolve_thinking_level(
                     thinking_directive,
                     None,
-                    &agent.thinking,
+                    &agent.resolved.thinking,
                 );
                 let thinking_params = crate::agent::thinking::apply_thinking_level_with_config(
                     thinking_level,
-                    &agent.thinking,
+                    &agent.resolved.thinking,
                 );
                 let turn_temperature: Option<f64> = temperature.map(|t| {
                     crate::agent::thinking::clamp_temperature(
@@ -3976,7 +3976,7 @@ pub async fn run(
                 // Compute per-turn excluded MCP tools from tool_filter_groups.
                 let excluded_tools = compute_excluded_mcp_tools(
                     &tools_registry,
-                    &agent.tool_filter_groups,
+                    &agent.resolved.tool_filter_groups,
                     &effective_input,
                 );
 
@@ -4038,18 +4038,18 @@ pub async fn run(
                                     channel_name,
                                     None,
                                     &config.multimodal,
-                                    agent.max_tool_iterations,
+                                    agent.resolved.max_tool_iterations,
                                     Some(cancel_token.clone()),
                                     Some(delta_tx.clone()),
                                     None,
                                     &excluded_tools,
-                                    &agent.tool_call_dedup_exempt,
+                                    &agent.resolved.tool_call_dedup_exempt,
                                     activated_handle.as_ref(),
                                     Some(model_switch_callback.clone()),
                                     &config.pacing,
-                                    agent.strict_tool_parsing,
-                                    agent.max_tool_result_chars,
-                                    agent.max_context_tokens,
+                                    agent.resolved.strict_tool_parsing,
+                                    agent.resolved.max_tool_result_chars,
+                                    agent.resolved.max_context_tokens,
                                     None, // shared_budget
                                     None, // channel: interactive CLI — uses prompt_cli
                                     None, // receipt_generator
@@ -4124,7 +4124,7 @@ pub async fn run(
                                 );
                                 let mut compressor =
                                     crate::agent::context_compressor::ContextCompressor::new(
-                                        agent.context_compression.clone(),
+                                        agent.resolved.context_compression.clone(),
                                         eff_max_context_tokens,
                                     )
                                     .with_memory(mem.clone());
@@ -4194,7 +4194,7 @@ pub async fn run(
                 // Context compression before hard trimming to preserve long-context signal.
                 {
                     let compressor = crate::agent::context_compressor::ContextCompressor::new(
-                        agent.context_compression.clone(),
+                        agent.resolved.context_compression.clone(),
                         eff_max_context_tokens,
                     )
                     .with_memory(mem.clone());
@@ -4274,7 +4274,7 @@ pub async fn process_message(
         .agent(agent_alias)
         .with_context(|| format!("agents.{agent_alias} is not configured"))?
         .clone();
-    crate::agent::thinking::validate_thinking_config(&agent.thinking);
+    crate::agent::thinking::validate_thinking_config(&agent.resolved.thinking);
     let risk_profile = config
         .risk_profile_for_agent(agent_alias)
         .with_context(|| {
@@ -4639,7 +4639,7 @@ pub async fn process_message(
         let native_tools = model_provider.supports_native_tools();
         let expose_text_tool_protocol = apply_text_tool_prompt_policy(
             native_tools,
-            agent.strict_tool_parsing,
+            agent.resolved.strict_tool_parsing,
             &mut tool_descs,
             &mut deferred_section,
         );
@@ -4687,11 +4687,11 @@ pub async fn process_message(
         let thinking_level = crate::agent::thinking::resolve_thinking_level(
             thinking_directive,
             None,
-            &agent.thinking,
+            &agent.resolved.thinking,
         );
         let thinking_params = crate::agent::thinking::apply_thinking_level_with_config(
             thinking_level,
-            &agent.thinking,
+            &agent.resolved.thinking,
         );
         let effective_temperature: Option<f64> = agent_model_provider
             .as_ref()
@@ -4747,7 +4747,7 @@ pub async fn process_message(
         ];
         let mut excluded_tools = compute_excluded_mcp_tools(
             &tools_registry,
-            &agent.tool_filter_groups,
+            &agent.resolved.tool_filter_groups,
             effective_msg_ref,
         );
         {
@@ -4772,13 +4772,13 @@ pub async fn process_message(
                     "daemon",
                     None,
                     &config.multimodal,
-                    agent.max_tool_iterations,
+                    agent.resolved.max_tool_iterations,
                     Some(&approval_manager),
                     &excluded_tools,
-                    &agent.tool_call_dedup_exempt,
+                    &agent.resolved.tool_call_dedup_exempt,
                     activated_handle_pm.as_ref(),
                     None,
-                    agent.strict_tool_parsing,
+                    agent.resolved.strict_tool_parsing,
                     None, // channel: process_message path has no channel ref
                 ),
             )

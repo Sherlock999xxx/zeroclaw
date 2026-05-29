@@ -2749,6 +2749,58 @@ impl Default for DelegateToolConfig {
 
 // ── Aliased Agents ───────────────────────────────────────────────
 
+/// Runtime tunables resolved from the agent's runtime profile. Populated
+/// by `Config::resolved_agent_config`; never deserialized from the agent
+/// table. The runtime profile is the sole config surface for these.
+#[derive(Debug, Clone)]
+pub struct ResolvedRuntime {
+    pub compact_context: bool,
+    pub max_tool_iterations: usize,
+    pub max_history_messages: usize,
+    pub max_context_tokens: usize,
+    pub parallel_tools: bool,
+    pub tool_dispatcher: String,
+    pub strict_tool_parsing: bool,
+    pub tool_call_dedup_exempt: Vec<String>,
+    pub tool_filter_groups: Vec<ToolFilterGroup>,
+    pub max_system_prompt_chars: usize,
+    pub thinking: crate::scattered_types::ThinkingConfig,
+    pub history_pruning: crate::scattered_types::HistoryPrunerConfig,
+    pub context_aware_tools: bool,
+    pub eval: crate::scattered_types::EvalConfig,
+    pub auto_classify: Option<crate::scattered_types::AutoClassifyConfig>,
+    pub context_compression: crate::scattered_types::ContextCompressionConfig,
+    pub max_tool_result_chars: usize,
+    pub keep_tool_context_turns: usize,
+    pub tool_receipts: ToolReceiptsConfig,
+}
+
+impl Default for ResolvedRuntime {
+    fn default() -> Self {
+        Self {
+            compact_context: true,
+            max_tool_iterations: 10,
+            max_history_messages: 50,
+            max_context_tokens: 32_000,
+            parallel_tools: false,
+            tool_dispatcher: default_agent_tool_dispatcher(),
+            strict_tool_parsing: false,
+            tool_call_dedup_exempt: Vec::new(),
+            tool_filter_groups: Vec::new(),
+            max_system_prompt_chars: default_max_system_prompt_chars(),
+            thinking: crate::scattered_types::ThinkingConfig::default(),
+            history_pruning: crate::scattered_types::HistoryPrunerConfig::default(),
+            context_aware_tools: false,
+            eval: crate::scattered_types::EvalConfig::default(),
+            auto_classify: None,
+            context_compression: crate::scattered_types::ContextCompressionConfig::default(),
+            max_tool_result_chars: default_max_tool_result_chars(),
+            keep_tool_context_turns: default_keep_tool_context_turns(),
+            tool_receipts: ToolReceiptsConfig::default(),
+        }
+    }
+}
+
 /// Configuration for an aliased agent. Each `[agents.<alias>]` TOML
 /// block deserializes into one of these. The `DelegateTool` looks up
 /// entries here to dispatch a subtask to a named sibling agent.
@@ -2821,110 +2873,10 @@ pub struct AliasedAgentConfig {
     #[serde(default)]
     pub transcription_provider: crate::providers::TranscriptionProviderRef,
 
-    // ── Agent loop / runtime tunables (folded from `[agent]` ──────
-    // These are per-agent. Defaults preserve the legacy single-agent
-    // behavior so an unconfigured agent runs identically to a config
-    // that previously lived under a global `[agent]` table.
-    /// When true: bootstrap_max_chars=6000, rag_chunk_limit=2. Use for 13B or smaller models.
-    #[tab(Tuning)]
-    #[serde(default = "default_agent_compact_context")]
-    pub compact_context: bool,
-    /// Maximum tool-call loop turns per user message. Default: `10`.
-    /// Setting to `0` falls back to the safe default of `10`.
-    #[tab(Tuning)]
-    #[serde(default = "default_agent_max_tool_iterations")]
-    pub max_tool_iterations: usize,
-    /// Maximum conversation history messages retained per session. Default: `50`.
-    #[tab(Tuning)]
-    #[serde(default = "default_agent_max_history_messages")]
-    pub max_history_messages: usize,
-    /// Maximum estimated tokens for conversation history before compaction triggers.
-    /// Uses ~4 chars/token heuristic. When this threshold is exceeded, older messages
-    /// are summarized to preserve context while staying within budget. Default: `32000`.
-    #[tab(Tuning)]
-    #[serde(default = "default_agent_max_context_tokens")]
-    pub max_context_tokens: usize,
-    /// Enable parallel tool execution within a single iteration. Default: `false`.
-    #[tab(Tuning)]
-    #[serde(default)]
-    pub parallel_tools: bool,
-    /// Tool dispatch strategy (e.g. `"auto"`). Default: `"auto"`.
-    #[tab(Tuning)]
-    #[serde(default = "default_agent_tool_dispatcher")]
-    pub tool_dispatcher: String,
-    /// When true, only native provider tool calls are executable. Text fallback
-    /// parsing remains disabled, so XML/markdown/GLM-looking text is treated as
-    /// final assistant text.
-    #[serde(default)]
-    pub strict_tool_parsing: bool,
-    /// Tools exempt from the within-turn duplicate-call dedup check. Default: `[]`.
-    #[tab(Tuning)]
-    #[serde(default)]
-    pub tool_call_dedup_exempt: Vec<String>,
-    /// Per-turn MCP tool schema filtering groups.
-    ///
-    /// When non-empty, only MCP tools matched by an active group are included in the
-    /// tool schema sent to the LLM for that turn. Built-in tools always pass through.
-    /// Default: `[]` (no filtering — all tools included).
-    #[tab(Tuning)]
-    #[serde(default)]
-    pub tool_filter_groups: Vec<ToolFilterGroup>,
-    /// Maximum characters for the assembled system prompt. When `> 0`, the prompt
-    /// is truncated to this limit after assembly (keeping the top portion which
-    /// contains identity and safety instructions). `0` means unlimited.
-    /// Useful for small-context models (e.g. glm-4.5-air ~8K tokens → set to 8000).
-    #[tab(Tuning)]
-    #[serde(default = "default_max_system_prompt_chars")]
-    pub max_system_prompt_chars: usize,
-    /// Thinking/reasoning level control. Configures how deeply the model reasons
-    /// per message. Users can override per-message with `/think:<level>` directives.
-    #[tab(Tuning)]
-    #[nested]
-    #[serde(default)]
-    pub thinking: crate::scattered_types::ThinkingConfig,
-    /// History pruning configuration for token efficiency.
-    #[tab(Tuning)]
-    #[nested]
-    #[serde(default)]
-    pub history_pruning: crate::scattered_types::HistoryPrunerConfig,
-    /// Enable context-aware tool filtering (only surface relevant tools per iteration).
-    #[tab(Tuning)]
-    #[serde(default)]
-    pub context_aware_tools: bool,
-    /// Post-response quality evaluator configuration.
-    #[tab(Tuning)]
-    #[nested]
-    #[serde(default)]
-    pub eval: crate::scattered_types::EvalConfig,
-    /// Automatic complexity-based classification fallback.
-    #[tab(Tuning)]
-    #[nested]
-    #[serde(default)]
-    pub auto_classify: Option<crate::scattered_types::AutoClassifyConfig>,
-    /// Context compression configuration for automatic conversation compaction.
-    #[tab(Tuning)]
-    #[nested]
-    #[serde(default)]
-    pub context_compression: crate::scattered_types::ContextCompressionConfig,
-    /// Maximum characters for a single tool result before truncation.
-    /// Head (2/3) and tail (1/3) are preserved with a truncation marker in the
-    /// middle. Set to `0` to disable truncation. Default: `50000`.
-    #[tab(Tuning)]
-    #[serde(default = "default_max_tool_result_chars")]
-    pub max_tool_result_chars: usize,
-    /// Number of most recent conversation turns whose full tool-call/result
-    /// messages are preserved in channel conversation history. Older turns
-    /// keep only the final assistant text. Set to `0` to disable (previous
-    /// behavior). Default: `2`.
-    #[tab(Tuning)]
-    #[serde(default = "default_keep_tool_context_turns")]
-    pub keep_tool_context_turns: usize,
-
-    /// HMAC tool execution receipt configuration.
-    #[tab(Tuning)]
-    #[nested]
-    #[serde(default)]
-    pub tool_receipts: ToolReceiptsConfig,
+    // ── Resolved runtime tunables (populated by `resolved_agent_config`
+    // from the runtime profile; not config-settable on the agent). ──
+    #[serde(skip)]
+    pub resolved: ResolvedRuntime,
 
     /// Per-agent workspace block (`[agents.<alias>.workspace]`).
     /// Holds the agent's filesystem path, cross-agent access allowlist,
@@ -2956,10 +2908,6 @@ pub struct AliasedAgentConfig {
     pub identity: IdentityConfig,
 }
 
-fn default_agent_compact_context() -> bool {
-    true
-}
-
 impl Default for AliasedAgentConfig {
     fn default() -> Self {
         Self {
@@ -2974,25 +2922,7 @@ impl Default for AliasedAgentConfig {
             cron_jobs: Vec::new(),
             tts_provider: crate::providers::TtsProviderRef::default(),
             transcription_provider: crate::providers::TranscriptionProviderRef::default(),
-            compact_context: default_agent_compact_context(),
-            max_tool_iterations: default_agent_max_tool_iterations(),
-            max_history_messages: default_agent_max_history_messages(),
-            max_context_tokens: default_agent_max_context_tokens(),
-            parallel_tools: false,
-            tool_dispatcher: default_agent_tool_dispatcher(),
-            strict_tool_parsing: false,
-            tool_call_dedup_exempt: Vec::new(),
-            tool_filter_groups: Vec::new(),
-            max_system_prompt_chars: default_max_system_prompt_chars(),
-            thinking: crate::scattered_types::ThinkingConfig::default(),
-            history_pruning: crate::scattered_types::HistoryPrunerConfig::default(),
-            context_aware_tools: false,
-            eval: crate::scattered_types::EvalConfig::default(),
-            auto_classify: None,
-            context_compression: crate::scattered_types::ContextCompressionConfig::default(),
-            max_tool_result_chars: default_max_tool_result_chars(),
-            keep_tool_context_turns: default_keep_tool_context_turns(),
-            tool_receipts: ToolReceiptsConfig::default(),
+            resolved: ResolvedRuntime::default(),
             workspace: crate::multi_agent::AgentWorkspaceConfig::default(),
             memory: crate::multi_agent::AgentMemoryConfig::default(),
             identity: IdentityConfig::default(),
@@ -3092,56 +3022,28 @@ impl Config {
     // subagent dispatch. The agent inline field remains the fallback so
     // configs that only set the agent value keep working unchanged.
 
-    /// Effective `max_tool_iterations` for the main agent loop.
-    /// Profile value wins when > 0; otherwise the agent value (default 10).
-    /// Falls back to 10 if both are 0/missing.
     #[must_use]
     pub fn effective_max_tool_iterations(&self, agent_alias: &str) -> usize {
-        let profile = self
-            .runtime_profile_for_agent(agent_alias)
+        self.runtime_profile_for_agent(agent_alias)
             .map(|p| p.max_tool_iterations)
-            .filter(|&v| v > 0);
-        if let Some(v) = profile {
-            return v;
-        }
-        let agent = self
-            .agents
-            .get(agent_alias)
-            .map(|a| a.max_tool_iterations)
-            .filter(|&v| v > 0);
-        agent.unwrap_or(10)
+            .filter(|&v| v > 0)
+            .unwrap_or(10)
     }
 
-    /// Effective `max_history_messages`. Profile `Some` wins over agent field.
     #[must_use]
     pub fn effective_max_history_messages(&self, agent_alias: &str) -> usize {
-        if let Some(v) = self
-            .runtime_profile_for_agent(agent_alias)
+        self.runtime_profile_for_agent(agent_alias)
             .and_then(|p| p.max_history_messages)
-        {
-            return v;
-        }
-        self.agents
-            .get(agent_alias)
-            .map_or(50, |a| a.max_history_messages)
+            .unwrap_or(50)
     }
 
-    /// Effective `max_context_tokens`. Profile `Some` wins over agent field.
     #[must_use]
     pub fn effective_max_context_tokens(&self, agent_alias: &str) -> usize {
-        if let Some(v) = self
-            .runtime_profile_for_agent(agent_alias)
+        self.runtime_profile_for_agent(agent_alias)
             .and_then(|p| p.max_context_tokens)
-        {
-            return v;
-        }
-        self.agents
-            .get(agent_alias)
-            .map_or(32_000, |a| a.max_context_tokens)
+            .unwrap_or(32_000)
     }
 
-    /// Effective `memory_recall_limit`. Profile `Some` wins over global default.
-    /// Returns `usize::MAX` when the configured value is `0` (unlimited).
     #[must_use]
     pub fn effective_memory_recall_limit(&self, agent_alias: &str) -> usize {
         let raw = self
@@ -3151,126 +3053,61 @@ impl Config {
         if raw == 0 { usize::MAX } else { raw }
     }
 
-    /// Effective `compact_context`. Profile `Some` wins over agent field.
     #[must_use]
     pub fn effective_compact_context(&self, agent_alias: &str) -> bool {
-        if let Some(v) = self
-            .runtime_profile_for_agent(agent_alias)
+        self.runtime_profile_for_agent(agent_alias)
             .and_then(|p| p.compact_context)
-        {
-            return v;
-        }
-        self.agents
-            .get(agent_alias)
-            .map_or(default_agent_compact_context(), |a| a.compact_context)
+            .unwrap_or(true)
     }
 
-    /// Effective `parallel_tools`. Profile `Some` wins over agent field.
     #[must_use]
     pub fn effective_parallel_tools(&self, agent_alias: &str) -> bool {
-        if let Some(v) = self
-            .runtime_profile_for_agent(agent_alias)
+        self.runtime_profile_for_agent(agent_alias)
             .and_then(|p| p.parallel_tools)
-        {
-            return v;
-        }
-        self.agents
-            .get(agent_alias)
-            .is_some_and(|a| a.parallel_tools)
+            .unwrap_or(false)
     }
 
-    /// Effective `tool_dispatcher`. Profile `Some` (non-empty) wins over agent field.
     #[must_use]
     pub fn effective_tool_dispatcher(&self, agent_alias: &str) -> String {
-        if let Some(v) = self
-            .runtime_profile_for_agent(agent_alias)
+        self.runtime_profile_for_agent(agent_alias)
             .and_then(|p| p.tool_dispatcher.as_ref())
             .filter(|s| !s.trim().is_empty())
-        {
-            return v.clone();
-        }
-        self.agents
-            .get(agent_alias)
-            .map_or_else(default_agent_tool_dispatcher, |a| a.tool_dispatcher.clone())
+            .map_or_else(default_agent_tool_dispatcher, Clone::clone)
     }
 
-    /// Effective `tool_call_dedup_exempt`. Profile entries are appended to
-    /// the agent's list (additive — both are allowlists), deduplicated.
     #[must_use]
     pub fn effective_tool_call_dedup_exempt(&self, agent_alias: &str) -> Vec<String> {
-        let mut out: Vec<String> = self
-            .agents
-            .get(agent_alias)
-            .map(|a| a.tool_call_dedup_exempt.clone())
-            .unwrap_or_default();
-        if let Some(profile) = self.runtime_profile_for_agent(agent_alias) {
-            for entry in &profile.tool_call_dedup_exempt {
-                if !out.iter().any(|existing| existing == entry) {
-                    out.push(entry.clone());
-                }
-            }
-        }
-        out
+        self.runtime_profile_for_agent(agent_alias)
+            .map(|p| p.tool_call_dedup_exempt.clone())
+            .unwrap_or_default()
     }
 
-    /// Effective `max_system_prompt_chars`. Profile `Some` wins over agent field.
     #[must_use]
     pub fn effective_max_system_prompt_chars(&self, agent_alias: &str) -> usize {
-        if let Some(v) = self
-            .runtime_profile_for_agent(agent_alias)
+        self.runtime_profile_for_agent(agent_alias)
             .and_then(|p| p.max_system_prompt_chars)
-        {
-            return v;
-        }
-        self.agents
-            .get(agent_alias)
-            .map_or_else(default_max_system_prompt_chars, |a| {
-                a.max_system_prompt_chars
-            })
+            .unwrap_or_else(default_max_system_prompt_chars)
     }
 
-    /// Effective `context_aware_tools`. Profile `Some` wins over agent field.
     #[must_use]
     pub fn effective_context_aware_tools(&self, agent_alias: &str) -> bool {
-        if let Some(v) = self
-            .runtime_profile_for_agent(agent_alias)
+        self.runtime_profile_for_agent(agent_alias)
             .and_then(|p| p.context_aware_tools)
-        {
-            return v;
-        }
-        self.agents
-            .get(agent_alias)
-            .is_some_and(|a| a.context_aware_tools)
+            .unwrap_or(false)
     }
 
-    /// Effective `max_tool_result_chars`. Profile `Some` wins over agent field.
     #[must_use]
     pub fn effective_max_tool_result_chars(&self, agent_alias: &str) -> usize {
-        if let Some(v) = self
-            .runtime_profile_for_agent(agent_alias)
+        self.runtime_profile_for_agent(agent_alias)
             .and_then(|p| p.max_tool_result_chars)
-        {
-            return v;
-        }
-        self.agents
-            .get(agent_alias)
-            .map_or_else(default_max_tool_result_chars, |a| a.max_tool_result_chars)
+            .unwrap_or_else(default_max_tool_result_chars)
     }
 
-    /// Effective `keep_tool_context_turns`. Profile `Some` wins over agent field.
     #[must_use]
     pub fn effective_keep_tool_context_turns(&self, agent_alias: &str) -> usize {
-        if let Some(v) = self
-            .runtime_profile_for_agent(agent_alias)
+        self.runtime_profile_for_agent(agent_alias)
             .and_then(|p| p.keep_tool_context_turns)
-        {
-            return v;
-        }
-        self.agents
-            .get(agent_alias)
-            .map_or_else(default_keep_tool_context_turns, |a| {
-                a.keep_tool_context_turns
-            })
+            .unwrap_or_else(default_keep_tool_context_turns)
     }
 
     /// Return a clone of the named agent's `AliasedAgentConfig` with all
@@ -3289,17 +3126,31 @@ impl Config {
     #[must_use]
     pub fn resolved_agent_config(&self, agent_alias: &str) -> Option<AliasedAgentConfig> {
         let mut out = self.agents.get(agent_alias)?.clone();
-        out.max_tool_iterations = self.effective_max_tool_iterations(agent_alias);
-        out.max_history_messages = self.effective_max_history_messages(agent_alias);
-        out.max_context_tokens = self.effective_max_context_tokens(agent_alias);
-        out.compact_context = self.effective_compact_context(agent_alias);
-        out.parallel_tools = self.effective_parallel_tools(agent_alias);
-        out.tool_dispatcher = self.effective_tool_dispatcher(agent_alias);
-        out.tool_call_dedup_exempt = self.effective_tool_call_dedup_exempt(agent_alias);
-        out.max_system_prompt_chars = self.effective_max_system_prompt_chars(agent_alias);
-        out.context_aware_tools = self.effective_context_aware_tools(agent_alias);
-        out.max_tool_result_chars = self.effective_max_tool_result_chars(agent_alias);
-        out.keep_tool_context_turns = self.effective_keep_tool_context_turns(agent_alias);
+        let mut resolved = ResolvedRuntime {
+            max_tool_iterations: self.effective_max_tool_iterations(agent_alias),
+            max_history_messages: self.effective_max_history_messages(agent_alias),
+            max_context_tokens: self.effective_max_context_tokens(agent_alias),
+            compact_context: self.effective_compact_context(agent_alias),
+            parallel_tools: self.effective_parallel_tools(agent_alias),
+            tool_dispatcher: self.effective_tool_dispatcher(agent_alias),
+            tool_call_dedup_exempt: self.effective_tool_call_dedup_exempt(agent_alias),
+            max_system_prompt_chars: self.effective_max_system_prompt_chars(agent_alias),
+            context_aware_tools: self.effective_context_aware_tools(agent_alias),
+            max_tool_result_chars: self.effective_max_tool_result_chars(agent_alias),
+            keep_tool_context_turns: self.effective_keep_tool_context_turns(agent_alias),
+            ..ResolvedRuntime::default()
+        };
+        if let Some(profile) = self.runtime_profile_for_agent(agent_alias) {
+            resolved.strict_tool_parsing = profile.strict_tool_parsing;
+            resolved.thinking = profile.thinking.clone();
+            resolved.history_pruning = profile.history_pruning.clone();
+            resolved.eval = profile.eval.clone();
+            resolved.auto_classify = profile.auto_classify.clone();
+            resolved.context_compression = profile.context_compression.clone();
+            resolved.tool_receipts = profile.tool_receipts.clone();
+            resolved.tool_filter_groups = profile.tool_filter_groups.clone();
+        }
+        out.resolved = resolved;
         Some(out)
     }
 
@@ -4619,18 +4470,6 @@ fn default_max_tool_result_chars() -> usize {
 
 fn default_keep_tool_context_turns() -> usize {
     2
-}
-
-fn default_agent_max_tool_iterations() -> usize {
-    10
-}
-
-fn default_agent_max_history_messages() -> usize {
-    50
-}
-
-fn default_agent_max_context_tokens() -> usize {
-    32_000
 }
 
 fn default_agent_tool_dispatcher() -> String {
@@ -9295,6 +9134,20 @@ pub struct RuntimeProfileConfig {
     /// Maximum memory entries injected per turn. `None` inherits global default (5).
     /// Set to `0` for unlimited.
     pub memory_recall_limit: Option<usize>,
+    pub strict_tool_parsing: bool,
+    #[nested]
+    pub thinking: crate::scattered_types::ThinkingConfig,
+    #[nested]
+    pub history_pruning: crate::scattered_types::HistoryPrunerConfig,
+    #[nested]
+    pub eval: crate::scattered_types::EvalConfig,
+    #[nested]
+    pub auto_classify: Option<crate::scattered_types::AutoClassifyConfig>,
+    #[nested]
+    pub context_compression: crate::scattered_types::ContextCompressionConfig,
+    #[nested]
+    pub tool_receipts: ToolReceiptsConfig,
+    pub tool_filter_groups: Vec<ToolFilterGroup>,
 }
 
 impl Default for RuntimeProfileConfig {
@@ -9319,6 +9172,14 @@ impl Default for RuntimeProfileConfig {
             max_tool_result_chars: None,
             keep_tool_context_turns: None,
             memory_recall_limit: None,
+            strict_tool_parsing: false,
+            thinking: crate::scattered_types::ThinkingConfig::default(),
+            history_pruning: crate::scattered_types::HistoryPrunerConfig::default(),
+            eval: crate::scattered_types::EvalConfig::default(),
+            auto_classify: None,
+            context_compression: crate::scattered_types::ContextCompressionConfig::default(),
+            tool_receipts: ToolReceiptsConfig::default(),
+            tool_filter_groups: Vec::new(),
         }
     }
 }
@@ -17351,16 +17212,16 @@ reasoning_effort = "turbo"
     #[test]
     async fn agent_config_defaults() {
         let cfg = AliasedAgentConfig::default();
-        assert!(cfg.compact_context);
-        assert_eq!(cfg.max_tool_iterations, 10);
-        assert_eq!(cfg.max_history_messages, 50);
-        assert!(!cfg.parallel_tools);
-        assert_eq!(cfg.tool_dispatcher, "auto");
-        assert!(!cfg.strict_tool_parsing);
+        assert!(cfg.resolved.compact_context);
+        assert_eq!(cfg.resolved.max_tool_iterations, 10);
+        assert_eq!(cfg.resolved.max_history_messages, 50);
+        assert!(!cfg.resolved.parallel_tools);
+        assert_eq!(cfg.resolved.tool_dispatcher, "auto");
+        assert!(!cfg.resolved.strict_tool_parsing);
     }
 
     #[test]
-    async fn agent_config_deserializes() {
+    async fn agent_level_tunable_keys_are_inert() {
         let raw = r#"
 default_temperature = 0.7
 [agents.default]
@@ -17376,12 +17237,9 @@ strict_tool_parsing = true
             .agents
             .get("default")
             .expect("[agents.default] parses into agents map");
-        assert!(agent.compact_context);
-        assert_eq!(agent.max_tool_iterations, 20);
-        assert_eq!(agent.max_history_messages, 80);
-        assert!(agent.parallel_tools);
-        assert_eq!(agent.tool_dispatcher, "xml");
-        assert!(agent.strict_tool_parsing);
+        assert_eq!(agent.resolved.max_tool_iterations, 10);
+        assert_eq!(agent.resolved.tool_dispatcher, "auto");
+        assert!(!agent.resolved.strict_tool_parsing);
     }
 
     #[test]
@@ -22696,28 +22554,32 @@ allowed_users = []
         config
             .agents
             .insert("bob".to_string(), AliasedAgentConfig::default());
+        config.runtime_profiles.insert(
+            "fast".to_string(),
+            crate::schema::RuntimeProfileConfig::default(),
+        );
 
         let fields = config.prop_fields();
         assert!(
             fields
                 .iter()
-                .any(|field| field.name == "agents.bob.history-pruning.enabled"),
-            "agent nested history-pruning fields should be emitted under the agent alias"
+                .any(|field| field.name == "runtime-profiles.fast.history-pruning.enabled"),
+            "history-pruning is a runtime-profile field, emitted under the profile alias"
         );
         assert!(
             !fields
                 .iter()
-                .any(|field| field.name.starts_with("agents.bob.agent.history-pruning")),
-            "agent nested fields must not leak the legacy global agent prefix"
+                .any(|field| field.name.starts_with("agents.bob.history-pruning")),
+            "history-pruning must no longer be settable on the agent"
         );
 
         config
-            .set_prop("agents.bob.history-pruning.enabled", "true")
-            .expect("set_prop should accept the emitted per-agent nested path");
+            .set_prop("runtime-profiles.fast.history-pruning.enabled", "true")
+            .expect("set_prop should accept the runtime-profile nested path");
         assert_eq!(
             config
-                .get_prop("agents.bob.history-pruning.enabled")
-                .expect("get_prop should accept the emitted per-agent nested path"),
+                .get_prop("runtime-profiles.fast.history-pruning.enabled")
+                .expect("get_prop should accept the runtime-profile nested path"),
             "true"
         );
     }

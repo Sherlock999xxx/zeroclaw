@@ -418,11 +418,11 @@ struct ChannelRuntimeContext {
     max_tool_result_chars: usize,
     context_token_budget: usize,
     debouncer: Arc<zeroclaw_infra::debounce::MessageDebouncer>,
-    /// HMAC receipt generator. `Some` when `[agent.tool_receipts] enabled = true`.
+    /// HMAC receipt generator. `Some` when `[agent.resolved.tool_receipts] enabled = true`.
     /// Threaded into `run_tool_call_loop` so `tool_execution::execute_one_tool`
     /// can sign each result.
     receipt_generator: Option<zeroclaw_runtime::agent::tool_receipts::ReceiptGenerator>,
-    /// Mirror of `[agent.tool_receipts] show_in_response`. When true,
+    /// Mirror of `[agent.resolved.tool_receipts] show_in_response`. When true,
     /// `process_channel_message` renders the per-turn collector as a trailing
     /// `Tool receipts:` block sent after the main reply.
     show_receipts_in_response: bool,
@@ -1354,7 +1354,7 @@ fn append_sender_turn(ctx: &ChannelRuntimeContext, sender_key: &str, turn: ChatM
     // Use the user-configured max_history_messages (fall back to
     // MAX_CHANNEL_HISTORY when the config value is 0 or absent).
     let max_history = {
-        let configured = ctx.agent_cfg.max_history_messages;
+        let configured = ctx.agent_cfg.resolved.max_history_messages;
         if configured > 0 {
             configured
         } else {
@@ -3564,7 +3564,7 @@ async fn process_channel_message_body(
     // before the LLM call, preventing context-window-exceeded errors
     // and preserving key decisions through LLM-driven summarization.
     {
-        let cc_config = ctx.agent_cfg.context_compression.clone();
+        let cc_config = ctx.agent_cfg.resolved.context_compression.clone();
         let compressor = zeroclaw_runtime::agent::context_compressor::ContextCompressor::new(
             cc_config,
             ctx.context_token_budget,
@@ -3959,7 +3959,7 @@ async fn process_channel_message_body(
                         &ctx.pacing,
                         ctx.prompt_config
                             .agent(ctx.agent_alias.as_str())
-                            .is_some_and(|agent| agent.strict_tool_parsing),
+                            .is_some_and(|agent| agent.resolved.strict_tool_parsing),
                         ctx.max_tool_result_chars,
                         ctx.context_token_budget,
                         None, // shared_budget
@@ -4228,7 +4228,7 @@ async fn process_channel_message_body(
             // Persist intermediate tool-call/result messages from this turn
             // so the model retains concrete "I used tools" examples in
             // context, preventing drift toward tool-less responses.
-            let keep_tool_turns = ctx.agent_cfg.keep_tool_context_turns;
+            let keep_tool_turns = ctx.agent_cfg.resolved.keep_tool_context_turns;
             if keep_tool_turns > 0 {
                 // Find tool messages for the current turn: everything after
                 // the last user message up to (but not including) the final
@@ -7677,7 +7677,7 @@ pub async fn start_channels(
             tools_registry.iter().map(|tool| tool.name()).collect();
         tool_descs.retain(|(name, _)| effective_tool_names.contains(name));
 
-        let bootstrap_max_chars = if agent.compact_context {
+        let bootstrap_max_chars = if agent.resolved.compact_context {
             Some(6000)
         } else {
             None
@@ -7685,7 +7685,7 @@ pub async fn start_channels(
         let native_tools = model_provider.supports_native_tools();
         let expose_text_tool_protocol = apply_text_tool_prompt_policy(
             native_tools,
-            agent.strict_tool_parsing,
+            agent.resolved.strict_tool_parsing,
             &mut tool_descs,
             &mut deferred_section,
         );
@@ -7699,8 +7699,8 @@ pub async fn start_channels(
             Some(&risk_profile),
             native_tools,
             config.skills.prompt_injection_mode,
-            agent.compact_context,
-            agent.max_system_prompt_chars,
+            agent.resolved.compact_context,
+            agent.resolved.max_system_prompt_chars,
             true,
         );
         if expose_text_tool_protocol {
@@ -7713,7 +7713,8 @@ pub async fn start_channels(
             system_prompt.push('\n');
             system_prompt.push_str(&deferred_section);
         }
-        if agent.tool_receipts.enabled && agent.tool_receipts.inject_system_prompt {
+        if agent.resolved.tool_receipts.enabled && agent.resolved.tool_receipts.inject_system_prompt
+        {
             system_prompt.push_str(
                 "\n## Tool Execution Receipts\n\n\
                  Every tool result includes a `[receipt: ...]` field. This is a cryptographic \
@@ -7985,7 +7986,7 @@ pub async fn start_channels(
             },
             non_cli_excluded_tools: Arc::new(risk_profile.excluded_tools.clone()),
             autonomy_level: risk_profile.level,
-            tool_call_dedup_exempt: Arc::new(agent.tool_call_dedup_exempt.clone()),
+            tool_call_dedup_exempt: Arc::new(agent.resolved.tool_call_dedup_exempt.clone()),
             model_routes: Arc::new(config.model_routes.clone()),
             query_classification: config.query_classification.clone(),
             ack_reactions: config.channels.ack_reactions,
@@ -8046,17 +8047,17 @@ pub async fn start_channels(
                 }
             }),
             pacing: config.pacing.clone(),
-            max_tool_result_chars: agent.max_tool_result_chars,
-            context_token_budget: agent.max_context_tokens,
+            max_tool_result_chars: agent.resolved.max_tool_result_chars,
+            context_token_budget: agent.resolved.max_context_tokens,
             debouncer: Arc::new(zeroclaw_infra::debounce::MessageDebouncer::new(
                 Duration::from_millis(config.channels.debounce_ms),
             )),
-            receipt_generator: if agent.tool_receipts.enabled {
+            receipt_generator: if agent.resolved.tool_receipts.enabled {
                 Some(zeroclaw_runtime::agent::tool_receipts::ReceiptGenerator::new())
             } else {
                 None
             },
-            show_receipts_in_response: agent.tool_receipts.show_in_response,
+            show_receipts_in_response: agent.resolved.tool_receipts.show_in_response,
             last_applied_config_stamp: Arc::new(Mutex::new(None)),
         });
 
@@ -10921,7 +10922,7 @@ BTC is currently around $65,000 based on latest tool output."#
         // Strict #6182 acceptance criterion: enabled=false must emit no
         // receipt anywhere — not in any sent message, not in the model's
         // view of conversation history. `receipt_generator: None` is the
-        // wire-level reflection of `[agent.tool_receipts] enabled = false`.
+        // wire-level reflection of `[agent.resolved.tool_receipts] enabled = false`.
         // Distinct from the show_in_response=false test above (which keeps
         // the generator on but suppresses the trailing block); this one
         // proves nothing is signed in the first place.
@@ -17225,7 +17226,7 @@ Done."#;
     #[test]
     fn default_keep_tool_context_turns_is_two() {
         let config = zeroclaw_config::schema::AliasedAgentConfig::default();
-        assert_eq!(config.keep_tool_context_turns, 2);
+        assert_eq!(config.resolved.keep_tool_context_turns, 2);
     }
 
     #[test]

@@ -429,7 +429,11 @@ pub fn all_tools_with_runtime(
         Arc::new(RateLimitedTool::new(
             PathGuardedTool::new(
                 ShellTool::new_with_sandbox(security.clone(), runtime, sandbox)
-                    .with_timeout_secs(root_config.shell_tool.timeout_secs)
+                    .with_timeout_secs(if security.shell_timeout_secs > 0 {
+                        security.shell_timeout_secs
+                    } else {
+                        root_config.shell_tool.timeout_secs
+                    })
                     .with_tui_env(tui_env),
                 security.clone(),
             ),

@@ -1461,7 +1461,8 @@ impl DelegateTool {
         // Determine shell policy instructions when the `shell` tool is in the
         // effective tool list.
         let empty_tools: &[Box<dyn Tool>] = &[];
-        let expose_text_tools = sends_native_tool_specs || !agent_config.strict_tool_parsing;
+        let expose_text_tools =
+            sends_native_tool_specs || !agent_config.resolved.strict_tool_parsing;
         let prompt_tools = if expose_text_tools {
             sub_tools
         } else {
@@ -1650,7 +1651,7 @@ impl DelegateTool {
                 None,
                 None,
                 &zeroclaw_config::schema::PacingConfig::default(),
-                agent_config.strict_tool_parsing,
+                agent_config.resolved.strict_tool_parsing,
                 0,    // max_tool_result_chars: inherit from parent config in future
                 0,    // context_token_budget: 0 = disabled for subagents
                 None, // shared_budget: TODO thread from parent in future
@@ -2443,7 +2444,7 @@ mod tests {
     #[tokio::test]
     async fn execute_agentic_strict_tool_parsing_uses_target_agent_policy() {
         let mut config = agentic_agent_config();
-        config.strict_tool_parsing = true;
+        config.resolved.strict_tool_parsing = true;
         let prompt_tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
         let tool = DelegateTool::new(HashMap::new(), None, test_security())
             .with_runtime_profiles(agentic_runtime_profiles(10))

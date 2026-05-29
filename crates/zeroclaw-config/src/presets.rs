@@ -216,6 +216,7 @@ fn tight_runtime() -> RuntimeProfileConfig {
         max_tool_result_chars: Some(8_000),
         keep_tool_context_turns: Some(2),
         memory_recall_limit: Some(3),
+        ..RuntimeProfileConfig::default()
     }
 }
 
@@ -246,6 +247,7 @@ fn unbounded_runtime() -> RuntimeProfileConfig {
         max_tool_result_chars: Some(64_000),
         keep_tool_context_turns: Some(8),
         memory_recall_limit: Some(10),
+        ..RuntimeProfileConfig::default()
     }
 }
 

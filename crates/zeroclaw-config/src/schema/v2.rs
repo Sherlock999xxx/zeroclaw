@@ -1580,18 +1580,11 @@ fn synthesize_agent_brains(
             }
         }
 
-        // max_iterations → max_tool_iterations (V3 inline rename).
-        if let Some(v) = agent_table.remove("max_iterations") {
-            agent_table
-                .entry("max_tool_iterations".to_string())
-                .or_insert(v);
-            ::zeroclaw_log::record!(
-                INFO,
-                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
-                    .with_attrs(::serde_json::json!({"alias": alias})),
-                "agents..max_iterations → agents..max_tool_iterations"
-            );
-        }
+        // max_iterations lifts into the synthesized per-agent runtime
+        // profile as max_tool_iterations.
+        let max_iterations = agent_table
+            .remove("max_iterations")
+            .or_else(|| agent_table.remove("max_tool_iterations"));
 
         // V2 per-agent overrides split into authorization (risk) and
         // operational (runtime) buckets, matching the V3 profile shape:
@@ -1622,7 +1615,11 @@ fn synthesize_agent_brains(
             );
         }
 
-        if agentic_flag.is_some() || max_depth.is_some() || agentic_timeout_secs.is_some() {
+        if agentic_flag.is_some()
+            || max_depth.is_some()
+            || agentic_timeout_secs.is_some()
+            || max_iterations.is_some()
+        {
             let mut overrides = toml::Table::new();
             if let Some(v) = agentic_flag {
                 overrides.insert("agentic".to_string(), v);
@@ -1632,6 +1629,9 @@ fn synthesize_agent_brains(
             }
             if let Some(t) = agentic_timeout_secs {
                 overrides.insert("agentic_timeout_secs".to_string(), t);
+            }
+            if let Some(mi) = max_iterations {
+                overrides.insert("max_tool_iterations".to_string(), mi);
             }
             install_profile_entry(passthrough, "runtime_profiles", &profile_alias, overrides);
             agent_table
@@ -1643,7 +1643,7 @@ fn synthesize_agent_brains(
                     .with_attrs(
                         ::serde_json::json!({"alias": alias, "profile_alias": profile_alias})
                     ),
-                "agents.: agentic/max_depth/agentic_timeout_secs → runtime_profiles."
+                "agents.: agentic/max_depth/agentic_timeout_secs/max_iterations → runtime_profiles."
             );
         }
 
