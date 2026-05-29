@@ -1546,23 +1546,25 @@ impl OpenAiCompatibleProvider {
                 if message.role == "assistant"
                     && let Ok(value) = serde_json::from_str::<serde_json::Value>(&message.content)
                     && value.get("tool_calls").is_none()
-                    && (value.get("content").is_some() || value.get("reasoning_content").is_some())
+                    && let Some(reasoning_content) = value
+                        .get("reasoning_content")
+                        .and_then(serde_json::Value::as_str)
+                    && matches!(
+                        value.get("content"),
+                        None | Some(serde_json::Value::Null | serde_json::Value::String(_))
+                    )
                 {
                     let content = value
                         .get("content")
                         .and_then(serde_json::Value::as_str)
                         .map(|value| MessageContent::Text(value.to_string()));
-                    let reasoning_content = value
-                        .get("reasoning_content")
-                        .and_then(serde_json::Value::as_str)
-                        .map(ToString::to_string);
 
                     return NativeMessage {
                         role: "assistant".to_string(),
                         content,
                         tool_call_id: None,
                         tool_calls: None,
-                        reasoning_content,
+                        reasoning_content: Some(reasoning_content.to_string()),
                     };
                 }
 
@@ -4159,6 +4161,43 @@ mod tests {
         match &native[0].content {
             Some(MessageContent::Text(t)) => assert_eq!(t, "Direct answer."),
             other => panic!("expected text content, got {other:?}"),
+        }
+    }
+
+    /// Structured-output assistant JSON with only a `content` key is user-visible
+    /// answer text, not a thinking-mode replay envelope. It must stay verbatim.
+    #[test]
+    fn convert_messages_for_native_content_only_json_falls_through() {
+        let structured_answer = serde_json::json!({"content": "raw"});
+        let raw_json = structured_answer.to_string();
+        let messages = vec![ChatMessage::assistant(raw_json.clone())];
+        let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages, true);
+        assert_eq!(native.len(), 1);
+        assert!(native[0].reasoning_content.is_none());
+        assert!(native[0].tool_calls.is_none());
+        match &native[0].content {
+            Some(MessageContent::Text(t)) => assert_eq!(t, &raw_json),
+            other => panic!("expected text content from fallback, got {other:?}"),
+        }
+    }
+
+    /// `reasoning_content` must be an actual replay string. A non-string value
+    /// can appear in user-authored structured JSON and must stay verbatim.
+    #[test]
+    fn convert_messages_for_native_non_string_reasoning_content_falls_through() {
+        let structured_answer = serde_json::json!({
+            "content": "raw",
+            "reasoning_content": null
+        });
+        let raw_json = structured_answer.to_string();
+        let messages = vec![ChatMessage::assistant(raw_json.clone())];
+        let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages, true);
+        assert_eq!(native.len(), 1);
+        assert!(native[0].reasoning_content.is_none());
+        assert!(native[0].tool_calls.is_none());
+        match &native[0].content {
+            Some(MessageContent::Text(t)) => assert_eq!(t, &raw_json),
+            other => panic!("expected text content from fallback, got {other:?}"),
         }
     }
 
