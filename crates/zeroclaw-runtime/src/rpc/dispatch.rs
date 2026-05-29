@@ -855,6 +855,13 @@ impl RpcDispatcher {
         let cancel = tokio_util::sync::CancellationToken::new();
         self.ctx.sessions.register_cancel_token(sid, cancel.clone());
         self.ctx.sessions.touch(sid).await;
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Invoke)
+                .with_category(::zeroclaw_log::EventCategory::Agent)
+                .with_attrs(::serde_json::json!({ "session_id": sid })),
+            "turn dispatch: registered cancel token, starting turn"
+        );
 
         let chat_mode = self
             .ctx
@@ -896,6 +903,9 @@ impl RpcDispatcher {
         } else {
             None
         };
+        let attribution_agent_alias = agent_alias.clone();
+        let attribution_model_provider = model_provider.clone();
+        let attribution_model = model.clone();
         let outcome = execute_turn(
             agent,
             prompt.clone(),
@@ -1020,7 +1030,30 @@ impl RpcDispatcher {
                     content: partial_text,
                 })
             }
-            Err(e) => Err(rpc_err(INTERNAL_ERROR, e.to_string())),
+            Err(e) => {
+                ::zeroclaw_log::record!(
+                    ERROR,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                        .with_category(::zeroclaw_log::EventCategory::Agent)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                        .with_attrs(::serde_json::json!({
+                            "session_id": req.session_id,
+                            "agent_alias": attribution_agent_alias,
+                            "model_provider": attribution_model_provider,
+                            "model": attribution_model,
+                            "chat_mode": format!("{chat_mode:?}"),
+                            "error": e.to_string(),
+                        })),
+                    "turn failed; emitting TurnComplete so the client exits the working state"
+                );
+                self.emit_turn_complete(
+                    &req.session_id,
+                    crate::rpc::types::TurnCompletionOutcome::Failed,
+                    format!("[turn failed: {e}]"),
+                )
+                .await;
+                Err(rpc_err(INTERNAL_ERROR, e.to_string()))
+            }
         }
     }
 

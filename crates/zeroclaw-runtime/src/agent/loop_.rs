@@ -2763,10 +2763,41 @@ pub async fn run_tool_call_loop(
             .ok()
             .flatten(),
     };
-    match model_provider
-        .chat(summary_request, model, temperature)
-        .await
-    {
+    let summary_future = model_provider.chat(summary_request, model, temperature);
+    let summary_call = match pacing.step_timeout_secs {
+        Some(step_secs) if step_secs > 0 => {
+            let step_timeout = Duration::from_secs(step_secs);
+            if let Some(token) = cancellation_token.as_ref() {
+                tokio::select! {
+                    () = token.cancelled() => return Err(ToolLoopCancelled.into()),
+                    result = tokio::time::timeout(step_timeout, summary_future) => match result {
+                        Ok(inner) => inner,
+                        Err(_) => anyhow::bail!(
+                            "Final summary LLM call timed out after {step_secs}s (step_timeout_secs)"
+                        ),
+                    },
+                }
+            } else {
+                match tokio::time::timeout(step_timeout, summary_future).await {
+                    Ok(inner) => inner,
+                    Err(_) => anyhow::bail!(
+                        "Final summary LLM call timed out after {step_secs}s (step_timeout_secs)"
+                    ),
+                }
+            }
+        }
+        _ => {
+            if let Some(token) = cancellation_token.as_ref() {
+                tokio::select! {
+                    () = token.cancelled() => return Err(ToolLoopCancelled.into()),
+                    result = summary_future => result,
+                }
+            } else {
+                summary_future.await
+            }
+        }
+    };
+    match summary_call {
         Ok(resp) => {
             let text = resp.text.unwrap_or_default();
             if text.is_empty() {
@@ -2777,11 +2808,17 @@ pub async fn run_tool_call_loop(
         }
         Err(e) => {
             ::zeroclaw_log::record!(
-                WARN,
-                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
-                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
-                    .with_attrs(::serde_json::json!({"error": format!("{}", e)})),
-                "Final summary LLM call failed, bailing"
+                ERROR,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                    .with_attrs(::serde_json::json!({
+                        "model": model,
+                        "provider": provider_name,
+                        "max_iterations": max_iterations,
+                        "trace_id": turn_id,
+                        "error": format!("{e}"),
+                    })),
+                "final summary LLM call failed after iteration exhaustion; bailing"
             );
             anyhow::bail!("Agent exceeded maximum tool iterations ({max_iterations})")
         }

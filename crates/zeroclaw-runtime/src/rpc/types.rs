@@ -1251,6 +1251,7 @@ pub enum SessionUpdateEvent {
 pub enum TurnCompletionOutcome {
     Completed,
     Cancelled,
+    Failed,
 }
 
 // ══════════════════════════════════════════════════════════════════════
