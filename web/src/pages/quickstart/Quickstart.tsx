@@ -181,8 +181,6 @@ export default function Quickstart() {
   };
 
   const providerDone = form.provider !== null;
-  const stepHelp = (step: QuickstartStep): string =>
-    state?.step_help.find((h) => h.step === step)?.help ?? "";
   const allDone =
     providerDone &&
     form.risk !== null &&
@@ -204,7 +202,6 @@ export default function Quickstart() {
         icon={<Cpu className="h-4 w-4" />}
         title="Model provider"
         done={providerDone}
-        help={stepHelp("model_provider")}
         summary={
           form.provider
             ? `${form.provider.provider_type}.${form.provider.alias} — ${form.provider.model}`
@@ -231,7 +228,6 @@ export default function Quickstart() {
       <PresetSection
         icon={<ShieldCheck className="h-4 w-4" />}
         title="Risk profile"
-        help={stepHelp("risk_profile")}
         rows={(state?.risk_presets ?? []).map((p) => ({
           value: p.preset_name,
           label: p.label,
@@ -247,7 +243,6 @@ export default function Quickstart() {
       <PresetSection
         icon={<Gauge className="h-4 w-4" />}
         title="Runtime profile"
-        help={stepHelp("runtime_profile")}
         rows={(state?.runtime_presets ?? []).map((p) => ({
           value: p.preset_name,
           label: p.label,
@@ -263,7 +258,6 @@ export default function Quickstart() {
       <PresetSection
         icon={<HardDrive className="h-4 w-4" />}
         title="Memory"
-        help={stepHelp("memory")}
         rows={(state?.memory_kinds ?? []).map((k) => ({
           value: k,
           label: k,
@@ -280,7 +274,6 @@ export default function Quickstart() {
         icon={<Radio className="h-4 w-4" />}
         title="Channels"
         done={true}
-        help={stepHelp("channels")}
         summary={
           form.channels.length === 0
             ? "none — reachable via CLI"
@@ -316,7 +309,6 @@ export default function Quickstart() {
         icon={<Users className="h-4 w-4" />}
         title="Peer groups"
         done={true}
-        help={stepHelp("peer_groups")}
         summary={
           form.peerGroups.length === 0
             ? "none — channels accept no peers"
@@ -343,7 +335,6 @@ export default function Quickstart() {
         icon={<Bot className="h-4 w-4" />}
         title="Agent"
         done={form.agentName.trim() !== ""}
-        help={stepHelp("agent")}
         summary={form.agentName.trim() || null}
       >
         <LabeledInput
@@ -421,14 +412,12 @@ function Section({
   title,
   done,
   summary,
-  help,
   children,
 }: {
   icon: React.ReactNode;
   title: string;
   done: boolean;
   summary?: string | null;
-  help?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -454,11 +443,6 @@ function Section({
           </span>
         )}
       </header>
-      {help && (
-        <p className="text-xs leading-relaxed" style={MUTED}>
-          {help}
-        </p>
-      )}
       <div className="space-y-3">{children}</div>
     </section>
   );
@@ -470,14 +454,12 @@ function PresetSection({
   rows,
   value,
   onChange,
-  help,
 }: {
   icon: React.ReactNode;
   title: string;
   rows: { value: string; label: string; help: string }[];
   value: string;
   onChange: (v: string) => void;
-  help?: string;
 }) {
   return (
     <Section
@@ -485,7 +467,6 @@ function PresetSection({
       title={title}
       done={value !== ""}
       summary={value || null}
-      help={help}
     >
       {rows.length === 0 ? (
         <div className="text-xs" style={MUTED}>

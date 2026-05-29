@@ -147,7 +147,13 @@ pub fn validate_only_with_surface(
     let mut errors = Vec::new();
     // validate-only never commits; staged tempfiles drop at scope exit.
     let mut staged_files = Vec::new();
-    apply_into(&mut staged, submission, &mut staged_files, &mut errors, Some(&ctx));
+    apply_into(
+        &mut staged,
+        submission,
+        &mut staged_files,
+        &mut errors,
+        Some(&ctx),
+    );
     let ok = errors.is_empty();
     let attrs = merge_attrs(
         ctx.base_attrs(),
@@ -202,7 +208,13 @@ pub async fn apply_with_surface(
 
     let mut errors = Vec::new();
     let mut staged_files = Vec::new();
-    let applied = apply_into(config, &submission, &mut staged_files, &mut errors, Some(&ctx));
+    let applied = apply_into(
+        config,
+        &submission,
+        &mut staged_files,
+        &mut errors,
+        Some(&ctx),
+    );
     if !errors.is_empty() {
         ::zeroclaw_log::record!(
             WARN,
@@ -407,10 +419,6 @@ pub struct QuickstartState {
     /// Canonical personality filenames the Quickstart will accept.
     /// Surfaces iterate this; never hardcode the filename list.
     pub personality_files: &'static [&'static str],
-    /// Per-step help blurbs from `zeroclaw_config::presets::QUICKSTART_STEP_HELP`.
-    /// Surfaces render the matching entry beside each step instead of
-    /// carrying their own copy.
-    pub step_help: &'static [zeroclaw_config::presets::QuickstartStepHelp],
 }
 
 /// One row in the Quickstart "Create new …" picker, sourced from a
@@ -487,7 +495,6 @@ pub fn snapshot_state(cfg: &Config) -> QuickstartState {
         runtime_presets: zeroclaw_config::presets::RUNTIME_PRESETS,
         memory_kinds: memory_kind_keys(),
         personality_files: crate::agent::personality::EDITABLE_PERSONALITY_FILES,
-        step_help: zeroclaw_config::presets::QUICKSTART_STEP_HELP,
     }
 }
 
@@ -1326,14 +1333,9 @@ fn apply_peer_groups(
 
 // ── Personality files ──────────────────────────────────────────────
 
-/// A personality file staged to a tempfile during `apply_into`, awaiting
-/// commit. Quickstart is a single atomic operation: the config write and
-/// every file side-effect must land together or not at all. We write each
-/// file's content to a `NamedTempFile` in the destination directory (same
-/// filesystem, so the final move is an atomic rename) and only persist it
-/// once `config.save_dirty()` has succeeded. If the config write fails,
-/// the tempfiles drop and clean themselves up — no orphaned files for an
-/// agent that was never persisted.
+/// A personality file staged to a tempfile during `apply_into`, moved
+/// into place only after the atomic config write succeeds. On config
+/// failure the tempfile drops and cleans itself up — nothing orphaned.
 struct StagedPersonalityWrite {
     tempfile: tempfile::NamedTempFile,
     dest: std::path::PathBuf,
@@ -1416,11 +1418,9 @@ fn apply_personality_files(
     }
 }
 
-/// Move every staged tempfile into its final destination. Called only
-/// after the atomic config write succeeds. A failure here leaves the
-/// config persisted but a personality file un-landed; we surface it as an
-/// error so the surface can report it, but the agent itself is already
-/// valid and usable.
+/// Move every staged tempfile into place. Called only after the atomic
+/// config write succeeds; a failure here is reported but the agent is
+/// already persisted and valid.
 fn commit_personality_files(
     staged: Vec<StagedPersonalityWrite>,
     errors: &mut Vec<QuickstartError>,
@@ -1574,40 +1574,6 @@ mod tests {
         AgentIdentity, BuilderSubmission, MemoryChoice, ModelProviderChoice, SelectorChoice,
     };
     use zeroclaw_config::schema::Config;
-
-    /// Every `QuickstartStep` must have a help entry in
-    /// `QUICKSTART_STEP_HELP`, and no help entry may name a step that
-    /// doesn't exist. The help table lives in `zeroclaw-config` (a lower
-    /// layer that can't reference this enum), so this test is the guard
-    /// that keeps the two in sync.
-    #[test]
-    fn every_quickstart_step_has_help() {
-        let steps = [
-            QuickstartStep::ModelProvider,
-            QuickstartStep::RiskProfile,
-            QuickstartStep::RuntimeProfile,
-            QuickstartStep::Memory,
-            QuickstartStep::Channels,
-            QuickstartStep::PeerGroups,
-            QuickstartStep::Agent,
-        ];
-        for step in steps {
-            let key = serde_json::to_value(step)
-                .expect("step serializes")
-                .as_str()
-                .expect("step is a string")
-                .to_string();
-            assert!(
-                !zeroclaw_config::presets::quickstart_step_help(&key).is_empty(),
-                "step `{key}` has no help entry in QUICKSTART_STEP_HELP",
-            );
-        }
-        assert_eq!(
-            zeroclaw_config::presets::QUICKSTART_STEP_HELP.len(),
-            steps.len(),
-            "QUICKSTART_STEP_HELP has entries for steps that no longer exist",
-        );
-    }
 
     /// Regression: every channel kind the schema enumerates in
     /// `ChannelsConfig::channels()` must appear in the Quickstart

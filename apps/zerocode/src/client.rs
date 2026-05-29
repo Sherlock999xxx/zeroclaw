@@ -1459,15 +1459,6 @@ pub struct QuickstartStateResult {
     pub memory_kinds: Vec<String>,
     #[serde(default)]
     pub personality_files: Vec<String>,
-    #[serde(default)]
-    pub step_help: Vec<QuickstartStepHelpMirror>,
-}
-
-/// Mirror of `zeroclaw_config::presets::QuickstartStepHelp`.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct QuickstartStepHelpMirror {
-    pub step: String,
-    pub help: String,
 }
 
 /// Mirror of `zeroclaw_config::presets::RiskPreset` / `RuntimePreset`.

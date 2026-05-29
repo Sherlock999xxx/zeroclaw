@@ -1113,24 +1113,6 @@ async fn run_quickstart_cli(
         Quit,
     }
 
-    impl Action {
-        /// Stable step identifier for the `QUICKSTART_STEP_HELP` registry,
-        /// matching the snake_case `QuickstartStep` serialization. Create
-        /// and Quit are not steps and carry no help.
-        fn help_key(self) -> &'static str {
-            match self {
-                Action::Provider => "model_provider",
-                Action::Risk => "risk_profile",
-                Action::Runtime => "runtime_profile",
-                Action::Memory => "memory",
-                Action::Channels => "channels",
-                Action::PeerGroups => "peer_groups",
-                Action::Agent => "agent",
-                Action::Create | Action::Quit => "",
-            }
-        }
-    }
-
     println!();
     println!("Quickstart — create one working agent end-to-end.");
     println!();
@@ -1256,16 +1238,6 @@ async fn run_quickstart_cli(
             Some(i) => actions[i],
             None => Action::Quit, // Esc on the main checklist quits.
         };
-
-        // Print the step's help once, as the selector opens — never on
-        // each cursor move inside the FuzzySelect (those redraw only the
-        // list, not this line). Sourced from the canonical registry so
-        // the CLI, TUI, and web surfaces all show identical guidance.
-        let help = zeroclaw_config::presets::quickstart_step_help(action.help_key());
-        if !help.is_empty() {
-            println!();
-            println!("{help}");
-        }
 
         match action {
             Action::Quit => {

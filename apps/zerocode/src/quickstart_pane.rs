@@ -70,24 +70,6 @@ impl Selector {
             Selector::Submit => QuickstartStep::Agent,
         }
     }
-
-    /// Stable step identifier used to match the daemon's `step_help`
-    /// snapshot entries (which the daemon sources from the canonical
-    /// `QUICKSTART_STEP_HELP` registry). Matches the snake_case
-    /// serialization of `QuickstartStep`. `Submit` has no step of its
-    /// own and carries no help.
-    fn help_key(self) -> &'static str {
-        match self {
-            Selector::ModelProvider => "model_provider",
-            Selector::RiskProfile => "risk_profile",
-            Selector::RuntimeProfile => "runtime_profile",
-            Selector::Memory => "memory",
-            Selector::Channels => "channels",
-            Selector::PeerGroups => "peer_groups",
-            Selector::Agent => "agent",
-            Selector::Submit => "",
-        }
-    }
 }
 
 fn opt(value: &str, label: &'static str, help: &'static str) -> PickerOption {
@@ -642,15 +624,13 @@ impl QuickstartPane {
             .constraints([
                 Constraint::Length(2),
                 Constraint::Min(0),
-                Constraint::Length(2),
                 Constraint::Length(3),
             ])
             .split(area);
 
         self.draw_title(frame, chunks[0]);
         self.draw_selector_list(frame, chunks[1]);
-        self.draw_step_help(frame, chunks[2]);
-        self.draw_status_strip(frame, chunks[3]);
+        self.draw_status_strip(frame, chunks[2]);
 
         if let Some(modal) = &self.active_modal {
             let (rect, rows) = draw_modal(
@@ -1712,28 +1692,6 @@ impl QuickstartPane {
             )
             .highlight_symbol(" › ");
         frame.render_stateful_widget(list, area, &mut self.list_state);
-    }
-
-    /// Help band for the currently-selected step. Sourced from the
-    /// daemon's `step_help` snapshot (which the daemon builds from the
-    /// canonical `QUICKSTART_STEP_HELP` registry) — same text the web and
-    /// CLI surfaces render. Updates as the cursor moves; this is a fixed
-    /// panel region, not appended output, so there's no scroll-spam.
-    fn draw_step_help(&self, frame: &mut Frame, area: Rect) {
-        let key = self
-            .list_state
-            .selected()
-            .and_then(|idx| Selector::ALL.get(idx).copied())
-            .map_or("", Selector::help_key);
-        let help = self
-            .state_snapshot
-            .as_ref()
-            .and_then(|snap| snap.step_help.iter().find(|h| h.step == key))
-            .map_or("", |h| h.help.as_str());
-        let para = Paragraph::new(help)
-            .style(Style::default().fg(Color::DarkGray))
-            .wrap(Wrap { trim: true });
-        frame.render_widget(para, area);
     }
 
     fn draw_status_strip(&self, frame: &mut Frame, area: Rect) {

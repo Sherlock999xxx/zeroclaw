@@ -351,77 +351,10 @@ pub struct QuickstartPersonalityFile {
     pub content: String,
 }
 
-/// One Quickstart step's help blurb. Keyed by the stable step
-/// identifier so every surface (web, zerocode, CLI) renders the same
-/// guidance text from one source rather than hardcoding per-surface
-/// copy. The `step` value matches the snake_case serialization of the
-/// runtime's `QuickstartStep` enum.
-#[derive(Debug, Clone, Copy, Serialize)]
-#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
-pub struct QuickstartStepHelp {
-    /// Stable step identifier (matches `QuickstartStep` serde).
-    pub step: &'static str,
-    /// One- or two-line guidance rendered with the step.
-    pub help: &'static str,
-}
-
-/// Canonical per-step help table. Risk and Runtime carry their detail
-/// at the preset row level ([`RiskPreset::help`] /
-/// [`RuntimePreset::help`]); the entries here describe the step as a
-/// whole. The Agent entry states the alias rules so the user sees them
-/// before submitting, instead of only via the post-save error.
-pub const QUICKSTART_STEP_HELP: &[QuickstartStepHelp] = &[
-    QuickstartStepHelp {
-        step: "model_provider",
-        help: "The LLM backend this agent talks to. Pick a provider, name it, \
-               and choose a model. Remote providers need an API key; local \
-               ones (Ollama, etc.) do not.",
-    },
-    QuickstartStepHelp {
-        step: "risk_profile",
-        help: "How much the agent is allowed to do without asking. Tighter \
-               profiles gate filesystem and command access behind approval.",
-    },
-    QuickstartStepHelp {
-        step: "runtime_profile",
-        help: "Operational budgets and timeouts — how long the agent runs and \
-               how much it may spend per turn.",
-    },
-    QuickstartStepHelp {
-        step: "memory",
-        help: "Where the agent persists what it learns across conversations. \
-               Pick a backend, or none for a stateless agent.",
-    },
-    QuickstartStepHelp {
-        step: "channels",
-        help: "Messaging surfaces the agent listens on (Telegram, Discord, …). \
-               Optional — an agent with no channel is still reachable via the CLI.",
-    },
-    QuickstartStepHelp {
-        step: "peer_groups",
-        help: "Authorize who the agent may talk to on a channel — other agents \
-               and external peers. Only relevant once a channel is staged.",
-    },
-    QuickstartStepHelp {
-        step: "agent",
-        help: "A short nickname for this agent, used as its config key and \
-               everywhere it's referenced. Lowercase letters, digits, and \
-               single underscores; 1–63 chars; no leading, trailing, or \
-               double underscores.",
-    },
-];
-
-/// Look up a step's help blurb by its stable identifier. Returns `""`
-/// for an unknown step so callers can render unconditionally.
-#[must_use]
-pub fn quickstart_step_help(step: &str) -> &'static str {
-    QUICKSTART_STEP_HELP
-        .iter()
-        .find(|h| h.step == step)
-        .map_or("", |h| h.help)
-}
-
-
+/// The complete Quickstart submission both surfaces hand to
+/// `zeroclaw-runtime::quickstart::apply` (and pre-validate via
+/// `validate_only`). Single source of truth; assembling config
+/// outside this type is a layering bug.
 ///
 /// Every field's `*_preset` / choice value is the user's resolved
 /// selection — the runtime translates preset keys into struct
