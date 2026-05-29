@@ -203,20 +203,39 @@ pub async fn run_wss_listener(
                             .sessions
                             .mark_orphaned(tui_id, SESSION_DISCONNECT_GRACE)
                             .await;
-                        if orphaned > 0 {
-                            ::zeroclaw_log::record!(
-                                INFO,
-                                ::zeroclaw_log::Event::new(
-                                    module_path!(),
-                                    ::zeroclaw_log::Action::Note,
-                                )
-                                .with_attrs(::serde_json::json!({
-                                    "tui_id": tui_id,
-                                    "orphaned_sessions": orphaned,
-                                    "grace_secs": SESSION_DISCONNECT_GRACE.as_secs(),
-                                })),
-                                "WSS TUI disconnected; sessions queued for eviction"
+                        if !orphaned.is_empty() {
+                            use ::zeroclaw_log::Instrument as _;
+                            let session_keys: Vec<&str> =
+                                orphaned.iter().map(|(k, _)| k.as_str()).collect();
+                            let agent_aliases: Vec<&str> =
+                                orphaned.iter().map(|(_, a)| a.as_str()).collect();
+                            let span = ::zeroclaw_log::info_span!(
+                                target: "zeroclaw_log_internal_scope",
+                                "zeroclaw_scope",
+                                session_key = %orphaned[0].0,
+                                agent_alias = %orphaned[0].1,
+                                channel = "wss",
                             );
+                            async {
+                                ::zeroclaw_log::record!(
+                                    INFO,
+                                    ::zeroclaw_log::Event::new(
+                                        module_path!(),
+                                        ::zeroclaw_log::Action::Note,
+                                    )
+                                    .with_category(::zeroclaw_log::EventCategory::Agent)
+                                    .with_attrs(::serde_json::json!({
+                                        "tui_id": tui_id,
+                                        "orphaned_sessions": orphaned.len(),
+                                        "session_keys": session_keys,
+                                        "agent_aliases": agent_aliases,
+                                        "grace_secs": SESSION_DISCONNECT_GRACE.as_secs(),
+                                    })),
+                                    "WSS TUI disconnected; sessions queued for eviction"
+                                );
+                            }
+                            .instrument(span)
+                            .await;
                         }
                     }
 

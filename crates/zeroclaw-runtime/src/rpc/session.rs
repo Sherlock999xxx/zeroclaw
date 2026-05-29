@@ -249,18 +249,24 @@ impl SessionStore {
     /// Mark every session owned by `tui_id` as orphaned, scheduling it for
     /// eviction at `now + grace`. Called from the transport-disconnect
     /// path; the grace window lets a reconnect of the same TUI reclaim
-    /// these sessions before they are dropped.
-    pub async fn mark_orphaned(&self, tui_id: &str, grace: std::time::Duration) -> usize {
+    /// these sessions before they are dropped. Returns the
+    /// `(session_key, agent_alias)` of each orphaned session so the caller
+    /// can attribute the disconnect log to the real sessions.
+    pub async fn mark_orphaned(
+        &self,
+        tui_id: &str,
+        grace: std::time::Duration,
+    ) -> Vec<(String, String)> {
         let deadline = Instant::now() + grace;
         let mut sessions = self.sessions.lock().await;
-        let mut count = 0usize;
-        for s in sessions.values_mut() {
+        let mut orphaned = Vec::new();
+        for (key, s) in sessions.iter_mut() {
             if s.owner_tui_id.as_deref() == Some(tui_id) {
                 s.evict_at = Some(deadline);
-                count += 1;
+                orphaned.push((key.clone(), s.agent_alias.clone()));
             }
         }
-        count
+        orphaned
     }
 
     /// Cancel any pending eviction for sessions owned by `tui_id`. Called
