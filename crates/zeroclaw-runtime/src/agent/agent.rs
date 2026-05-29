@@ -2172,6 +2172,17 @@ impl Agent {
                         biased;
                         () = token.cancelled() => {
                             was_cancelled = true;
+                            ::zeroclaw_log::record!(
+                                INFO,
+                                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Cancel)
+                                    .with_category(::zeroclaw_log::EventCategory::Agent)
+                                    .with_outcome(::zeroclaw_log::EventOutcome::Success)
+                                    .with_attrs(::serde_json::json!({
+                                        "streamed_text_len": streamed_text.len(),
+                                        "got_stream": got_stream,
+                                    })),
+                                "turn: cancel token fired mid-stream — breaking consume loop, dropping stream to abort parser"
+                            );
                             break;
                         }
                         item = next_item => item,

@@ -14,6 +14,15 @@ use zeroclaw_api::tool::ToolSpec;
 const TEMPERATURE_DEFAULT: f64 = 1.0;
 /// Anthropic's public API endpoint. Overrideable via `model_providers.<name>.base_url`.
 pub(crate) const BASE_URL: &str = "https://api.anthropic.com";
+/// Max wait for the next SSE line before the stream is treated as stalled.
+/// reqwest's overall `.timeout()` does not reliably fire once a streaming body
+/// is being drained chunk-by-chunk, so a connection that goes silent after
+/// `message_start` (proxy/load-balancer hiccup) parks `next_line().await`
+/// forever — the detached parser task leaks and the turn hangs on "working".
+/// A per-line idle bound converts that into a retryable `StreamError`.
+const SSE_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+use crate::stream_guard::AbortOnDrop;
 
 pub struct AnthropicModelProvider {
     /// `[model_providers.anthropic.<alias>]` config-key alias.
@@ -878,7 +887,29 @@ impl AnthropicModelProvider {
         let mut cached_input_tokens: Option<u64> = None;
         let mut cache_creation_input_tokens: Option<u64> = None;
 
-        while let Ok(Some(line)) = lines.next_line().await {
+        while let Ok(Some(line)) =
+            match tokio::time::timeout(SSE_IDLE_TIMEOUT, lines.next_line()).await {
+                Ok(read) => read,
+                Err(_) => {
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(::serde_json::json!({
+                                "idle_secs": SSE_IDLE_TIMEOUT.as_secs(),
+                            })),
+                        "stream: SSE idle timeout — connection stalled, aborting stream"
+                    );
+                    let _ = tx
+                        .send(Err(StreamError::Http(format!(
+                            "SSE stream stalled: no data for {}s",
+                            SSE_IDLE_TIMEOUT.as_secs()
+                        ))))
+                        .await;
+                    return;
+                }
+            }
+        {
             let line = line.trim().to_string();
             if !line.starts_with("data: ") {
                 continue;
@@ -1084,6 +1115,17 @@ impl AnthropicModelProvider {
             }
         }
 
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Complete)
+                .with_category(::zeroclaw_log::EventCategory::Provider)
+                .with_outcome(::zeroclaw_log::EventOutcome::Success)
+                .with_attrs(::serde_json::json!({
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                })),
+            "stream: SSE parser reached end of stream, emitting Final"
+        );
         let _ = tx.send(Ok(StreamEvent::Final)).await;
     }
 }
@@ -1539,7 +1581,18 @@ impl ModelProvider for AnthropicModelProvider {
 
         let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamEvent>>(64);
 
-        ::zeroclaw_spawn::spawn!(async move {
+        ::zeroclaw_log::record!(
+            DEBUG,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Spawn)
+                .with_category(::zeroclaw_log::EventCategory::Provider)
+                .with_attrs(::serde_json::json!({
+                    "idle_timeout_secs": SSE_IDLE_TIMEOUT.as_secs(),
+                    "channel_capacity": 64,
+                })),
+            "stream: spawning detached Anthropic SSE parser task"
+        );
+
+        let parser_handle = ::zeroclaw_spawn::spawn!(async move {
             let mut req = client
                 .post(&url)
                 .header("anthropic-version", "2023-06-01")
@@ -1585,8 +1638,13 @@ impl ModelProvider for AnthropicModelProvider {
             Self::parse_anthropic_sse(response, &tx).await;
         });
 
-        stream::unfold(rx, |mut rx| async move {
-            rx.recv().await.map(|event| (event, rx))
+        // The guard travels inside the unfold state so it is dropped at the
+        // exact moment the consumer drops the stream — turning a turn cancel
+        // (or normal completion) into an immediate parser-task abort instead
+        // of a leaked socket that lingers until SSE_IDLE_TIMEOUT.
+        let guard = AbortOnDrop::new(parser_handle.abort_handle());
+        stream::unfold((rx, guard), |(mut rx, guard)| async move {
+            rx.recv().await.map(|event| (event, (rx, guard)))
         })
         .boxed()
     }
@@ -1705,6 +1763,118 @@ data: {\"type\":\"message_stop\"}\n\n"
             usage.cached_input_tokens,
             Some(42),
             "cache_read_input_tokens from message_start"
+        );
+    }
+
+    /// A reader that yields one buffer of bytes, then parks forever — models
+    /// an SSE connection that delivers `message_start` and then goes silent
+    /// with the socket still open. Without the idle timeout this hangs the
+    /// parser indefinitely.
+    struct StallAfterReader {
+        data: std::io::Cursor<Vec<u8>>,
+        drained: bool,
+    }
+
+    impl tokio::io::AsyncRead for StallAfterReader {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            if self.drained {
+                // Park without self-waking; the surrounding timeout's timer
+                // provides the wake. Self-waking here would busy-spin under
+                // paused time and starve the timer.
+                return std::task::Poll::Pending;
+            }
+            let before = buf.filled().len();
+            let inner = std::pin::Pin::new(&mut self.data);
+            let res = inner.poll_read(cx, buf);
+            // Once the seed buffer is exhausted, stall on the *next* read
+            // rather than reporting EOF (0 bytes) — EOF would end the stream
+            // cleanly and never exercise the idle timeout.
+            if buf.filled().len() == before {
+                self.drained = true;
+                return std::task::Poll::Pending;
+            }
+            res
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_stream_times_out_instead_of_hanging() {
+        // Repro: connection delivers message_start then goes silent. The
+        // parser must surface a retryable StreamError rather than parking on
+        // next_line() forever (the "stuck on working" hang).
+        let start = b"event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude\",\"usage\":{\"input_tokens\":1}}}\n\n"
+            .to_vec();
+        let reader = tokio::io::BufReader::new(StallAfterReader {
+            data: std::io::Cursor::new(start),
+            drained: false,
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamResult<StreamEvent>>(64);
+
+        let parser = ::zeroclaw_spawn::spawn!(async move {
+            AnthropicModelProvider::parse_anthropic_sse_from_reader(reader, &tx).await;
+        });
+
+        // Let the parser run until it parks on the stalled read before we
+        // jump virtual time forward.
+        tokio::task::yield_now().await;
+        // Advance virtual time past the idle bound; the parser should wake,
+        // emit an error, and return — closing the channel.
+        tokio::time::advance(SSE_IDLE_TIMEOUT + std::time::Duration::from_secs(1)).await;
+
+        let mut last_err = None;
+        while let Some(ev) = rx.recv().await {
+            if let Err(e) = ev {
+                last_err = Some(e);
+            }
+        }
+        parser.await.expect("parser task must finish, not hang");
+
+        let err = last_err.expect("a StreamError must be emitted on stall");
+        assert!(
+            matches!(err, StreamError::Http(ref m) if m.contains("stalled")),
+            "expected stalled-stream Http error, got: {err:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dropping_guard_aborts_parser_without_idle_wait() {
+        // The full-measure fix: dropping the consumer stream must abort the
+        // detached parser immediately (turn cancel), not leak the socket until
+        // SSE_IDLE_TIMEOUT. We model the stream's lifetime with AbortOnDrop and
+        // assert the task is aborted the instant the guard drops.
+        let start = b"event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude\",\"usage\":{\"input_tokens\":1}}}\n\n"
+            .to_vec();
+        let reader = tokio::io::BufReader::new(StallAfterReader {
+            data: std::io::Cursor::new(start),
+            drained: false,
+        });
+        let (tx, _rx) = tokio::sync::mpsc::channel::<StreamResult<StreamEvent>>(64);
+
+        let handle = ::zeroclaw_spawn::spawn!(async move {
+            AnthropicModelProvider::parse_anthropic_sse_from_reader(reader, &tx).await;
+        });
+        let probe = handle.abort_handle();
+        let guard = AbortOnDrop::new(handle.abort_handle());
+
+        // Let the parser park on the stalled read.
+        tokio::task::yield_now().await;
+        assert!(
+            !probe.is_finished(),
+            "parser must still be running (parked on the stalled read) before drop"
+        );
+
+        // Dropping the guard must abort the parser — no SSE_IDLE_TIMEOUT wait.
+        drop(guard);
+        tokio::task::yield_now().await;
+        assert!(
+            probe.is_finished(),
+            "guard drop must abort the parser task immediately, not wait out the idle timeout"
         );
     }
 

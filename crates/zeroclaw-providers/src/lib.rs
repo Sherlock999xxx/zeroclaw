@@ -37,6 +37,7 @@ pub mod openrouter;
 pub mod openrouter_catalog;
 pub mod reliable;
 pub mod router;
+pub(crate) mod stream_guard;
 pub mod telnyx;
 pub mod traits;
 

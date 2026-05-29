@@ -1,5 +1,6 @@
 use crate::compatible::sse_bytes_to_events;
 use crate::multimodal;
+use crate::stream_guard::AbortOnDrop;
 use crate::traits::{
     ChatMessage, ChatRequest as ProviderChatRequest, ChatResponse as ProviderChatResponse,
     ModelProvider, ProviderCapabilities, StreamError, StreamEvent, StreamOptions, StreamResult,
@@ -47,22 +48,6 @@ struct Message {
 enum MessageContent {
     Text(String),
     Parts(Vec<MessagePart>),
-}
-
-/// RAII guard that aborts a spawned tokio task when dropped.
-///
-/// Used by `stream_chat` to bind the SSE-forwarding task's lifetime to the
-/// returned stream. When a caller cancels the stream (timeout, user abort,
-/// client disconnect), the guard is dropped together with the stream state
-/// and the in-flight HTTP request is cancelled so it stops consuming
-/// bandwidth and connection-pool slots. `AbortHandle::abort` is a no-op
-/// after the task has finished naturally, so the happy path is unaffected.
-struct AbortOnDrop(tokio::task::AbortHandle);
-
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
 }
 
 /// Marker placed on a content block to opt it into OpenRouter prompt caching.
@@ -880,7 +865,7 @@ impl ModelProvider for OpenRouterModelProvider {
         // consuming OpenRouter quota for a request the caller no longer
         // wants. `AbortHandle::abort` is a no-op if the task has already
         // finished, so the happy path is unaffected.
-        let guard = AbortOnDrop(handle.abort_handle());
+        let guard = AbortOnDrop::new(handle.abort_handle());
 
         stream::unfold((rx, guard), |(mut rx, guard)| async move {
             rx.recv().await.map(|event| (event, (rx, guard)))
@@ -2088,7 +2073,7 @@ mod tests {
             finished_clone.store(true, Ordering::SeqCst);
         });
         let raw_handle = handle.abort_handle();
-        let guard = AbortOnDrop(handle.abort_handle());
+        let guard = AbortOnDrop::new(handle.abort_handle());
 
         assert!(!raw_handle.is_finished());
 

@@ -2,6 +2,7 @@ use crate::ModelProviderRuntimeOptions;
 use crate::auth::AuthService;
 use crate::auth::openai_oauth::extract_account_id_from_jwt;
 use crate::multimodal;
+use crate::stream_guard::AbortOnDrop;
 use crate::traits::{
     ChatMessage, ChatRequest as ProviderChatRequest, ChatResponse as ProviderChatResponse,
     ModelProvider, ProviderCapabilities, StreamChunk, StreamError, StreamEvent, StreamOptions,
@@ -1454,7 +1455,7 @@ impl ModelProvider for OpenAiCodexModelProvider {
         let count_tokens = options.count_tokens;
         let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamEvent>>(16);
 
-        ::zeroclaw_spawn::spawn!(async move {
+        let handle = ::zeroclaw_spawn::spawn!(async move {
             let config = zeroclaw_config::schema::MultimodalConfig::default();
             let prepared =
                 match crate::multimodal::prepare_messages_for_provider(&messages, &config).await {
@@ -1506,8 +1507,9 @@ impl ModelProvider for OpenAiCodexModelProvider {
             }
         });
 
-        stream::unfold(rx, |mut rx| async move {
-            rx.recv().await.map(|event| (event, rx))
+        let guard = AbortOnDrop::new(handle.abort_handle());
+        stream::unfold((rx, guard), |(mut rx, guard)| async move {
+            rx.recv().await.map(|event| (event, (rx, guard)))
         })
         .boxed()
     }
