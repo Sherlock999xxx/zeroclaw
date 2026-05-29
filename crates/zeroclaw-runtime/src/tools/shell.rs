@@ -14,36 +14,41 @@ const DEFAULT_SHELL_TIMEOUT_SECS: u64 = 60;
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
 const POST_EXIT_DRAIN: Duration = Duration::from_millis(250);
 
-/// Drop guard that SIGTERMs then SIGKILLs the process group whose leader
-/// is `pid`. The shell tool puts every command in its own process group
-/// (`process_group(0)`) so a single signal reaps the foreground bash plus
-/// any backgrounded jobs and subshells. Fires on every exit path from
-/// `execute` — success, timeout, or outer-future drop (session/cancel).
+/// Drop guard that SIGKILLs the child's process group on cancel/timeout paths.
+/// Disarmed after `child.wait()` returns so it never signals a recycled PID.
 #[cfg(unix)]
 struct ChildGroupGuard {
-    pgid: Option<i32>,
+    pgid: std::sync::atomic::AtomicI32,
 }
 
 #[cfg(unix)]
 impl ChildGroupGuard {
     fn new(child_pid: Option<u32>) -> Self {
+        let pgid = child_pid.and_then(|p| i32::try_from(p).ok()).unwrap_or(0);
         Self {
-            pgid: child_pid.and_then(|p| i32::try_from(p).ok()),
+            pgid: std::sync::atomic::AtomicI32::new(pgid),
         }
+    }
+
+    fn disarm(&self) {
+        self.pgid.store(0, std::sync::atomic::Ordering::Release);
     }
 }
 
 #[cfg(unix)]
 impl Drop for ChildGroupGuard {
     fn drop(&mut self) {
-        let Some(pgid) = self.pgid else {
+        let pgid = self.pgid.load(std::sync::atomic::Ordering::Acquire);
+        if pgid <= 0 {
             return;
-        };
-        // SAFETY: libc call with valid arguments. Negative pid = pgid.
-        unsafe {
-            libc::kill(-pgid, libc::SIGTERM);
         }
-        std::thread::sleep(Duration::from_millis(50));
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Kill)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({ "pgid": pgid, "signal": "SIGKILL" })),
+            "shell tool reaping child process group"
+        );
         unsafe {
             libc::kill(-pgid, libc::SIGKILL);
         }
@@ -343,7 +348,7 @@ impl Tool for ShellTool {
         };
 
         #[cfg(unix)]
-        let _group_guard = ChildGroupGuard::new(child.id());
+        let group_guard = ChildGroupGuard::new(child.id());
 
         let stdout_handle = child.stdout.take();
         let stderr_handle = child.stderr.take();
@@ -352,6 +357,8 @@ impl Tool for ShellTool {
         let drain_stderr = drain_capped(stderr_handle, MAX_OUTPUT_BYTES);
         let wait_fut = async {
             let status = child.wait().await?;
+            #[cfg(unix)]
+            group_guard.disarm();
             let (out, err) = tokio::join!(
                 tokio::time::timeout(POST_EXIT_DRAIN, drain_stdout),
                 tokio::time::timeout(POST_EXIT_DRAIN, drain_stderr),
