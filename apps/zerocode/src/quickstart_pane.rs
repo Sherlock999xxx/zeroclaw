@@ -116,7 +116,7 @@ fn action_row_line(label: &str, is_cursor: bool) -> Line<'static> {
 fn risk_options() -> [PickerOption; 3] {
     [
         opt(
-            "locked-down",
+            "locked_down",
             "Locked Down",
             "Tight defaults. Workspace-only fs, approval on med/high risk.",
         ),

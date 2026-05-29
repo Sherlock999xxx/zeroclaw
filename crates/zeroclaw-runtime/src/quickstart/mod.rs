@@ -1677,6 +1677,18 @@ mod tests {
         assert!(errors.iter().any(|e| e.step == QuickstartStep::RiskProfile));
     }
 
+    #[test]
+    fn validate_only_accepts_every_builtin_risk_preset() {
+        let cfg = Config::default();
+        for p in zeroclaw_config::presets::RISK_PRESETS {
+            let mut submission = fresh_submission("bot");
+            submission.risk_profile = SelectorChoice::Fresh(p.preset_name.into());
+            validate_only(&submission, &cfg).unwrap_or_else(|e| {
+                panic!("risk preset `{}` failed validate: {e:?}", p.preset_name)
+            });
+        }
+    }
+
     /// Regression for the silent empty-form bug: `field_shape(ModelProvider,
     /// <type>)` must return at least the model + api-key rows for every
     /// known model provider type. Before fix, the synthetic probe alias

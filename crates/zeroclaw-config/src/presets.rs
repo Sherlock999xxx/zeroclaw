@@ -60,7 +60,7 @@ pub struct RiskPreset {
 /// consumer reads from the slice so nothing else has to change.
 pub const RISK_PRESETS: &[RiskPreset] = &[
     RiskPreset {
-        preset_name: "locked-down",
+        preset_name: "locked_down",
         label: "Locked Down",
         help: "Tightest defaults. Workspace-only filesystem access, approval \
                required for medium and high risk, no shell environment passthrough.",
@@ -497,6 +497,26 @@ mod tests {
                 p.preset_name, "default",
                 "runtime preset alias must never be `default`",
             );
+        }
+    }
+
+    #[test]
+    fn preset_names_are_valid_alias_keys() {
+        for p in RISK_PRESETS {
+            crate::helpers::validate_alias_key(p.preset_name).unwrap_or_else(|e| {
+                panic!(
+                    "risk preset_name `{}` is not a valid alias key: {e}",
+                    p.preset_name
+                )
+            });
+        }
+        for p in RUNTIME_PRESETS {
+            crate::helpers::validate_alias_key(p.preset_name).unwrap_or_else(|e| {
+                panic!(
+                    "runtime preset_name `{}` is not a valid alias key: {e}",
+                    p.preset_name
+                )
+            });
         }
     }
 
