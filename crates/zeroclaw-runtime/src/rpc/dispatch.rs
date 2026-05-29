@@ -761,6 +761,22 @@ impl RpcDispatcher {
                 .await
                 .channel_handles()
                 .unregister_channel("rpc");
+            let strong = std::sync::Arc::strong_count(&agent);
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_category(::zeroclaw_log::EventCategory::Agent)
+                    .with_attrs(::serde_json::json!({
+                        "session_id": req.session_id,
+                        "agent_arc_strong_count_before_remove": strong,
+                    })),
+                "session close: dropping local Agent handle before remove"
+            );
+            // Drop our clone explicitly so the session map holds the last
+            // strong ref; `remove` then frees the Agent at removal time
+            // rather than at end-of-scope, letting the allocator reclaim
+            // promptly.
+            drop(agent);
         }
         if !self.ctx.sessions.remove(&req.session_id).await {
             return Err(rpc_err(SESSION_NOT_FOUND, "Session not found"));
