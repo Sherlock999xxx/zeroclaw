@@ -8,8 +8,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use zeroclaw_api::tool::{Tool, ToolResult};
 
-/// Default maximum shell command execution time before kill.
-const DEFAULT_SHELL_TIMEOUT_SECS: u64 = 60;
 /// Maximum output size in bytes (1MB).
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
 const POST_EXIT_DRAIN: Duration = Duration::from_millis(250);
@@ -98,11 +96,12 @@ pub struct ShellTool {
 
 impl ShellTool {
     pub fn new(security: Arc<SecurityPolicy>, runtime: Arc<dyn RuntimeAdapter>) -> Self {
+        let timeout_secs = security.shell_timeout_secs;
         Self {
             security,
             runtime,
             sandbox: Arc::new(crate::security::NoopSandbox),
-            timeout_secs: DEFAULT_SHELL_TIMEOUT_SECS,
+            timeout_secs,
             tui_env: None,
         }
     }
@@ -112,11 +111,12 @@ impl ShellTool {
         runtime: Arc<dyn RuntimeAdapter>,
         sandbox: Arc<dyn Sandbox>,
     ) -> Self {
+        let timeout_secs = security.shell_timeout_secs;
         Self {
             security,
             runtime,
             sandbox,
-            timeout_secs: DEFAULT_SHELL_TIMEOUT_SECS,
+            timeout_secs,
             tui_env: None,
         }
     }
