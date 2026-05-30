@@ -108,8 +108,8 @@ pub(crate) fn ensure_and_load(config_dir: &Path) -> Result<ZerocodeConfig> {
             .with_context(|| format!("writing default {}", path.display()))?;
     }
 
-    let raw = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let raw =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let mut config: ZerocodeConfig =
         toml::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
 
@@ -187,8 +187,7 @@ fn apply_env_overrides(config: &mut ZerocodeConfig) -> Result<()> {
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
     for (env_name, value, path) in entries {
-        set_prop(config, &path, &value)
-            .with_context(|| format!("{env_name} -> {path}"))?;
+        set_prop(config, &path, &value).with_context(|| format!("{env_name} -> {path}"))?;
     }
     Ok(())
 }
@@ -215,17 +214,17 @@ fn set_prop<T: Serialize + serde::de::DeserializeOwned>(
                 anyhow::Error::msg(format!("path '{path}' did not resolve to a config field"))
             })?;
     }
-    let table = cursor
-        .as_table_mut()
-        .ok_or_else(|| {
-            anyhow::Error::msg(format!("path '{path}' did not resolve to a config field"))
-        })?;
+    let table = cursor.as_table_mut().ok_or_else(|| {
+        anyhow::Error::msg(format!("path '{path}' did not resolve to a config field"))
+    })?;
     if !table.contains_key(*leaf) {
         anyhow::bail!("path '{path}' did not resolve to a config field");
     }
     table.insert((*leaf).to_string(), toml::Value::String(value.to_string()));
 
-    *target = root.try_into().context("deserializing config after set_prop")?;
+    *target = root
+        .try_into()
+        .context("deserializing config after set_prop")?;
     Ok(())
 }
 

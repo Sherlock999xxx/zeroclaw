@@ -31,7 +31,9 @@ pub enum AutonomyLevel {
 pub enum DelegationPolicy {
     #[default]
     Forbidden,
-    Allow { agents: Vec<String> },
+    Allow {
+        agents: Vec<String>,
+    },
 }
 
 impl DelegationPolicy {

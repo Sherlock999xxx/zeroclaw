@@ -100,7 +100,12 @@ fn arrows_only_rows() -> Vec<(String, Vec<Chord>)> {
 
 /// Registry of named presets. Walked by the zerocode tab's preset picker.
 pub const KEY_PRESETS: &[(&str, KeyPreset)] = &[
-    (DEFAULT_PRESET_NAME, KeyPreset { build: default_rows }),
+    (
+        DEFAULT_PRESET_NAME,
+        KeyPreset {
+            build: default_rows,
+        },
+    ),
     ("vim", KeyPreset { build: vim_rows }),
     ("emacs", KeyPreset { build: emacs_rows }),
     (
@@ -116,7 +121,9 @@ pub fn preset_names() -> impl Iterator<Item = &'static str> {
 }
 
 pub fn preset_by_name(name: &str) -> Option<&'static KeyPreset> {
-    KEY_PRESETS.iter().find_map(|(n, p)| (*n == name).then_some(p))
+    KEY_PRESETS
+        .iter()
+        .find_map(|(n, p)| (*n == name).then_some(p))
 }
 
 impl KeyPreset {
@@ -209,10 +216,7 @@ mod tests {
     #[test]
     fn reserved_chord_in_table_is_rejected() {
         let mut rows = HashMap::new();
-        rows.insert(
-            "chat.scroll_up".to_string(),
-            vec![Chord::key(KeyCode::Esc)],
-        );
+        rows.insert("chat.scroll_up".to_string(), vec![Chord::key(KeyCode::Esc)]);
         assert!(build_override_table(rows).is_err());
     }
 

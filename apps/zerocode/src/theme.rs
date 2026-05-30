@@ -122,9 +122,7 @@ pub(crate) const THEMES: &[(&str, Theme)] = &[
 ];
 
 pub(crate) fn theme_by_name(name: &str) -> Option<Theme> {
-    THEMES
-        .iter()
-        .find_map(|(n, t)| (*n == name).then_some(*t))
+    THEMES.iter().find_map(|(n, t)| (*n == name).then_some(*t))
 }
 
 pub(crate) fn theme_names() -> impl Iterator<Item = &'static str> {

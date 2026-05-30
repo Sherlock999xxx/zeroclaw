@@ -189,7 +189,9 @@ impl FromStr for Chord {
         }
         let mut segments: Vec<&str> = lower.split('+').collect();
         // Last segment is the key; everything before is a modifier.
-        let key_token = segments.pop().ok_or_else(|| ChordParseError(s.to_string()))?;
+        let key_token = segments
+            .pop()
+            .ok_or_else(|| ChordParseError(s.to_string()))?;
         let mut modifiers = KeyModifiers::NONE;
         for seg in segments {
             let flag = MOD_TOKENS
@@ -323,7 +325,10 @@ mod tests {
         for c in [
             Chord::ctrl('k'),
             Chord::shift(KeyCode::Up),
-            Chord::with(KeyCode::Down, KeyModifiers::CONTROL.union(KeyModifiers::SHIFT)),
+            Chord::with(
+                KeyCode::Down,
+                KeyModifiers::CONTROL.union(KeyModifiers::SHIFT),
+            ),
             Chord::with(KeyCode::Enter, KeyModifiers::ALT),
         ] {
             let wire = c.wire();

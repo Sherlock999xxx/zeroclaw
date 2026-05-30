@@ -73,7 +73,10 @@ mod tests {
         set_active(table);
 
         let got = lookup("dashboard").expect("tag present");
-        assert_eq!(got.get("refresh").unwrap(), &vec![Chord::key(KeyCode::F(5))]);
+        assert_eq!(
+            got.get("refresh").unwrap(),
+            &vec![Chord::key(KeyCode::F(5))]
+        );
         assert!(lookup("chat").is_none());
         clear();
         assert!(lookup("dashboard").is_none());
