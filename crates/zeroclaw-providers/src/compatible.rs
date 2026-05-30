@@ -4942,7 +4942,8 @@ mod tests {
         });
 
         let messages = vec![ChatMessage::assistant(history_json.to_string())];
-        let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages, true);
+        let provider = make_model_provider("test", "https://example.com", None);
+        let native = provider.convert_messages_for_native(&messages, true);
         assert_eq!(native.len(), 1);
         assert_eq!(native[0].role, "assistant");
         assert!(
@@ -4966,12 +4967,13 @@ mod tests {
         let structured_answer = serde_json::json!({"content": "raw"});
         let raw_json = structured_answer.to_string();
         let messages = vec![ChatMessage::assistant(raw_json.clone())];
-        let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages, true);
+        let provider = make_model_provider("test", "https://example.com", None);
+        let native = provider.convert_messages_for_native(&messages, true);
         assert_eq!(native.len(), 1);
         assert!(native[0].reasoning_content.is_none());
         assert!(native[0].tool_calls.is_none());
         match &native[0].content {
-            Some(MessageContent::Text(t)) => assert_eq!(t, &raw_json),
+            Some(MessageContent::Text(t)) => assert_eq!(t.as_str(), raw_json.as_str()),
             other => panic!("expected text content from fallback, got {other:?}"),
         }
     }
@@ -4986,12 +4988,13 @@ mod tests {
         });
         let raw_json = structured_answer.to_string();
         let messages = vec![ChatMessage::assistant(raw_json.clone())];
-        let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages, true);
+        let provider = make_model_provider("test", "https://example.com", None);
+        let native = provider.convert_messages_for_native(&messages, true);
         assert_eq!(native.len(), 1);
         assert!(native[0].reasoning_content.is_none());
         assert!(native[0].tool_calls.is_none());
         match &native[0].content {
-            Some(MessageContent::Text(t)) => assert_eq!(t, &raw_json),
+            Some(MessageContent::Text(t)) => assert_eq!(t.as_str(), raw_json.as_str()),
             other => panic!("expected text content from fallback, got {other:?}"),
         }
     }
@@ -5004,7 +5007,8 @@ mod tests {
     fn convert_messages_for_native_unrelated_json_falls_through() {
         let unrelated = serde_json::json!({"foo": "bar"});
         let messages = vec![ChatMessage::assistant(unrelated.to_string())];
-        let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages, true);
+        let provider = make_model_provider("test", "https://example.com", None);
+        let native = provider.convert_messages_for_native(&messages, true);
         assert_eq!(native.len(), 1);
         assert!(native[0].reasoning_content.is_none());
         assert!(native[0].tool_calls.is_none());
