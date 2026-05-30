@@ -2394,7 +2394,8 @@ async fn main() -> Result<()> {
                 }
                 Ok(())
             } else {
-                commands::update::run(version.as_deref()).await?; Ok(())
+                commands::update::run(version.as_deref()).await?;
+                Ok(())
             }
         }
 

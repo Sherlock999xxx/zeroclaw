@@ -72,11 +72,7 @@ pub fn build_api(root: &Path) -> anyhow::Result<()> {
     println!("==> Generating rustdoc API reference");
     run_cmd(
         Command::new("cargo")
-            .args([
-                "doc",
-                "--no-deps",
-                "--workspace",
-            ])
+            .args(["doc", "--no-deps", "--workspace"])
             .current_dir(root),
     )
 }
