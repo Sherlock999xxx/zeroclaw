@@ -3527,13 +3527,23 @@ mod tests {
         target_alias: &str,
         target_max_actions: u32,
     ) -> Arc<zeroclaw_config::schema::Config> {
+        use zeroclaw_config::autonomy::DelegationPolicy;
         use zeroclaw_config::schema::{
             AliasedAgentConfig, Config, RiskProfileConfig, RuntimeProfileConfig,
         };
         let mut config = Config::default();
-        config
-            .risk_profiles
-            .insert("narrow".to_string(), RiskProfileConfig::default());
+        // The caller delegates from the `narrow` profile, so that profile must
+        // authorize the target alias; without it the delegation_policy gate
+        // rejects before the escalation/narrowing checks under test are reached.
+        config.risk_profiles.insert(
+            "narrow".to_string(),
+            RiskProfileConfig {
+                delegation_policy: DelegationPolicy::Allow {
+                    agents: vec![target_alias.to_string()],
+                },
+                ..RiskProfileConfig::default()
+            },
+        );
         config
             .risk_profiles
             .insert("wide".to_string(), RiskProfileConfig::default());
@@ -3574,7 +3584,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delegate_rejects_target_whose_policy_escalates_caller() {
+    async fn delegate_rejects_target_on_a_different_risk_profile() {
+        // caller(narrow) is authorized to delegate to target, but target
+        // resolves onto the wider profile. Delegation requires caller and
+        // target to share a risk profile, so the boundary must refuse.
         let config = config_with_two_agents("caller", 5, "target", 50);
         let caller_policy =
             Arc::new(SecurityPolicy::for_agent(&config, "caller").expect("caller policy resolves"));
@@ -3587,11 +3600,11 @@ mod tests {
 
         let err = tool
             .policy_for_target("target")
-            .expect_err("escalating target must be rejected at delegate boundary");
+            .expect_err("cross-profile target must be rejected at delegate boundary");
         let chain = format!("{err:#}");
         assert!(
-            chain.contains("escalates beyond caller"),
-            "expected escalation error, got: {chain}"
+            chain.contains("requires the same risk profile as the caller"),
+            "expected same-profile rejection, got: {chain}"
         );
     }
 
@@ -3637,16 +3650,21 @@ mod tests {
         );
     }
 
-    /// Build a config where `caller` has a strictly broader policy
-    /// than `target`. The caller-only command is the narrowing axis
-    /// the validator should catch.
+    /// Build a config where `caller` (`broad` profile) is authorized to
+    /// delegate to `target`, but `target` sits on a different (`narrow`)
+    /// profile. Delegation requires caller and target to share a risk
+    /// profile, so this exercises the same-profile rejection gate.
     fn config_with_narrowed_target() -> Arc<zeroclaw_config::schema::Config> {
+        use zeroclaw_config::autonomy::DelegationPolicy;
         use zeroclaw_config::schema::{AliasedAgentConfig, Config, RiskProfileConfig};
         let mut config = Config::default();
         config.risk_profiles.insert(
             "broad".to_string(),
             RiskProfileConfig {
                 allowed_commands: vec!["git".into(), "cargo".into()],
+                delegation_policy: DelegationPolicy::Allow {
+                    agents: vec!["target".to_string()],
+                },
                 ..RiskProfileConfig::default()
             },
         );
@@ -3677,12 +3695,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delegate_rejects_target_whose_policy_narrows_caller() {
+    async fn delegate_rejects_target_on_a_different_risk_profile_even_when_authorized() {
         // DelegateTool's spawned agentic loop reuses the caller's
-        // parent_tools registry — a narrower target would silently
-        // inherit the caller's broader allowlist. The validator
-        // must catch the narrowing at the delegate boundary and
-        // refuse to dispatch.
+        // parent_tools registry, so a target on a different profile would
+        // silently inherit the caller's allowlist. Even with the caller
+        // authorized to delegate to the target, the same-profile gate must
+        // catch the profile mismatch and refuse to dispatch.
         let config = config_with_narrowed_target();
         let caller_policy =
             Arc::new(SecurityPolicy::for_agent(&config, "caller").expect("caller policy resolves"));
@@ -3695,15 +3713,11 @@ mod tests {
 
         let err = tool
             .policy_for_target("target")
-            .expect_err("narrowing target must be rejected at delegate boundary");
+            .expect_err("cross-profile target must be rejected at delegate boundary");
         let chain = format!("{err:#}");
         assert!(
-            chain.contains("narrows the caller"),
-            "expected narrowing error, got: {chain}"
-        );
-        assert!(
-            chain.contains("spawn_subagent"),
-            "error must point operators at spawn_subagent for narrowed runs, got: {chain}"
+            chain.contains("requires the same risk profile as the caller"),
+            "expected same-profile rejection, got: {chain}"
         );
     }
 }
