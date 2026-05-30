@@ -1202,13 +1202,28 @@ impl AcpServer {
         let session_id_for_task = session_id.clone();
         let turn_handle = zeroclaw_spawn::spawn!(async move {
             let mut session = session_arc.lock().await;
-            let result = zeroclaw_runtime::agent::loop_::scope_session_key(
-                Some(session_id_for_task),
-                session
-                    .agent
-                    .turn_streamed(&prompt, event_tx, Some(cancel_token)),
-            )
-            .await;
+            let (turn_alias, turn_provider, turn_model) = session.agent.attribution_fields();
+            let span_session = session_id_for_task.clone();
+            let result = {
+                use ::zeroclaw_log::Instrument as _;
+                let span = ::zeroclaw_log::info_span!(
+                    target: "zeroclaw_log_internal_scope",
+                    "zeroclaw_scope",
+                    session_key = %span_session,
+                    agent_alias = %turn_alias,
+                    model_provider = %turn_provider,
+                    model = %turn_model,
+                    channel = "acp",
+                );
+                zeroclaw_runtime::agent::loop_::scope_session_key(
+                    Some(session_id_for_task),
+                    session
+                        .agent
+                        .turn_streamed(&prompt, event_tx, Some(cancel_token))
+                        .instrument(span),
+                )
+                .await
+            };
             session.last_active = Instant::now();
             result
             // guard drops here, releasing the inner lock

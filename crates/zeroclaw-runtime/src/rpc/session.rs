@@ -35,6 +35,45 @@ pub enum EvictReason {
     Idle,
 }
 
+/// Why a session's in-flight turn cancel token was fired. Recorded at the
+/// firing site and drained at the turn-verdict site so the durable audit row
+/// names the trigger instead of leaving a bare "cancelled" with no provenance.
+/// Each variant is a distinct, named path — there is deliberately no catch-all
+/// "unknown": a fired token must be attributable. `ReaperOrphaned` /
+/// `ReaperIdle` mirror [`EvictReason`]; `ClientRpc` is an explicit
+/// `session/cancel`; `SessionRemoved` is teardown via `remove`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CancelCause {
+    /// Explicit `session/cancel` RPC from the client (e.g. zerocode Ctrl+D).
+    ClientRpc,
+    /// The reaper evicted the session after a transport-disconnect orphan
+    /// grace window elapsed ([`EvictReason::Orphaned`]).
+    ReaperOrphaned,
+    /// The reaper evicted the session after it sat idle past
+    /// [`SESSION_IDLE_TTL`] ([`EvictReason::Idle`]).
+    ReaperIdle,
+    /// The session was explicitly removed/torn down while a turn was live.
+    SessionRemoved,
+    /// A cancel token was fired but the firing site recorded no cause. This
+    /// is the diagnostic signature of the recurring spurious-cancel bug: a
+    /// turn ended on a cancel that no known path claimed. It must never be
+    /// read as "the user did it".
+    Unattributed,
+}
+
+impl CancelCause {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CancelCause::ClientRpc => "client_rpc",
+            CancelCause::ReaperOrphaned => "reaper_orphaned",
+            CancelCause::ReaperIdle => "reaper_idle",
+            CancelCause::SessionRemoved => "session_removed",
+            CancelCause::Unattributed => "unattributed",
+        }
+    }
+}
+
 /// Record of one session the reaper freed. Carries enough provenance for
 /// the eviction log to be useful: which session, which agent, the owning
 /// TUI (if any), why it died, and how long it had been idle.
@@ -115,6 +154,11 @@ impl RpcSession {
 pub struct SessionStore {
     sessions: Mutex<HashMap<String, RpcSession>>,
     cancel_tokens: std::sync::Mutex<HashMap<String, tokio_util::sync::CancellationToken>>,
+    /// Records WHY each session's cancel token was fired. Populated at the
+    /// firing site immediately before `token.cancel()`; drained by the
+    /// turn-verdict site. A fired token with no entry is reported as
+    /// [`CancelCause::Unattributed`] — never silently blamed on the user.
+    cancel_causes: std::sync::Mutex<HashMap<String, CancelCause>>,
     max_sessions: usize,
     pub session_queue: Arc<SessionActorQueue>,
 }
@@ -124,6 +168,7 @@ impl SessionStore {
         Self {
             sessions: Mutex::new(HashMap::new()),
             cancel_tokens: std::sync::Mutex::new(HashMap::new()),
+            cancel_causes: std::sync::Mutex::new(HashMap::new()),
             max_sessions,
             session_queue,
         }
@@ -273,6 +318,7 @@ impl SessionStore {
             .unwrap_or_else(|e| e.into_inner())
             .remove(id)
         {
+            self.record_cancel_cause(id, CancelCause::SessionRemoved);
             token.cancel();
         }
         self.sessions.lock().await.remove(id).is_some()
@@ -345,8 +391,16 @@ impl SessionStore {
         }
         {
             let mut tokens = self.cancel_tokens.lock().unwrap_or_else(|e| e.into_inner());
-            for (id, _, _) in &stale {
+            let mut causes = self.cancel_causes.lock().unwrap_or_else(|e| e.into_inner());
+            for (id, reason, _) in &stale {
                 if let Some(token) = tokens.remove(id) {
+                    causes.insert(
+                        id.clone(),
+                        match reason {
+                            EvictReason::Orphaned => CancelCause::ReaperOrphaned,
+                            EvictReason::Idle => CancelCause::ReaperIdle,
+                        },
+                    );
                     token.cancel();
                 }
             }
@@ -382,9 +436,16 @@ impl SessionStore {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(id);
+        // A token removed at clean turn end carries no cancel; drop any stale
+        // cause so it cannot leak onto a later turn for the same session id.
+        self.cancel_causes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
     }
 
     pub fn cancel_session(&self, id: &str) -> bool {
+        self.record_cancel_cause(id, CancelCause::ClientRpc);
         self.cancel_tokens
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -394,6 +455,26 @@ impl SessionStore {
                 true
             })
             .unwrap_or(false)
+    }
+
+    /// Record the cause for an imminent cancel-token fire. Call immediately
+    /// before firing so the verdict site can attribute the cancel.
+    pub fn record_cancel_cause(&self, id: &str, cause: CancelCause) {
+        self.cancel_causes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id.to_string(), cause);
+    }
+
+    /// Drain the recorded cancel cause for a session. Returns
+    /// [`CancelCause::Unattributed`] when no cause was recorded — a fired
+    /// token is never silently blamed on the user.
+    pub fn take_cancel_cause(&self, id: &str) -> CancelCause {
+        self.cancel_causes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id)
+            .unwrap_or(CancelCause::Unattributed)
     }
 
     pub async fn count(&self) -> usize {
@@ -576,6 +657,39 @@ mod tests {
     async fn cancel_nonexistent_returns_false() {
         let store = make_store(4);
         assert!(!store.cancel_session("nope"));
+    }
+
+    #[tokio::test]
+    async fn explicit_cancel_records_client_rpc_cause() {
+        let store = make_store(4);
+        let token = tokio_util::sync::CancellationToken::new();
+        store.register_cancel_token("s1", token.clone());
+        assert!(store.cancel_session("s1"));
+        assert!(token.is_cancelled());
+        // Verdict site drains the cause; an explicit RPC cancel is attributable.
+        assert_eq!(store.take_cancel_cause("s1"), CancelCause::ClientRpc);
+    }
+
+    #[tokio::test]
+    async fn fired_token_without_recorded_cause_is_unattributed_not_user() {
+        // A turn that ends on a cancel no path claimed must surface as
+        // `Unattributed` — the diagnostic signature of the spurious-cancel
+        // bug — never silently as a user action.
+        let store = make_store(4);
+        let token = tokio_util::sync::CancellationToken::new();
+        store.register_cancel_token("s1", token.clone());
+        token.cancel(); // fired out-of-band, no cause recorded
+        assert_eq!(store.take_cancel_cause("s1"), CancelCause::Unattributed);
+    }
+
+    #[tokio::test]
+    async fn clean_token_removal_clears_stale_cause() {
+        let store = make_store(4);
+        store.record_cancel_cause("s1", CancelCause::ClientRpc);
+        // A token removed at clean turn end must not leak its cause onto a
+        // later turn for the same session id.
+        store.remove_cancel_token("s1");
+        assert_eq!(store.take_cancel_cause("s1"), CancelCause::Unattributed);
     }
 
     #[tokio::test]

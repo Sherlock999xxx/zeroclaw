@@ -792,15 +792,28 @@ async fn process_chat_message(
     // from the other branch.
     let content_owned = content.to_string();
     let session_key_owned = session_key.to_string();
+    let (turn_alias, turn_provider, turn_model) = agent.attribution_fields();
     let turn_fut = async {
+        use ::zeroclaw_log::Instrument as _;
+        let span = ::zeroclaw_log::info_span!(
+            target: "zeroclaw_log_internal_scope",
+            "zeroclaw_scope",
+            session_key = %session_key_owned,
+            agent_alias = %turn_alias,
+            model_provider = %turn_provider,
+            model = %turn_model,
+            channel = "wss",
+        );
         zeroclaw_runtime::agent::loop_::scope_session_key(
-            Some(session_key_owned),
-            agent.turn_streamed_with_steering_state(
-                &content_owned,
-                event_tx,
-                Some(cancel_token.clone()),
-                Some(&mut steering_rx),
-            ),
+            Some(session_key_owned.clone()),
+            agent
+                .turn_streamed_with_steering_state(
+                    &content_owned,
+                    event_tx,
+                    Some(cancel_token.clone()),
+                    Some(&mut steering_rx),
+                )
+                .instrument(span),
         )
         .await
     };

@@ -984,7 +984,81 @@ impl RpcDispatcher {
         )
         .await;
 
+        // Drain the cancel cause BEFORE removing the token (removal clears the
+        // cause map). Only meaningful when the outcome is Cancelled.
+        let cancel_cause = self.ctx.sessions.take_cancel_cause(sid);
         self.ctx.sessions.remove_cancel_token(sid);
+
+        // ── Durable turn-verdict audit row ───────────────────────────────
+        // Every turn termination writes one attributed row to the ACP session
+        // store's event log so a spurious cancel is diagnosable after the
+        // trace log rotates. Scoped to ACP mode because that is where the
+        // durable store and a backing `acp_sessions` row exist. Fire-and-
+        // forget on a blocking task: a contended SQLite write must never block
+        // the dispatch path or fail the turn. An `Unattributed` cancel cause is
+        // the signature of the recurring spurious-cancel bug and is recorded
+        // verbatim so the next occurrence is finally observable.
+        if matches!(chat_mode, crate::rpc::types::ChatMode::Acp)
+            && let Some(store) = self.ctx.acp_session_store.clone()
+        {
+            let (action, event_outcome, payload) = match &outcome {
+                Ok(crate::rpc::turn::TurnOutcome::Completed { .. }) => (
+                    ::zeroclaw_log::Action::Complete,
+                    ::zeroclaw_log::EventOutcome::Success,
+                    None,
+                ),
+                Ok(crate::rpc::turn::TurnOutcome::Cancelled { .. }) => (
+                    ::zeroclaw_log::Action::Cancel,
+                    ::zeroclaw_log::EventOutcome::Unknown,
+                    Some(
+                        ::serde_json::json!({ "cancel_cause": cancel_cause.as_str() }).to_string(),
+                    ),
+                ),
+                Err(e) => (
+                    ::zeroclaw_log::Action::Fail,
+                    ::zeroclaw_log::EventOutcome::Failure,
+                    Some(::serde_json::json!({ "error": e.to_string() }).to_string()),
+                ),
+            };
+            let sid_owned = sid.to_string();
+            let span_session = sid.to_string();
+            let span_alias = attribution_agent_alias.clone();
+            let span_provider = attribution_model_provider.clone();
+            let span_model = attribution_model.clone();
+            zeroclaw_spawn::spawn!(async move {
+                use ::zeroclaw_log::Instrument as _;
+                let span = ::zeroclaw_log::info_span!(
+                    target: "zeroclaw_log_internal_scope",
+                    "zeroclaw_scope",
+                    session_key = %span_session,
+                    agent_alias = %span_alias,
+                    model_provider = %span_provider,
+                    model = %span_model,
+                    channel = "rpc",
+                );
+                async move {
+                    let persisted = tokio::task::spawn_blocking(move || {
+                        store.append_event(&sid_owned, action, event_outcome, payload.as_deref())
+                    })
+                    .await;
+                    let error = match persisted {
+                        Ok(Ok(())) => return,
+                        Ok(Err(e)) => e.to_string(),
+                        Err(join) => join.to_string(),
+                    };
+                    ::zeroclaw_log::record!(
+                        WARN,
+                        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Write)
+                            .with_category(::zeroclaw_log::EventCategory::Agent)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(::serde_json::json!({ "error": error })),
+                        "Failed to persist ACP turn-verdict audit event"
+                    );
+                }
+                .instrument(span)
+                .await;
+            });
+        }
 
         match chat_mode {
             crate::rpc::types::ChatMode::Acp => {
