@@ -302,8 +302,45 @@ struct Cli {
     #[arg(long, global = true)]
     config_dir: Option<String>,
 
+    /// Lowest severity recorded to the runtime trace (and capture
+    /// layer). Immutable for the process. Precedence: this flag >
+    /// RUST_LOG env > per-command default.
+    #[arg(long, global = true, value_enum)]
+    log_level: Option<LogLevel>,
+
+    /// Surface recorded logs on the terminal. Off by default: logs go
+    /// to the trace file only and the terminal shows just command
+    /// output. When on, the terminal shows events down to the recorded
+    /// floor. Immutable for the process.
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Recording-floor severities, mapped to `RUST_LOG`-style directive
+/// fragments. Mirrors `tracing`'s level names so the flag reads the
+/// same as the env var it overrides.
+#[derive(clap::ValueEnum, Debug, Clone, Copy)]
+enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    fn as_directive(self) -> &'static str {
+        match self {
+            LogLevel::Error => "error",
+            LogLevel::Warn => "warn",
+            LogLevel::Info => "info",
+            LogLevel::Debug => "debug",
+            LogLevel::Trace => "trace",
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -2579,24 +2616,51 @@ async fn main() -> Result<()> {
         _ => {}
     }
 
-    // Initialize logging - respects RUST_LOG env var.
-    // Ephemeral daemon mode defaults to debug so tool call spans are visible.
-    // For the ACP command and agent interactive mode, we default to WARN to avoid
-    // INFO logs corrupting the stdio protocol or interleaving with conversation output.
-    // We also always redirect logs to stderr so stdout remains clean for data.
-    // matrix_sdk crates are suppressed to warn because they are extremely
-    // noisy at info level. To restore SDK-level output for Matrix debugging:
-    //   RUST_LOG=info,matrix_sdk=info,matrix_sdk_base=info,matrix_sdk_crypto=info
-    // acp_server has to be WARN because INFO injects junk data into the JSON stream.
-    let default_log_level = match &cli.command {
+    // Two independent, immutable-for-the-process logging axes:
+    //
+    //   --log-level  recording floor → runtime trace + capture layer.
+    //                Precedence: flag > RUST_LOG env > per-command
+    //                default. matrix_sdk crates stay pinned to warn
+    //                regardless (extremely noisy at info+). To restore
+    //                SDK output for Matrix debugging, set RUST_LOG
+    //                explicitly with no --log-level flag, e.g.
+    //                  RUST_LOG=info,matrix_sdk=info,matrix_sdk_base=info
+    //
+    //   --verbose    display gate → stderr fmt layer only. Off by
+    //                default: logs go to the trace file, the terminal
+    //                shows only command output (println!/stdout, which
+    //                never routes through tracing). On: the fmt layer
+    //                surfaces events down to the recording floor.
+    //
+    // Per-command floor defaults: ephemeral daemon → debug (tool spans
+    // visible); ACP / agent REPL → warn (kept for parity; verbose-off
+    // already mutes the terminal so conversation/stdio output is never
+    // interleaved). Everything else → info.
+    let default_floor = match &cli.command {
         Commands::Daemon {
             ephemeral: true, ..
         } => "debug",
         Commands::Acp { .. } | Commands::Agent { message: None, .. } => "warn",
-        _ => "info,matrix_sdk=warn,matrix_sdk_base=warn,matrix_sdk_crypto=warn",
+        _ => "info",
     };
 
-    zeroclaw_log::install_global_subscriber(default_log_level);
+    // The explicit flag wins over RUST_LOG; without a flag the
+    // subscriber honours RUST_LOG and falls back to this default.
+    // matrix suppression is appended in both flag and default paths.
+    let recording_filter = cli.log_level.map(|level| {
+        format!(
+            "{},matrix_sdk=warn,matrix_sdk_base=warn,matrix_sdk_crypto=warn",
+            level.as_directive()
+        )
+    });
+    let default_filter =
+        format!("{default_floor},matrix_sdk=warn,matrix_sdk_base=warn,matrix_sdk_crypto=warn");
+
+    zeroclaw_log::install_global_subscriber(
+        recording_filter.as_deref(),
+        &default_filter,
+        cli.verbose,
+    );
 
     // `zeroclaw onboard` is deprecated. The legacy section-by-section
     // wizard is gone; new installs run `zeroclaw quickstart`. Any old
