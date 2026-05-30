@@ -76,8 +76,6 @@ pub fn build_api(root: &Path) -> anyhow::Result<()> {
                 "doc",
                 "--no-deps",
                 "--workspace",
-                "--exclude",
-                "zeroclaw-desktop",
             ])
             .current_dir(root),
     )

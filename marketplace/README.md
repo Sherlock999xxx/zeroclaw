@@ -28,9 +28,9 @@ on self-hosted PaaS platforms.
 
 ### 1. Prerequisites
 
-- [ ] **Copy the SVG logo** from `apps/tauri/icons/icon.svg` to `.github/assets/zeroclaw.svg`:
+- [ ] **Copy the SVG logo** to `.github/assets/zeroclaw.svg` (obtain from the design repo or export from the Figma source):
       ```bash
-      cp apps/tauri/icons/icon.svg .github/assets/zeroclaw.svg
+      cp <source>/zeroclaw.svg .github/assets/zeroclaw.svg
       git add .github/assets/zeroclaw.svg && git commit -m "chore: add SVG logo for marketplace templates"
       ```
 - [ ] **Fork all three upstream repos** into the `zeroclaw-labs` org:

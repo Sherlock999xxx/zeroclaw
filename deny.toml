@@ -26,7 +26,9 @@ ignore = [
     # glib -- unsoundness in VariantStrIter Iterator/DoubleEndedIterator impls;
     # transitive via zeroclaw-desktop (tauri -> webkit2gtk); glib 0.18.5 is the
     # latest compatible version with the GTK3 stack; fix requires gtk-rs series bump
-    { id = "RUSTSEC-2024-0429", reason = "glib VariantStrIter unsoundness; transitive via zeroclaw-desktop/tauri/webkit2gtk; no compatible fix in glib 0.18.x series" },
+    # NOTE: zeroclaw-desktop (Tauri app) removed — advisory may be re-triggered if
+    # another dep pulls in glib 0.18.x in the future
+    { id = "RUSTSEC-2024-0429", reason = "glib VariantStrIter unsoundness; was transitive via tauri/webkit2gtk (now removed); suppress in case another dep re-introduces glib 0.18.x" },
     # wasmtime -- multiple advisories via extism 1.21.0 which pins wasmtime 41.x;
     # all CVEs fixed in wasmtime 42.0.2; extism has not released a version with
     # wasmtime 42+; plugins are feature-gated behind --features plugins-wasm;

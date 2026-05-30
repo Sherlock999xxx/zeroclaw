@@ -223,12 +223,7 @@ If `zeroclaw-runtime` ever imports `TelegramChannel`, the architecture has been 
 │   │  REST API    │  │  ...            │  │  ...                │   │
 │   └──────┬───────┘  └─────────────────┘  └─────────────────────┘   │
 │          │                                                          │
-│          ▼                                                          │
-│   ┌─────────────────┐                                               │
-│   │ zeroclaw-desktop│   ← Tauri app (already exists in apps/tauri)  │
-│   │ System tray app │     bundles zeroclaw-gw as a sidecar          │
-│   │ Native GUI      │                                               │
-│   └─────────────────┘                                               │
+└─────────────────────────────────────────────────────────────────────┘
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -241,8 +236,7 @@ The architecture enables a clean distribution story that requires no Rust toolch
 | CLI only | `zeroclaw` runtime binary | Configure provider, done |
 | CLI + Discord | `zeroclaw` runtime binary | Download + install `channel-discord.wasm` |
 | Local web UI | `zeroclaw` + `zeroclaw-gw` | Configure both, open browser |
-| Desktop app | `zeroclaw-desktop` installer | Bundles runtime + gateway + UI |
-| Everything | `zeroclaw-desktop` or `zeroclaw --profile full` | Downloads all plugins |
+| Everything | `zeroclaw --profile full` | Downloads all plugins |
 
 The `zeroclaw plugin install` command (backed by `PluginHost`, which already exists) becomes the package manager. The `zeroclaw onboard` wizard integrates it so non-technical users never see `cargo`.
 
@@ -377,7 +371,6 @@ Each GitHub Release publishes the following artifacts:
 | `zeroclaw` kernel binary (hardware) | `aarch64-unknown-linux-gnu`, `armv7-unknown-linux-gnueabihf` | Same targets, compiled with `peripheral-rpi` and `hardware` flags for Raspberry Pi deployments |
 | `zeroclaw-gw` gateway binary | Same platform matrix as kernel | Published alongside the kernel; users install separately |
 | WASM plugin files | `wasm32-wasip1` | Published to the plugin registry (not GitHub Releases); installable via `zeroclaw plugin install` |
-| `zeroclaw-desktop` installer | `x86_64` and `aarch64` for macOS, Windows, Linux (AppImage/deb) | Bundles kernel + gateway + full plugin set; built by the Tauri workflow |
 
 The `wasm32-wasip1` plugin builds run in a separate CI job and are published to the plugin registry on their own cadence. A plugin release does not require a kernel release.
 
@@ -685,9 +678,9 @@ Move `src/gateway/` to a new `crates/zeroclaw-gw/` crate with its own binary. It
 
 The WhatsApp, WATI, Linq, Nextcloud Talk, and Gmail webhook handlers currently in `gateway/mod.rs` move to their respective channel plugins. The gateway provides a generic webhook registration API: a channel plugin, when loaded, registers its webhook path prefix and its handler function. The gateway routes incoming webhooks to the registered handler. The gateway no longer knows about WhatsApp.
 
-**D5: Formalize the Tauri sidecar relationship**
+**D5: Formalize the Tauri sidecar relationship (removed)**
 
-Update `apps/tauri/` to bundle `zeroclaw-gw` as a Tauri sidecar binary. The Tauri app becomes the "full experience" distribution: it starts the kernel and gateway automatically and opens the web UI. Users who download the Tauri app get everything working without touching a terminal.
+The Tauri desktop app (`apps/tauri/`) was removed in the v0.8 cycle. The native desktop distribution strategy will be revisited if demand warrants it. The web dashboard served by `zeroclaw-gw` remains the primary UI.
 
 #### Success Metrics for v0.9.0
 
@@ -695,7 +688,6 @@ Update `apps/tauri/` to bundle `zeroclaw-gw` as a Tauri sidecar binary. The Taur
 - `zeroclaw-gw` starts, connects to the kernel via IPC, and serves the web dashboard
 - Removing `zeroclaw-gw` does not break the kernel or any channel plugins
 - WhatsApp, WATI, Linq, Nextcloud Talk, and Gmail channel code has moved to plugin crates
-- Tauri desktop app bundles and starts both binaries correctly
 
 ---
 
