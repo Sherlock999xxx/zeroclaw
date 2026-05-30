@@ -544,17 +544,23 @@ impl GitOperationsTool {
             anyhow::Error::msg("Missing 'paths' parameter")
         })?;
 
-        // Validate paths against injection patterns
-        self.sanitize_git_args(paths)?;
+        // Validate paths against injection patterns. Returns each
+        // whitespace-separated pathspec as its own argument so the join is
+        // not handed to git as a single literal path.
+        let sanitized = self.sanitize_git_args(paths)?;
+        if sanitized.is_empty() {
+            anyhow::bail!("No paths to stage");
+        }
 
-        let output = self
-            .run_git_command(&["add", "--", paths], working_dir)
-            .await;
+        let mut git_args: Vec<&str> = vec!["add", "--"];
+        git_args.extend(sanitized.iter().map(String::as_str));
+
+        let output = self.run_git_command(&git_args, working_dir).await;
 
         match output {
             Ok(_) => Ok(ToolResult {
                 success: true,
-                output: format!("Staged: {paths}"),
+                output: format!("Staged: {}", sanitized.join(" ")),
                 error: None,
             }),
             Err(e) => Ok(ToolResult {
@@ -1739,5 +1745,39 @@ mod tests {
             status_out.trim().is_empty(),
             "expected clean tree after -u stash, got: {status_out:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn add_stages_multiple_space_separated_paths() {
+        let tmp = TempDir::new().unwrap();
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "a").unwrap();
+        std::fs::write(tmp.path().join("b.txt"), "b").unwrap();
+
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Full,
+            workspace_dir: tmp.path().to_path_buf(),
+            ..SecurityPolicy::default()
+        });
+        let tool = GitOperationsTool::new(security, tmp.path().to_path_buf());
+
+        let result = tool
+            .execute(json!({"operation": "add", "paths": "a.txt b.txt"}))
+            .await
+            .unwrap();
+        assert!(result.success, "add failed: {:?}", result.error);
+
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&status.stdout);
+        assert!(out.contains("A  a.txt"), "a.txt not staged: {out:?}");
+        assert!(out.contains("A  b.txt"), "b.txt not staged: {out:?}");
     }
 }
