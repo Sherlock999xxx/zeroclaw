@@ -48,7 +48,15 @@ static TERMINAL_ACTIVE: AtomicBool = AtomicBool::new(false);
 #[derive(Parser)]
 #[command(
     name = "zerocode",
-    about = "Interactive TUI config manager for ZeroClaw"
+    about = "Interactive TUI config manager for ZeroClaw",
+    version,
+    long_version = concat!(
+        env!("CARGO_PKG_VERSION"),
+        "\n\nThis version must exactly match the running zeroclaw daemon. ",
+        "The TUI and daemon share a wire protocol with no cross-version ",
+        "compatibility guarantee; mismatched versions may fail to connect ",
+        "or behave unpredictably."
+    )
 )]
 struct Cli {
     /// Path to the ZeroClaw config directory
