@@ -23,6 +23,7 @@ mod attachment;
 mod chat;
 mod client;
 mod clipboard;
+mod config;
 mod config_manager;
 mod dashboard;
 mod diff;
@@ -135,6 +136,19 @@ fn force_restore_terminal() {
 
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    let local_config_dir = client::resolve_config_dir(cli.config_dir.as_deref())?;
+    let active_theme = match config::ensure_and_load(&local_config_dir) {
+        Ok(cfg) => cfg.resolve_theme().unwrap_or_else(|e| {
+            eprintln!("zerocode: {e:#}");
+            std::process::exit(1);
+        }),
+        Err(e) => {
+            eprintln!("zerocode: config load failed ({e:#}); starting with default theme");
+            theme::default_theme()
+        }
+    };
+    theme::set_active(active_theme);
 
     let target = if let Some(url) = cli.connect {
         ConnectTarget::Wss {

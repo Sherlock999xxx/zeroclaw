@@ -31,6 +31,7 @@ ratatui = { version = "0.30", default-features = true, features = ["unstable-ren
 serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
 unicode-width = "0.2"
+toml = "1.0"
 tokio = { version = "1.50", default-features = false, features = [
     "rt-multi-thread", "macros", "time", "sync", "net", "io-util", "process", "signal",
 ] }
@@ -46,7 +47,6 @@ directories = { workspace = true }
 libc = "0.2"
 
 [dev-dependencies]
-toml = "1.0"
 # Dev-only: drift-test edge to the canonical workspace types so the
 # wire mirrors in `src/wire.rs` cannot silently fall out of sync with
 # what the daemon emits. Production builds of `zerocode` do not link

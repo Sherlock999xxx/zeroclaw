@@ -1034,8 +1034,8 @@ impl InputBarState {
     /// would re-wrap with its own algorithm and the cursor would drift.
     fn build_input_lines(&self, width: u16) -> Vec<Line<'_>> {
         let sel_style = Style::default()
-            .bg(theme::SELECTION_BG)
-            .fg(theme::ICY_WHITE);
+            .bg(theme::selection_bg())
+            .fg(theme::fg_primary());
 
         let visual = wrap_visual_lines(&self.input, width);
 
