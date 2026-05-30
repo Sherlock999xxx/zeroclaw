@@ -1673,8 +1673,8 @@ pub fn derive_configurable(input: TokenStream) -> TokenStream {
             prop_field_entries.push(quote! {
                 {
                     let display_value: String = match #inner_value_expr {
-                        None => "<unset>".to_string(),
-                        Some(v) if v.is_empty() => "<unset>".to_string(),
+                        None => crate::config::UNSET_DISPLAY.to_string(),
+                        Some(v) if v.is_empty() => crate::config::UNSET_DISPLAY.to_string(),
                         Some(v) => match <#inner_ty as crate::config::HasPropKind>::PROP_KIND {
                             crate::config::PropKind::ObjectArray => {
                                 serde_json::to_string(v)

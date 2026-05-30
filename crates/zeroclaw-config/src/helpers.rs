@@ -145,7 +145,7 @@ pub fn make_prop_field(
             Some(toml::Value::Array(arr)) if !arr.is_empty() => {
                 format!("[{}]", vec!["****"; arr.len()].join(", "))
             }
-            _ => "<unset>".to_string(),
+            _ => crate::traits::UNSET_DISPLAY.to_string(),
         }
     } else {
         toml_value_to_display(table.and_then(|t| t.get(serde_name)))
@@ -192,7 +192,9 @@ pub fn serde_set_prop<T: serde::Serialize + serde::de::DeserializeOwned>(
 ) -> anyhow::Result<()> {
     let serde_name = prop_name_to_serde_field(prefix, name)?;
     let mut table: toml::Table = toml::from_str(&toml::to_string(target)?)?;
-    if value_str.is_empty() && is_option {
+    if (value_str.is_empty() || value_str == crate::traits::UNSET_DISPLAY || value_str == "****")
+        && is_option
+    {
         table.remove(&serde_name);
     } else {
         table.insert(serde_name, parse_prop_value(value_str, kind)?);
@@ -203,7 +205,7 @@ pub fn serde_set_prop<T: serde::Serialize + serde::de::DeserializeOwned>(
 
 fn toml_value_to_display(value: Option<&toml::Value>) -> String {
     match value {
-        None => "<unset>".to_string(),
+        None => crate::traits::UNSET_DISPLAY.to_string(),
         Some(toml::Value::String(s)) => s.clone(),
         Some(v) => v.to_string(),
     }
@@ -273,14 +275,20 @@ fn parse_prop_value(value_str: &str, kind: PropKind) -> anyhow::Result<toml::Val
                 && let Ok(arr) = serde_json::from_str::<Vec<String>>(trimmed)
             {
                 return Ok(toml::Value::Array(
-                    arr.into_iter().map(toml::Value::String).collect(),
+                    arr.into_iter()
+                        .filter(|s| !s.is_empty() && s != crate::traits::UNSET_DISPLAY)
+                        .map(toml::Value::String)
+                        .collect(),
                 ));
             }
             // Fall back to comma-separated input.
             let items = value_str
                 .split(',')
                 .map(|s| toml::Value::String(s.trim().to_string()))
-                .filter(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+                .filter(|v| {
+                    v.as_str()
+                        .is_some_and(|s| !s.is_empty() && s != crate::traits::UNSET_DISPLAY)
+                })
                 .collect();
             Ok(toml::Value::Array(items))
         }
@@ -521,6 +529,16 @@ mod tests {
         let arr = result.as_array().unwrap();
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0].as_str(), Some("alice"));
+    }
+
+    #[test]
+    fn parse_string_array_drops_unset_sentinel() {
+        let bare = parse_prop_value(crate::traits::UNSET_DISPLAY, PropKind::StringArray).unwrap();
+        assert_eq!(bare.as_array().unwrap().len(), 0);
+        let json = parse_prop_value(r#"["<unset>", "/real"]"#, PropKind::StringArray).unwrap();
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0].as_str(), Some("/real"));
     }
 
     #[test]

@@ -1,3 +1,8 @@
+/// Sentinel rendered for unset / `None` / empty config values during display.
+/// Never a valid stored value: the write path rejects it so it cannot round-trip
+/// into persisted config.
+pub const UNSET_DISPLAY: &str = "<unset>";
+
 /// Describes a single secret field discovered via `#[derive(Configurable)]`.
 #[derive(Debug, Clone)]
 pub struct SecretFieldInfo {
@@ -667,7 +672,7 @@ impl ConfigFieldEntry {
     /// representation. Secrets are masked (value omitted). The caller supplies
     /// `is_env_overridden` from `Config::prop_is_env_overridden`.
     pub fn from_prop_field(info: PropFieldInfo, is_env_overridden: bool) -> Self {
-        let populated = info.display_value != "<unset>";
+        let populated = info.display_value != crate::traits::UNSET_DISPLAY;
         let is_sensitive = info.is_secret || info.derived_from_secret;
         let value = if is_sensitive {
             None

@@ -507,8 +507,12 @@ pub async fn compute_drift(in_memory: &zeroclaw_config::schema::Config) -> Vec<D
         }
         let mem = in_memory_props.get(name);
         let disk = on_disk_props.get(name);
-        let mem_display = mem.map(|p| p.display_value.as_str()).unwrap_or("<unset>");
-        let disk_display = disk.map(|p| p.display_value.as_str()).unwrap_or("<unset>");
+        let mem_display = mem
+            .map(|p| p.display_value.as_str())
+            .unwrap_or(zeroclaw_config::traits::UNSET_DISPLAY);
+        let disk_display = disk
+            .map(|p| p.display_value.as_str())
+            .unwrap_or(zeroclaw_config::traits::UNSET_DISPLAY);
         if mem_display == disk_display {
             continue;
         }
@@ -569,7 +573,7 @@ pub async fn handle_prop_get(
     };
 
     if info.is_secret || info.derived_from_secret {
-        let populated = info.display_value != "<unset>";
+        let populated = info.display_value != zeroclaw_config::traits::UNSET_DISPLAY;
         return axum::Json(SecretResponse {
             path: q.path,
             populated,
@@ -773,7 +777,7 @@ pub async fn handle_list(
         })
         .filter(|info| !field_visibility::is_excluded(&info.name, &excluded))
         .map(|info| {
-            let populated = info.display_value != "<unset>";
+            let populated = info.display_value != zeroclaw_config::traits::UNSET_DISPLAY;
             let is_sensitive = info.is_secret || info.derived_from_secret;
             let value = if is_sensitive {
                 None

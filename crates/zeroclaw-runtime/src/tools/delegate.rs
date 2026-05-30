@@ -16,6 +16,7 @@ use zeroclaw_config::schema::{
     AliasedAgentConfig, Config, DelegateToolConfig, ModelProviderConfig, RiskProfileConfig,
     RuntimeProfileConfig, SkillBundleConfig,
 };
+use zeroclaw_log::Instrument as _;
 use zeroclaw_memory::Memory;
 use zeroclaw_providers::{self, ChatMessage, ModelProvider};
 
@@ -337,55 +338,41 @@ impl DelegateTool {
                 "could not resolve security policy for delegate target {target_alias:?}: {e}"
             ))
         })?;
-        target_policy
-            .ensure_no_escalation_beyond(&self.security)
-            .map_err(|violation| {
-                ::zeroclaw_log::record!(
-                    WARN,
-                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Reject)
-                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
-                        .with_attrs(::serde_json::json!({
-                            "target_agent": target_alias,
-                            "violation": violation.to_string(),
-                        })),
-                    "delegate refused: target policy escalates beyond caller"
-                );
-                anyhow::Error::msg(format!(
-                    "delegate target {target_alias:?} policy escalates beyond caller: {violation}"
-                ))
-            })?;
-        // Refuse strict narrowing. `DelegateTool::execute_agentic`
-        // reuses the caller's `parent_tools` registry (every tool
-        // there holds the caller's `Arc<SecurityPolicy>` from
-        // registration time); a narrower target policy would not
-        // reach those tools, so the target would silently inherit
-        // the caller's broader allowlist. Catching the narrowing
-        // here turns a silent over-grant into a loud refusal.
-        // Operators with truly narrowed sub-agents should use
-        // `spawn_subagent`, which re-enters `agent::run` with the
-        // validated child policy and rebuilds the tool registry
-        // under it.
-        self.security
-            .ensure_no_escalation_beyond(&target_policy)
-            .map_err(|violation| {
-                ::zeroclaw_log::record!(
-                    WARN,
-                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Reject)
-                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
-                        .with_attrs(::serde_json::json!({
-                            "target_agent": target_alias,
-                            "violation": violation.to_string(),
-                        })),
-                    "delegate refused: target policy narrows caller's (use spawn_subagent for narrowed runs)"
-                );
-                anyhow::Error::msg(format!(
-                    "delegate target {target_alias:?} policy narrows the caller's ({violation}); \
-                     DelegateTool reuses the caller's tool registry, so narrowing is not enforced \
-                     by the spawned tool calls. Either align caller and target risk_profile / \
-                     workspace.access so the policies are equivalent, or use `spawn_subagent` for \
-                     a narrowed run."
-                ))
-            })?;
+        if !self.security.delegation_policy.permits(target_alias) {
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Reject)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                    .with_attrs(::serde_json::json!({
+                        "target_agent": target_alias,
+                        "caller_risk_profile": self.security.risk_profile_name,
+                    })),
+                "delegate refused: target not permitted by caller delegation_policy"
+            );
+            return Err(anyhow::Error::msg(format!(
+                "delegate target {target_alias:?} is not permitted by the caller's \
+                 delegation_policy; add it to [risk_profiles.{}].delegation_policy agents",
+                self.security.risk_profile_name
+            )));
+        }
+        if self.security.risk_profile_name != target_policy.risk_profile_name {
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Reject)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                    .with_attrs(::serde_json::json!({
+                        "target_agent": target_alias,
+                        "caller_risk_profile": self.security.risk_profile_name,
+                        "target_risk_profile": target_policy.risk_profile_name,
+                    })),
+                "delegate refused: target risk profile differs from caller"
+            );
+            return Err(anyhow::Error::msg(format!(
+                "delegate target {target_alias:?} uses risk profile \
+                 {:?}, but delegation requires the same risk profile as the caller ({:?})",
+                target_policy.risk_profile_name, self.security.risk_profile_name
+            )));
+        }
         target_policy.tracker = self.security.tracker.clone();
         Ok(Arc::new(target_policy))
     }
@@ -964,8 +951,9 @@ impl DelegateTool {
         // wrap, the spawned task would lose the parent's task-local
         // and channel-scoped tool calls would land unattributed.
         let parent_session_key = current_tool_loop_session_key();
+        let __zc_delegate_alias = agent_name_owned.clone();
 
-        zeroclaw_spawn::spawn!(async move {
+        zeroclaw_spawn::spawn!(
             scope_delegate_session_key(parent_session_key, async move {
                 let inner = DelegateTool {
                     agents,
@@ -1044,8 +1032,10 @@ impl DelegateTool {
                     let _ = tokio::fs::write(&result_path, &bytes).await;
                 }
             })
-            .await;
-        });
+            .instrument(::zeroclaw_log::attribution_span!(
+                &crate::agent::AgentAttribution(__zc_delegate_alias.as_str())
+            ))
+        );
 
         Ok(ToolResult {
             success: true,
@@ -1180,37 +1170,44 @@ impl DelegateTool {
             let receipt_scope = parent_receipt_scope.clone();
             let root_config = self.root_config.clone();
             let session_key = parent_session_key.clone();
+            let __zc_delegate_alias = agent_name.clone();
 
-            handles.push(zeroclaw_spawn::spawn!(async move {
-                let inner = DelegateTool {
-                    agents,
-                    security,
-                    global_credential,
-                    provider_runtime_options,
-                    depth,
-                    parent_tools,
-                    multimodal_config,
-                    delegate_config,
-                    workspace_dir,
-                    cancellation_token,
-                    memory: None,
-                    providers_models,
-                    risk_profiles,
-                    runtime_profiles,
-                    skill_bundles,
-                    root_config,
-                };
-                let agent_name_for_return = agent_name.clone();
-                let result = scope_delegate_session_key(session_key, async move {
-                    crate::agent::tool_receipts::TOOL_LOOP_RECEIPT_CONTEXT
-                        .scope(receipt_scope, async move {
-                            Box::pin(inner.execute_sync(&agent_name, &prompt, &args_clone)).await
-                        })
-                        .await
-                })
-                .await;
-                (agent_name_for_return, result)
-            }));
+            handles.push(zeroclaw_spawn::spawn!(
+                async move {
+                    let inner = DelegateTool {
+                        agents,
+                        security,
+                        global_credential,
+                        provider_runtime_options,
+                        depth,
+                        parent_tools,
+                        multimodal_config,
+                        delegate_config,
+                        workspace_dir,
+                        cancellation_token,
+                        memory: None,
+                        providers_models,
+                        risk_profiles,
+                        runtime_profiles,
+                        skill_bundles,
+                        root_config,
+                    };
+                    let agent_name_for_return = agent_name.clone();
+                    let result = scope_delegate_session_key(session_key, async move {
+                        crate::agent::tool_receipts::TOOL_LOOP_RECEIPT_CONTEXT
+                            .scope(receipt_scope, async move {
+                                Box::pin(inner.execute_sync(&agent_name, &prompt, &args_clone))
+                                    .await
+                            })
+                            .await
+                    })
+                    .await;
+                    (agent_name_for_return, result)
+                }
+                .instrument(::zeroclaw_log::attribution_span!(
+                    &crate::agent::AgentAttribution(__zc_delegate_alias.as_str())
+                ))
+            ));
         }
 
         // Collect all results
@@ -1658,7 +1655,10 @@ impl DelegateTool {
                 None, // channel: delegate subagents don't support approval
                 receipt_generator,
                 collected_receipts,
-            ),
+            )
+            .instrument(::zeroclaw_log::attribution_span!(
+                &crate::agent::AgentAttribution(agent_name)
+            )),
         )
         .await;
 

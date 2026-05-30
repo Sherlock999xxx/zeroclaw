@@ -5,6 +5,7 @@ pub mod v1;
 pub mod v2;
 
 use crate::autonomy::AutonomyLevel;
+use crate::autonomy::DelegationPolicy;
 use crate::domain_matcher::DomainMatcher;
 use crate::traits::{ChannelConfig, HasPropKind, PropKind};
 use crate::validation_bail;
@@ -9035,6 +9036,11 @@ pub struct RiskProfileConfig {
     /// Extra directory roots the agent may access.
     #[serde(alias = "allowed_path", alias = "allowed_paths")]
     pub allowed_roots: Vec<String>,
+    /// Whether and to which agents this profile may delegate. Defaults to
+    /// `Forbidden`. Delegation requires caller and target to share a risk
+    /// profile; the allow-list names the reachable same-profile agents.
+    #[serde(default)]
+    pub delegation_policy: DelegationPolicy,
     /// Tools the agent may call in agentic mode. Empty = inherit / no
     /// authorization constraint. Authorization decision: which tools is
     /// the agent permitted to invoke at all. See `excluded_tools` for
@@ -9064,6 +9070,7 @@ impl Default for RiskProfileConfig {
             auto_approve: default_auto_approve(),
             always_ask: default_always_ask(),
             allowed_roots: Vec::new(),
+            delegation_policy: DelegationPolicy::default(),
             allowed_tools: Vec::new(),
             excluded_tools: Vec::new(),
             sandbox_enabled: None,
@@ -16013,6 +16020,7 @@ impl_enum_prop_kind!(
     OtpMethod,
     SandboxBackend,
     AutonomyLevel,
+    DelegationPolicy,
     AuthMode,
     OpenAIEndpoint,
     AzureEndpoint,
@@ -22445,7 +22453,10 @@ allowed_users = []
 
             // set_prop: round-trip the display value back through set_prop.
             // Skip secrets (masked), enums (need valid variant), and <unset> Options.
-            if field.is_secret || field.is_enum() || field.display_value == "<unset>" {
+            if field.is_secret
+                || field.is_enum()
+                || field.display_value == crate::traits::UNSET_DISPLAY
+            {
                 continue;
             }
 
@@ -22601,7 +22612,7 @@ allowed_users = []
                 Err(_) => continue,
             };
             // Sentinel for unset Option fields — no round-trip applies.
-            if value == "<unset>" {
+            if value == crate::traits::UNSET_DISPLAY {
                 continue;
             }
             let result = config.set_prop(&field.name, &value);

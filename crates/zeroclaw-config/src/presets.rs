@@ -28,6 +28,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::autonomy::AutonomyLevel;
+use crate::autonomy::DelegationPolicy;
 use crate::policy::{default_allowed_commands, default_forbidden_paths};
 use crate::schema::{RiskProfileConfig, RuntimeProfileConfig};
 
@@ -102,6 +103,7 @@ fn locked_down_risk() -> RiskProfileConfig {
         auto_approve: vec![],
         always_ask: vec![],
         allowed_roots: vec![],
+        delegation_policy: DelegationPolicy::Forbidden,
         allowed_tools: vec![],
         excluded_tools: vec![],
         sandbox_enabled: Some(true),
@@ -129,6 +131,7 @@ fn yolo_risk() -> RiskProfileConfig {
         auto_approve: vec![],
         always_ask: vec![],
         allowed_roots: vec![],
+        delegation_policy: DelegationPolicy::Forbidden,
         allowed_tools: vec![],
         excluded_tools: vec![],
         sandbox_enabled: Some(false),
