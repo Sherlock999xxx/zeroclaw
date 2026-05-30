@@ -105,6 +105,10 @@ pub struct DelegateTool {
     /// unset (legacy unit-test constructors), DelegateTool falls back
     /// to using `self.security` for the spawned inner DelegateTool.
     root_config: Option<Arc<Config>>,
+    /// Alias of the agent that owns this DelegateTool. Excluded from the
+    /// advertised roster so an agent is never offered itself as a
+    /// delegation target. Empty when unset (legacy unit-test constructors).
+    caller_alias: String,
 }
 
 impl DelegateTool {
@@ -144,6 +148,7 @@ impl DelegateTool {
             runtime_profiles: Arc::new(HashMap::new()),
             skill_bundles: Arc::new(HashMap::new()),
             root_config: None,
+            caller_alias: String::new(),
         }
     }
 
@@ -189,6 +194,7 @@ impl DelegateTool {
             runtime_profiles: Arc::new(HashMap::new()),
             skill_bundles: Arc::new(HashMap::new()),
             root_config: None,
+            caller_alias: String::new(),
         }
     }
 
@@ -287,6 +293,14 @@ impl DelegateTool {
     /// `PerSenderTracker` with the delegated run.
     pub fn with_root_config(mut self, config: Arc<Config>) -> Self {
         self.root_config = Some(config);
+        self
+    }
+
+    /// Set the owning agent's alias so it can be excluded from the
+    /// advertised delegation roster (an agent must never delegate to
+    /// itself).
+    pub fn with_caller_alias(mut self, alias: impl Into<String>) -> Self {
+        self.caller_alias = alias.into();
         self
     }
 
@@ -510,7 +524,14 @@ impl Tool for DelegateTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        let agent_names: Vec<&str> = self.agents.keys().map(|s: &String| s.as_str()).collect();
+        let mut agent_names: Vec<&str> = self
+            .agents
+            .keys()
+            .map(|s: &String| s.as_str())
+            .filter(|name| *name != self.caller_alias.as_str())
+            .filter(|name| self.security.delegation_policy.permits(name))
+            .collect();
+        agent_names.sort_unstable();
         json!({
             "type": "object",
             "additionalProperties": false,
@@ -944,6 +965,7 @@ impl DelegateTool {
         let runtime_profiles = Arc::clone(&self.runtime_profiles);
         let skill_bundles = Arc::clone(&self.skill_bundles);
         let root_config = self.root_config.clone();
+        let caller_alias = self.caller_alias.clone();
         // Capture the parent loop's session-key task-local so the
         // detached background task scopes its tool calls under the
         // same key — channel tools (sessions_send, etc.) need the
@@ -972,6 +994,7 @@ impl DelegateTool {
                     runtime_profiles,
                     skill_bundles,
                     root_config,
+                    caller_alias,
                 };
 
                 let args_inner = json!({
@@ -1169,6 +1192,7 @@ impl DelegateTool {
             let skill_bundles = Arc::clone(&self.skill_bundles);
             let receipt_scope = parent_receipt_scope.clone();
             let root_config = self.root_config.clone();
+            let caller_alias = self.caller_alias.clone();
             let session_key = parent_session_key.clone();
             let __zc_delegate_alias = agent_name.clone();
 
@@ -1191,6 +1215,7 @@ impl DelegateTool {
                         runtime_profiles,
                         skill_bundles,
                         root_config,
+                        caller_alias,
                     };
                     let agent_name_for_return = agent_name.clone();
                     let result = scope_delegate_session_key(session_key, async move {
@@ -1765,6 +1790,15 @@ mod tests {
         Arc::new(SecurityPolicy::default())
     }
 
+    fn security_allowing(agents: &[&str]) -> Arc<SecurityPolicy> {
+        Arc::new(SecurityPolicy {
+            delegation_policy: zeroclaw_config::autonomy::DelegationPolicy::Allow {
+                agents: agents.iter().map(|s| (*s).to_string()).collect(),
+            },
+            ..SecurityPolicy::default()
+        })
+    }
+
     fn sample_agents() -> HashMap<String, AliasedAgentConfig> {
         let mut agents = HashMap::new();
         agents.insert(
@@ -2108,12 +2142,59 @@ mod tests {
 
     #[test]
     fn schema_lists_agent_names() {
-        let tool = DelegateTool::new(sample_agents(), None, test_security());
+        let tool = DelegateTool::new(
+            sample_agents(),
+            None,
+            security_allowing(&["researcher", "coder"]),
+        );
         let schema = tool.parameters_schema();
         let desc = schema["properties"]["agent"]["description"]
             .as_str()
             .unwrap();
         assert!(desc.contains("researcher") || desc.contains("coder"));
+    }
+
+    #[test]
+    fn schema_roster_filtered_by_delegation_policy() {
+        // Only "researcher" is permitted; "coder" must be excluded from
+        // the advertised roster even though it is a configured agent.
+        let tool = DelegateTool::new(sample_agents(), None, security_allowing(&["researcher"]));
+        let schema = tool.parameters_schema();
+        let desc = schema["properties"]["agent"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(desc.contains("researcher"));
+        assert!(!desc.contains("coder"));
+    }
+
+    #[test]
+    fn schema_excludes_caller_alias_from_roster() {
+        // An agent must never be offered itself as a delegation target,
+        // even when the delegation_policy would otherwise permit it.
+        let tool = DelegateTool::new(
+            sample_agents(),
+            None,
+            security_allowing(&["researcher", "coder"]),
+        )
+        .with_caller_alias("researcher");
+        let schema = tool.parameters_schema();
+        let desc = schema["properties"]["agent"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(!desc.contains("researcher"));
+        assert!(desc.contains("coder"));
+    }
+
+    #[test]
+    fn schema_empty_roster_when_delegation_forbidden() {
+        // Default policy forbids delegation, so no configured agent
+        // should be advertised.
+        let tool = DelegateTool::new(sample_agents(), None, test_security());
+        let schema = tool.parameters_schema();
+        let desc = schema["properties"]["agent"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(desc.contains("none configured"));
     }
 
     #[tokio::test]
