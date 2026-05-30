@@ -13559,9 +13559,6 @@ dependencies = [
  "tokio-tungstenite 0.29.0",
  "toml 1.1.2+spec-1.1.0",
  "unicode-width 0.2.2",
- "zeroclaw-api",
- "zeroclaw-config",
- "zeroclaw-runtime",
 ]
 
 [[package]]

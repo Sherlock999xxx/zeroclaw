@@ -45,12 +45,3 @@ directories = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
-[dev-dependencies]
-# Dev-only: drift-test edge to the canonical workspace types so the
-# wire mirrors in `src/wire.rs` cannot silently fall out of sync with
-# what the daemon emits. Production builds of `zerocode` do not link
-# any `zeroclaw-*` crate.
-zeroclaw-api = { workspace = true }
-zeroclaw-config = { workspace = true, default-features = true }
-zeroclaw-runtime = { workspace = true }
