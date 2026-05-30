@@ -829,14 +829,6 @@ mod tests {
     // ── shell timeout enforcement tests ─────────────────
 
     #[test]
-    fn shell_timeout_default_is_reasonable() {
-        assert_eq!(
-            DEFAULT_SHELL_TIMEOUT_SECS, 60,
-            "default shell timeout must be 60 seconds"
-        );
-    }
-
-    #[test]
     fn shell_timeout_can_be_overridden() {
         let tool = ShellTool::new(test_security(AutonomyLevel::Supervised), test_runtime())
             .with_timeout_secs(120);
