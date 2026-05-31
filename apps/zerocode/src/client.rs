@@ -203,12 +203,33 @@ pub enum SessionUpdate {
         max_context_tokens: Option<u64>,
     },
     /// Terminal event for a turn. Replaces the JSON-RPC response of
-    /// `session/prompt`. `cancelled` is true on user-initiated cancel.
+    /// `session/prompt`. `outcome` distinguishes a clean finish from a cancel
+    /// or a failure; the daemon-composed `content` carries the attributed
+    /// reason for non-completed outcomes.
     TurnComplete {
         session_id: String,
-        cancelled: bool,
+        outcome: TurnEndOutcome,
         content: String,
     },
+}
+
+/// Wire mirror of the daemon's `TurnCompletionOutcome`. Decoded straight from
+/// the `outcome` field; an unrecognised or absent value maps to `Completed` so
+/// a turn never appears stuck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnEndOutcome {
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+impl TurnEndOutcome {
+    fn from_wire(value: Option<&serde_json::Value>) -> Self {
+        value
+            .and_then(|v| serde_json::from_value::<Self>(v.clone()).ok())
+            .unwrap_or(Self::Completed)
+    }
 }
 
 pub fn parse_session_update(params: &serde_json::Value) -> Option<SessionUpdate> {
@@ -248,7 +269,7 @@ pub fn parse_session_update(params: &serde_json::Value) -> Option<SessionUpdate>
         }),
         "turn_complete" => Some(SessionUpdate::TurnComplete {
             session_id: sid,
-            cancelled: params.get("outcome").and_then(|v| v.as_str()) == Some("cancelled"),
+            outcome: TurnEndOutcome::from_wire(params.get("outcome")),
             content: params
                 .get("content")
                 .and_then(|v| v.as_str())

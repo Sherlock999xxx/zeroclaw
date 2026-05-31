@@ -14,11 +14,6 @@ pub enum TurnOutcome {
     },
     Cancelled {
         partial_text: String,
-        /// `true` when the drain self-cancelled on idle-stall (no events for
-        /// [`DRAIN_IDLE_TIMEOUT`]); `false` when an external token fire
-        /// (client RPC, reaper, session removal) reached the drain. Lets the
-        /// caller record the right [`crate::rpc::session::CancelCause`].
-        idle_stall: bool,
     },
 }
 
@@ -107,36 +102,35 @@ where
             Ok((text, messages)) => Ok(TurnOutcome::Completed { text, messages }),
             Err(e) if is_tool_loop_cancelled(&e) => Ok(TurnOutcome::Cancelled {
                 partial_text: accumulated_text,
-                idle_stall: false,
             }),
             Err(e) => Err(TurnError::AgentError(format!("{e}"))),
         },
-        DrainOutcome::ExplicitCancel | DrainOutcome::IdleStall => {
+        DrainOutcome::ExplicitCancel => {
             turn_handle.abort();
             Ok(TurnOutcome::Cancelled {
                 partial_text: accumulated_text,
-                idle_stall: matches!(drain, DrainOutcome::IdleStall),
             })
         }
     }
 }
 
-/// Why [`drain_until_done_or_cancelled`] returned. `IdleStall` is a self-fired
-/// cancel (no events for [`DRAIN_IDLE_TIMEOUT`]); `ExplicitCancel` is an
-/// outside fire that reached the drain.
+/// Why [`drain_until_done_or_cancelled`] returned. `ExplicitCancel` is an
+/// outside fire (client RPC, reaper, session removal) that reached the drain.
+/// There is no self-firing idle exit: a live turn falls silent for the whole
+/// duration of a tool call, so silence is never treated as a stall.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DrainOutcome {
     Completed,
     ExplicitCancel,
-    IdleStall,
 }
 
-/// Drain `event_rx` until the turn finishes, the cancel token fires, or the
-/// stream stalls past [`DRAIN_IDLE_TIMEOUT`]. On idle, fires `cancel` itself
-/// so downstream sees a unified cancel shape. Chunk deltas accumulate in
-/// `accumulated` so partial text survives a cancel.
-const DRAIN_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
-
+/// Drain `event_rx` until the turn finishes or the cancel token fires. Chunk
+/// deltas accumulate in `accumulated` so partial text survives a cancel. The
+/// only terminals are the turn task dropping its sender (`recv` -> `None`,
+/// [`DrainOutcome::Completed`]) and an explicit cancel
+/// ([`DrainOutcome::ExplicitCancel`]). A wedged turn is bounded by the explicit
+/// layers — ownership-gated `session/cancel` and the reaper — never by guessing
+/// from channel quiet.
 async fn drain_until_done_or_cancelled<F, Fut>(
     event_rx: &mut mpsc::Receiver<TurnEvent>,
     cancel: &CancellationToken,
@@ -165,10 +159,6 @@ where
                     None => return DrainOutcome::Completed,
                 }
             }
-            _ = tokio::time::sleep(DRAIN_IDLE_TIMEOUT) => {
-                cancel.cancel();
-                return DrainOutcome::IdleStall;
-            }
         }
     }
 }
@@ -183,25 +173,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn drain_must_not_hang_when_no_events_and_no_cancel() {
-        let (sender_kept_alive, mut event_rx) = mpsc::channel::<TurnEvent>(8);
+    async fn drain_must_not_idle_cancel_a_live_turn_across_a_long_tool_gap() {
+        let (tx, mut rx) = mpsc::channel::<TurnEvent>(8);
         let cancel = CancellationToken::new();
         let mut acc = String::new();
 
-        let elapsed = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            drain_until_done_or_cancelled(&mut event_rx, &cancel, &mut acc, &noop),
+        let sender = tokio::spawn(async move {
+            let _ = tx
+                .send(TurnEvent::ToolCall {
+                    id: "c1".to_string(),
+                    name: "shell".to_string(),
+                    args: serde_json::json!({ "command": "cargo test" }),
+                })
+                .await;
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let _ = tx
+                .send(TurnEvent::ToolResult {
+                    id: "c1".to_string(),
+                    name: "shell".to_string(),
+                    output: "ok".to_string(),
+                })
+                .await;
+            let _ = tx
+                .send(TurnEvent::Chunk {
+                    delta: "done".to_string(),
+                })
+                .await;
+        });
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            drain_until_done_or_cancelled(&mut rx, &cancel, &mut acc, &noop),
         )
-        .await;
+        .await
+        .expect("drain must terminate when the live turn task completes");
 
-        drop(sender_kept_alive);
-
-        elapsed.expect(
-            "drain must return when no events arrive and no cancel fires; \
-             an unbounded idle wait is the TUI 'working' freeze. The fix must \
-             cap the idle-event window at a value substantially below 5s in \
-             default test configuration; the production threshold may be \
-             larger but must always be finite.",
+        sender.await.unwrap();
+        assert_eq!(
+            outcome,
+            DrainOutcome::Completed,
+            "a turn whose sender is alive but quiet during a long tool \
+             execution is NOT stalled; silence during execute_tools is the \
+             normal case. Killing it is the idle_stall regression that froze \
+             the TUI mid-turn (sessions 102, 103)."
+        );
+        assert!(
+            !cancel.is_cancelled(),
+            "drain self-cancelled a healthy turn across a tool gap; the token \
+             must stay clean so downstream records no cancel."
+        );
+        assert_eq!(
+            acc, "done",
+            "drain dropped the post-tool chunk after wrongly tripping an idle \
+             bound mid-execution."
         );
     }
 

@@ -55,13 +55,6 @@ pub enum CancelCause {
     ReaperIdle,
     /// The session was explicitly removed/torn down while a turn was live.
     SessionRemoved,
-    /// A streaming turn went idle past [`crate::rpc::turn::DRAIN_IDLE_TIMEOUT`]
-    /// — no events for the bound window. The drain fires the cancel token
-    /// itself to unwedge the dispatch path; recording it as a distinct cause
-    /// keeps the verdict audit honest about WHY the turn ended (vs. blaming
-    /// the user). This is the third known firing path; with all firing sites
-    /// recording, a fired-but-unrecorded token is now a bug, not a mystery.
-    IdleStall,
 }
 
 impl CancelCause {
@@ -71,7 +64,6 @@ impl CancelCause {
             CancelCause::ReaperOrphaned => "reaper_orphaned",
             CancelCause::ReaperIdle => "reaper_idle",
             CancelCause::SessionRemoved => "session_removed",
-            CancelCause::IdleStall => "idle_stall",
         }
     }
 }

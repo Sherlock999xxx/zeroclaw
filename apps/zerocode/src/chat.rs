@@ -17,8 +17,8 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::attachment::build_attachments_json;
 use crate::client::{
-    ApprovalDecision, RpcClient, RpcNotification, SessionEntry, SessionUpdate, method,
-    parse_session_update,
+    ApprovalDecision, RpcClient, RpcNotification, SessionEntry, SessionUpdate, TurnEndOutcome,
+    method, parse_session_update,
 };
 use crate::diff;
 use crate::file_explorer::{ExplorerAction, FileExplorerState};
@@ -2756,17 +2756,25 @@ impl ChatState {
                 }
             }
             SessionUpdate::TurnComplete {
-                content, cancelled, ..
+                outcome, content, ..
             } => {
                 // Single source of truth for turn end. RPC errors on
                 // session/prompt cannot reach this — only the daemon can.
-                if cancelled {
-                    self.entries.push(ChatEntry::SystemMessage(Arc::<str>::from(
-                        "[turn cancelled]",
-                    )));
-                    self.mark_dirty_append();
+                // For a cancel or failure the daemon composes the attributed
+                // reason in `content` (who cancelled, and why); render it as a
+                // system line. For a clean finish, `content` is the final text
+                // and commit_turn handles it.
+                match outcome {
+                    TurnEndOutcome::Completed => {
+                        self.commit_turn(content);
+                    }
+                    TurnEndOutcome::Cancelled | TurnEndOutcome::Failed => {
+                        self.entries
+                            .push(ChatEntry::SystemMessage(Arc::<str>::from(content.as_str())));
+                        self.mark_dirty_append();
+                        self.commit_turn(String::new());
+                    }
                 }
-                self.commit_turn(content);
             }
         }
     }

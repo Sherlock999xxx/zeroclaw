@@ -818,6 +818,83 @@ impl RpcDispatcher {
         })
     }
 
+    /// Rebuild a reaped ACP session from its durable row so a fresh prompt
+    /// recovers to a working session instead of hanging. Returns the live agent
+    /// on success, `None` only when the durable row is genuinely gone.
+    async fn rehydrate_reaped_session(
+        &self,
+        sid: &str,
+    ) -> Option<Arc<tokio::sync::Mutex<crate::agent::agent::Agent>>> {
+        let store = self.ctx.acp_session_store.clone()?;
+        let sid_owned = sid.to_string();
+        let loaded = tokio::task::spawn_blocking(move || store.load_session(&sid_owned)).await;
+        let data = match loaded {
+            Ok(Ok(Some(data))) => data,
+            _ => return None,
+        };
+
+        let config = self.ctx.config.read().clone();
+        let cwd_path = Some(std::path::Path::new(&data.workspace_dir));
+        let tui_env = self
+            .tui_id
+            .as_deref()
+            .and_then(|id| self.ctx.tui_registry.get_env(id));
+        let agent = crate::agent::agent::Agent::from_config_with_tui_env(
+            &config,
+            &data.agent_alias,
+            cwd_path,
+            false,
+            false,
+            tui_env,
+        )
+        .await
+        .ok()?;
+
+        let approval_ch = Arc::new(crate::rpc::approval_channel::RpcApprovalChannel::new(
+            "rpc",
+            sid.to_string(),
+            Arc::clone(&self.rpc),
+            Arc::clone(&self.ctx.approval_pending),
+        ));
+        agent.channel_handles().register_channel("rpc", approval_ch);
+
+        let message_count = data.messages.len();
+        self.ctx
+            .sessions
+            .insert(
+                sid.to_string(),
+                super::session::RpcSession::new(
+                    agent,
+                    &data.agent_alias,
+                    &data.workspace_dir,
+                    crate::rpc::types::ChatMode::Acp,
+                )
+                .with_owner(self.tui_id.clone()),
+            )
+            .await
+            .ok()?;
+        self.ctx
+            .sessions
+            .seed_conversation_history(sid, data.messages)
+            .await;
+        self.ctx.sessions.touch(sid).await;
+
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_category(::zeroclaw_log::EventCategory::Agent)
+                .with_outcome(::zeroclaw_log::EventOutcome::Success)
+                .with_attrs(::serde_json::json!({
+                    "session_id": sid,
+                    "agent_alias": data.agent_alias,
+                    "messages_restored": message_count,
+                })),
+            "rehydrated reaped session from durable store; turn continues on a working session"
+        );
+
+        self.ctx.sessions.get_agent(sid).await
+    }
+
     async fn handle_session_prompt(&self, params: &Value) -> RpcResult {
         let req: SessionPromptParams = parse_params(params)?;
         let sid = &req.session_id;
@@ -843,21 +920,36 @@ impl RpcDispatcher {
         let agent = match self.ctx.sessions.get_agent(sid).await {
             Some(a) => a,
             None => {
-                // The session was reaped (orphan grace expired or idle-TTL
-                // backstop fired) between the TUI's last touch and this
-                // prompt landing. The TUI is parked in `working` and will
-                // stay there forever unless we send the TurnComplete it
-                // is waiting for. Emit Failed (not Cancelled — the user
-                // didn't press Esc) and surface the structured error for
-                // request-form callers.
-                self.emit_turn_complete(
-                    sid,
-                    crate::rpc::types::TurnCompletionOutcome::Failed,
-                    "[session no longer exists on the daemon — start a new session to continue]"
-                        .to_string(),
-                )
-                .await;
-                return Err(rpc_err(SESSION_NOT_FOUND, "Session not found"));
+                // The in-memory session was reaped (orphan grace or idle TTL)
+                // between the TUI's last touch and this prompt landing. Recover
+                // to a WORKING session: rehydrate the agent + history from the
+                // durable ACP store and continue the turn. The user's prompt
+                // just lands — no dead end, no "start a new session". Only if
+                // the durable row is genuinely gone do we fail, and then we
+                // emit an attributed TurnComplete so the TUI leaves `working`.
+                match self.rehydrate_reaped_session(sid).await {
+                    Some(a) => a,
+                    None => {
+                        ::zeroclaw_log::record!(
+                            WARN,
+                            ::zeroclaw_log::Event::new(
+                                module_path!(),
+                                ::zeroclaw_log::Action::Fail,
+                            )
+                            .with_category(::zeroclaw_log::EventCategory::Agent)
+                            .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                            .with_attrs(::serde_json::json!({ "session_id": sid })),
+                            "session/prompt on a session absent from memory and the durable store; emitting TurnComplete so the client exits the working state"
+                        );
+                        self.emit_turn_complete(
+                            sid,
+                            crate::rpc::types::TurnCompletionOutcome::Failed,
+                            "turn cancelled by daemon: session_not_found".to_string(),
+                        )
+                        .await;
+                        return Err(rpc_err(SESSION_NOT_FOUND, "Session not found"));
+                    }
+                }
             }
         };
 
@@ -1007,17 +1099,8 @@ impl RpcDispatcher {
         .await;
 
         // Drain the cancel cause BEFORE removing the token (removal clears the
-        // cause map). On an idle-stall cancel the drain fired its own token
-        // without a recorded cause; record it here so the verdict audit always
-        // has attribution.
-        if let Ok(crate::rpc::turn::TurnOutcome::Cancelled {
-            idle_stall: true, ..
-        }) = &outcome
-        {
-            self.ctx
-                .sessions
-                .record_cancel_cause(sid, crate::rpc::session::CancelCause::IdleStall);
-        }
+        // cause map). Every cancel firing site records its cause before firing;
+        // a cancel with no recorded cause is a bug, not user attribution.
         let cancel_cause = self.ctx.sessions.take_cancel_cause(sid);
         self.ctx.sessions.remove_cancel_token(sid);
 
@@ -1163,10 +1246,34 @@ impl RpcDispatcher {
                 })
             }
             Ok(TurnOutcome::Cancelled { partial_text, .. }) => {
+                let cancel_message = match cancel_cause {
+                    Some(crate::rpc::session::CancelCause::ClientRpc) => {
+                        format!("turn cancelled by user in RPC_SESSION {}", req.session_id)
+                    }
+                    Some(cause) => {
+                        format!("turn cancelled by daemon: {}", cause.as_str())
+                    }
+                    None => "turn cancelled by daemon: unattributed".to_string(),
+                };
+                ::zeroclaw_log::record!(
+                    INFO,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Cancel)
+                        .with_category(::zeroclaw_log::EventCategory::Agent)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({
+                            "session_id": req.session_id,
+                            "agent_alias": attribution_agent_alias,
+                            "model_provider": attribution_model_provider,
+                            "model": attribution_model,
+                            "chat_mode": format!("{chat_mode:?}"),
+                            "cancel_cause": cancel_cause.map(|c| c.as_str()),
+                        })),
+                    "turn cancelled; emitting attributed TurnComplete so the client exits the working state"
+                );
                 self.emit_turn_complete(
                     &req.session_id,
                     crate::rpc::types::TurnCompletionOutcome::Cancelled,
-                    partial_text.clone(),
+                    cancel_message,
                 )
                 .await;
                 to_result(SessionPromptResult {
@@ -1194,7 +1301,7 @@ impl RpcDispatcher {
                 self.emit_turn_complete(
                     &req.session_id,
                     crate::rpc::types::TurnCompletionOutcome::Failed,
-                    format!("[turn failed: {e}]"),
+                    format!("turn failed: {e}"),
                 )
                 .await;
                 Err(rpc_err(INTERNAL_ERROR, e.to_string()))
@@ -3289,6 +3396,62 @@ mod tests {
         assert!(
             chat_backend.load(&format!("rpc_{sid}")).is_empty(),
             "ACP session must NOT touch chat session_backend"
+        );
+    }
+
+    /// A reaped ACP session (gone from memory, durable row intact) must
+    /// rehydrate to a WORKING session — the agent comes back in memory and the
+    /// next turn continues on the same conversation. This is the recovery path:
+    /// the alternative ("start a new session") is the irrecoverable freeze.
+    #[tokio::test]
+    async fn reaped_acp_session_rehydrates_to_working_instead_of_failing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = make_acp_test_config(&tmp);
+        let data_dir = config.data_dir.clone();
+        let (dispatcher, sessions, _chat_backend, acp_store) =
+            make_persistence_test_dispatcher(config, &data_dir);
+
+        let sid = "acp-reaped-001";
+        dispatcher
+            .handle_session_new_for_test(&json!({
+                "agent_alias": "test-agent",
+                "exclude_memory": true,
+                "chat_mode": "acp",
+                "session_id": sid,
+            }))
+            .await
+            .expect("session/new should succeed");
+
+        assert!(
+            sessions.get_agent(sid).await.is_some(),
+            "freshly created session must be live in memory"
+        );
+        assert!(
+            acp_store.load_session(sid).unwrap().is_some(),
+            "durable row must exist for the rehydrate source"
+        );
+
+        // Simulate the reaper tearing the in-memory session down while the
+        // durable row survives.
+        assert!(
+            sessions.remove(sid).await,
+            "reap must remove the in-memory session"
+        );
+        assert!(
+            sessions.get_agent(sid).await.is_none(),
+            "post-reap the session must be absent from memory"
+        );
+
+        let recovered = dispatcher.rehydrate_reaped_session(sid).await;
+        assert!(
+            recovered.is_some(),
+            "a reaped session with a live durable row must rehydrate to a \
+             working agent, not fail; failing here is the irrecoverable hang"
+        );
+        assert!(
+            sessions.get_agent(sid).await.is_some(),
+            "after rehydrate the session must be live in memory again so the \
+             next prompt lands on a working session"
         );
     }
 
