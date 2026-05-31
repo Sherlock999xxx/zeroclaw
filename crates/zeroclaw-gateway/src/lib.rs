@@ -44,7 +44,7 @@ use anyhow::{Context, Result};
 use axum::{
     Router,
     body::Bytes,
-    extract::{ConnectInfo, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Json},
     routing::{delete, get, post},
@@ -380,9 +380,9 @@ pub struct AppState {
     pub whatsapp: Option<Arc<WhatsAppChannel>>,
     /// `WhatsApp` app secret for webhook signature verification (`X-Hub-Signature-256`)
     pub whatsapp_app_secret: Option<Arc<str>>,
-    pub linq: Option<Arc<LinqChannel>>,
-    /// Linq webhook signing secret for signature verification
-    pub linq_signing_secret: Option<Arc<str>>,
+    pub linq: HashMap<String, Arc<LinqChannel>>,
+    /// Linq webhook signing secrets per alias
+    pub linq_signing_secrets: HashMap<String, Arc<str>>,
     pub nextcloud_talk: Option<Arc<NextcloudTalkChannel>>,
     /// Nextcloud Talk webhook secret for signature verification
     pub nextcloud_talk_webhook_secret: Option<Arc<str>>,
@@ -831,36 +831,45 @@ pub async fn run_gateway(
         })
         .map(Arc::from);
 
-    // Linq channel (if configured)
-    let linq_channel: Option<Arc<LinqChannel>> = config.channels.linq.values().next().map(|lq| {
-        let alias = "default".to_string();
-        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
-            let cfg_arc = config_state.clone();
-            let alias = alias.clone();
-            Arc::new(move || cfg_arc.read().channel_external_peers("linq", &alias))
-        };
-        Arc::new(LinqChannel::new(
-            lq.api_token.clone(),
-            lq.from_phone.clone(),
-            alias,
-            peer_resolver,
-        ))
-    });
-
-    // Linq signing secret for webhook signature verification.
-    let linq_signing_secret: Option<Arc<str>> = config
+    // Linq channel instances (multi-tenant: one per alias)
+    let linq_channels: HashMap<String, Arc<LinqChannel>> = config
         .channels
         .linq
-        .values()
-        .next()
-        .and_then(|lq| {
-            lq.signing_secret
+        .iter()
+        .filter(|(_, lq)| lq.enabled)
+        .map(|(alias, lq)| {
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_state.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("linq", &alias))
+            };
+            (
+                alias.clone(),
+                Arc::new(LinqChannel::new(
+                    lq.api_token.clone(),
+                    lq.from_phone.clone(),
+                    alias.clone(),
+                    peer_resolver,
+                )),
+            )
+        })
+        .collect();
+
+    // Linq signing secrets per alias.
+    let linq_signing_secrets: HashMap<String, Arc<str>> = config
+        .channels
+        .linq
+        .iter()
+        .filter_map(|(alias, lq)| {
+            let secret = lq
+                .signing_secret
                 .as_deref()
                 .map(str::trim)
-                .filter(|secret| !secret.is_empty())
-                .map(ToOwned::to_owned)
+                .filter(|s| !s.is_empty())
+                .map(ToOwned::to_owned)?;
+            Some((alias.clone(), Arc::from(secret)))
         })
-        .map(Arc::from);
+        .collect();
 
     // WATI channel (if configured)
     let wati_channel: Option<Arc<WatiChannel>> =
@@ -1147,8 +1156,10 @@ pub async fn run_gateway(
         println!("  GET  {pfx}/whatsapp  — Meta webhook verification");
         println!("  POST {pfx}/whatsapp  — WhatsApp message webhook");
     }
-    if linq_channel.is_some() {
-        println!("  POST {pfx}/linq      — Linq message webhook (iMessage/RCS/SMS)");
+    if !linq_channels.is_empty() {
+        for alias in linq_channels.keys() {
+            println!("  POST {pfx}/linq/{alias} — Linq SMS webhook ({alias})");
+        }
     }
     if wati_channel.is_some() {
         println!("  GET  {pfx}/wati      — WATI webhook verification");
@@ -1231,8 +1242,8 @@ pub async fn run_gateway(
         idempotency_store,
         whatsapp: whatsapp_channel,
         whatsapp_app_secret,
-        linq: linq_channel,
-        linq_signing_secret,
+        linq: linq_channels,
+        linq_signing_secrets,
         nextcloud_talk: nextcloud_talk_channel,
         nextcloud_talk_webhook_secret,
         wati: wati_channel,
@@ -1295,7 +1306,7 @@ pub async fn run_gateway(
         .route("/webhook", post(handle_webhook))
         .route("/whatsapp", get(handle_whatsapp_verify))
         .route("/whatsapp", post(handle_whatsapp_message))
-        .route("/linq", post(handle_linq_webhook))
+        .route("/linq/{alias}", post(handle_linq_webhook))
         .route("/wati", get(handle_wati_verify))
         .route("/wati", post(handle_wati_webhook))
         .route("/nextcloud-talk", post(handle_nextcloud_talk_webhook))
@@ -2503,23 +2514,24 @@ async fn handle_whatsapp_message(
     (StatusCode::OK, Json(serde_json::json!({"status": "ok"})))
 }
 
-/// POST /linq — incoming message webhook (iMessage/RCS/SMS via Linq)
+/// POST /linq/:alias — incoming message webhook (iMessage/RCS/SMS via Linq)
 async fn handle_linq_webhook(
     State(state): State<AppState>,
+    Path(alias): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    let Some(ref linq) = state.linq else {
+    let Some(linq) = state.linq.get(&alias) else {
         return (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Linq not configured"})),
+            Json(serde_json::json!({"error": format!("Linq alias '{alias}' not configured")})),
         );
     };
 
     let body_str = String::from_utf8_lossy(&body);
 
     // ── Security: Verify X-Webhook-Signature if signing_secret is configured ──
-    if let Some(ref signing_secret) = state.linq_signing_secret {
+    if let Some(signing_secret) = state.linq_signing_secrets.get(&alias) {
         let timestamp = headers
             .get("X-Webhook-Timestamp")
             .and_then(|v| v.to_str().ok())
@@ -2539,9 +2551,10 @@ async fn handle_linq_webhook(
             ::zeroclaw_log::record!(
                 WARN,
                 ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
-                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                    .with_attrs(::serde_json::json!({"channel": "linq", "alias": alias})),
                 &format!(
-                    "Linq webhook signature verification failed (signature: {})",
+                    "Linq webhook signature verification failed for alias '{alias}' (signature: {})",
                     if signature.is_empty() {
                         "missing"
                     } else {
@@ -2574,7 +2587,7 @@ async fn handle_linq_webhook(
 
     // Process each message
     for msg in &messages {
-        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"channel": "linq", "sender": msg.sender, "content": msg.content})), "inbound webhook message");
+        ::zeroclaw_log::record!(INFO, ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(::serde_json::json!({"channel": "linq", "alias": alias, "sender": msg.sender, "content": msg.content})), "inbound webhook message");
         let session_id = sender_session_id("linq", msg);
 
         // Auto-save to memory
@@ -3457,8 +3470,8 @@ mod tests {
             idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
             whatsapp: None,
             whatsapp_app_secret: None,
-            linq: None,
-            linq_signing_secret: None,
+            linq: HashMap::new(),
+            linq_signing_secrets: HashMap::new(),
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -3527,8 +3540,8 @@ mod tests {
             idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
             whatsapp: None,
             whatsapp_app_secret: None,
-            linq: None,
-            linq_signing_secret: None,
+            linq: HashMap::new(),
+            linq_signing_secrets: HashMap::new(),
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4079,8 +4092,8 @@ mod tests {
             idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
             whatsapp: None,
             whatsapp_app_secret: None,
-            linq: None,
-            linq_signing_secret: None,
+            linq: HashMap::new(),
+            linq_signing_secrets: HashMap::new(),
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4162,8 +4175,8 @@ mod tests {
             idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
             whatsapp: None,
             whatsapp_app_secret: None,
-            linq: None,
-            linq_signing_secret: None,
+            linq: HashMap::new(),
+            linq_signing_secrets: HashMap::new(),
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4257,8 +4270,8 @@ mod tests {
             idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
             whatsapp: None,
             whatsapp_app_secret: None,
-            linq: None,
-            linq_signing_secret: None,
+            linq: HashMap::new(),
+            linq_signing_secrets: HashMap::new(),
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4324,8 +4337,8 @@ mod tests {
             idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
             whatsapp: None,
             whatsapp_app_secret: None,
-            linq: None,
-            linq_signing_secret: None,
+            linq: HashMap::new(),
+            linq_signing_secrets: HashMap::new(),
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4396,8 +4409,8 @@ mod tests {
             idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
             whatsapp: None,
             whatsapp_app_secret: None,
-            linq: None,
-            linq_signing_secret: None,
+            linq: HashMap::new(),
+            linq_signing_secrets: HashMap::new(),
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4473,8 +4486,8 @@ mod tests {
             idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
             whatsapp: None,
             whatsapp_app_secret: None,
-            linq: None,
-            linq_signing_secret: None,
+            linq: HashMap::new(),
+            linq_signing_secrets: HashMap::new(),
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4550,8 +4563,8 @@ mod tests {
             idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
             whatsapp: None,
             whatsapp_app_secret: None,
-            linq: None,
-            linq_signing_secret: None,
+            linq: HashMap::new(),
+            linq_signing_secrets: HashMap::new(),
             nextcloud_talk: Some(channel),
             nextcloud_talk_webhook_secret: Some(Arc::from(secret)),
             wati: None,
@@ -4674,8 +4687,8 @@ mod tests {
             idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
             whatsapp: None,
             whatsapp_app_secret: None,
-            linq: None,
-            linq_signing_secret: None,
+            linq: HashMap::new(),
+            linq_signing_secrets: HashMap::new(),
             nextcloud_talk: Some(channel),
             nextcloud_talk_webhook_secret: None,
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),

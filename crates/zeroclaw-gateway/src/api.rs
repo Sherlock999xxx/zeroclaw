@@ -1805,6 +1805,7 @@ mod tests {
     use axum::response::IntoResponse;
     use http_body_util::BodyExt;
     use parking_lot::RwLock;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
     use zeroclaw_infra::session_backend::SessionBackend;
@@ -1973,8 +1974,8 @@ mod tests {
             idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
             whatsapp: None,
             whatsapp_app_secret: None,
-            linq: None,
-            linq_signing_secret: None,
+            linq: HashMap::new(),
+            linq_signing_secrets: HashMap::new(),
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
