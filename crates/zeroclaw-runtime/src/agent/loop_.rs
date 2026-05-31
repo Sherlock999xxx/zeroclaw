@@ -145,6 +145,37 @@ pub fn apply_policy_tool_filter(
     });
 }
 
+/// Apply the SecurityPolicy built-in tool filter on the channel/daemon
+/// (`process_message`) path.
+///
+/// Extracted as a named seam so the production filtering of the eager
+/// built-in registry is regression-testable without driving the full agent
+/// loop (see `process_message_policy_filters_eager_builtins`). The channel
+/// path has no caller-supplied allowlist, so only the agent's own
+/// `SecurityPolicy` (`allowed_tools` + `excluded_tools`) gates here; the
+/// `run()` path additionally composes a caller-supplied `allowed_tools` gate.
+pub(crate) fn filter_channel_builtin_tools(
+    tools_registry: &mut Vec<Box<dyn Tool>>,
+    security: &zeroclaw_config::policy::SecurityPolicy,
+) {
+    let before_filter = tools_registry.len();
+    apply_policy_tool_filter(tools_registry, Some(security), None);
+    if tools_registry.len() != before_filter {
+        ::zeroclaw_log::record!(
+            INFO,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(
+                ::serde_json::json!({
+                    "before": before_filter,
+                    "retained": tools_registry.len(),
+                    "policy_allowed": security.allowed_tools.as_ref().map(|v| v.len()),
+                    "policy_excluded": security.excluded_tools.as_ref().map(|v| v.len()),
+                })
+            ),
+            "Applied capability-based tool access filter (process_message)"
+        );
+    }
+}
+
 /// Returns the subset of `tool_specs` that should be sent to the LLM for this turn.
 ///
 /// Rules (mirrors NullClaw `filterToolSpecsForTurn`):
@@ -2847,6 +2878,48 @@ pub struct AgentRunOverrides {
     pub is_subagent: bool,
 }
 
+/// Build the dotted provider ref (`"openai.qwertfoozp"`) from the agent's
+/// configured `model_provider` field. Returns `None` when the agent has no
+/// `model_provider` set or when the ref does not resolve to a known alias.
+///
+/// Using the full dotted ref (rather than just the family type) ensures the
+/// alias-aware factory path is taken, so config fields such as
+/// `requires_openai_auth` reach `dispatch_family_factory` instead of being
+/// silently dropped.
+fn agent_provider_composite(
+    config: &zeroclaw_config::schema::Config,
+    agent_alias: &str,
+) -> Option<String> {
+    config
+        .resolved_model_provider_for_agent(agent_alias)
+        .map(|(ty, alias, _)| format!("{ty}.{alias}"))
+}
+
+/// Resolve (api_key, uri) for `provider_name`, preferring the alias-specific
+/// config when `provider_name` is a dotted `<family>.<alias>` reference.
+/// Falls back to `fallback` (the agent's configured provider) for bare family
+/// names or when the alias isn't found.
+///
+/// This prevents `-p openai.shartgpt` (OAuth, no key) from inheriting the
+/// agent's current provider key (e.g. an xai key), which would trigger the
+/// API key prefix-mismatch preflight and block providers that authenticate
+/// via OAuth rather than an explicit API key.
+fn api_key_and_uri_for_provider(
+    config: &zeroclaw_config::schema::Config,
+    provider_name: &str,
+    fallback: Option<&zeroclaw_config::schema::ModelProviderConfig>,
+) -> (Option<String>, Option<String>) {
+    if let Some((fam, al)) = provider_name.split_once('.')
+        && let Some(entry) = config.providers.models.find(fam, al)
+    {
+        return (entry.api_key.clone(), entry.uri.clone());
+    }
+    (
+        fallback.and_then(|e| e.api_key.clone()),
+        fallback.and_then(|e| e.uri.clone()),
+    )
+}
+
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub async fn run(
     config: Config,
@@ -3077,16 +3150,28 @@ pub async fn run(
                                 registry.server_count()
                             )
                         );
-                        deferred_section =
-                            crate::tools::build_deferred_tools_section(&deferred_set);
+                        // Build access policy from SecurityPolicy so blocked
+                        // MCP tools never surface anywhere in context.
+                        let mcp_policy =
+                            zeroclaw_tools::tool_search::ToolAccessPolicy::from_security(
+                                security.allowed_tools.as_deref(),
+                                security.excluded_tools.as_deref(),
+                                allowed_tools.as_deref(),
+                            );
+                        deferred_section = crate::tools::build_deferred_tools_section_filtered(
+                            &deferred_set,
+                            mcp_policy.as_ref(),
+                        );
                         let activated = std::sync::Arc::new(std::sync::Mutex::new(
                             crate::tools::ActivatedToolSet::new(),
                         ));
                         activated_handle = Some(std::sync::Arc::clone(&activated));
-                        tools_registry.push(Box::new(crate::tools::ToolSearchTool::new(
-                            deferred_set,
-                            activated,
-                        )));
+                        let mut tool_search =
+                            crate::tools::ToolSearchTool::new(deferred_set, activated);
+                        if let Some(policy) = mcp_policy {
+                            tool_search = tool_search.with_access_policy(policy);
+                        }
+                        tools_registry.push(Box::new(tool_search));
                     } else {
                         // Eager path: register all MCP tools directly
                         let names = registry.tool_names();
@@ -3133,10 +3218,10 @@ pub async fn run(
         }
 
         // ── Resolve model_provider ─────────────────────────────────────────
-        let agent_provider_type = agent_provider_resolved.as_ref().map(|(ty, _, _)| *ty);
+        let agent_provider_ref = agent_provider_composite(&config, agent_alias);
         let mut provider_name = provider_override
             .as_deref()
-            .or(agent_provider_type)
+            .or(agent_provider_ref.as_deref())
             .ok_or_else(|| {
                 ::zeroclaw_log::record!(
                     ERROR,
@@ -3174,15 +3259,26 @@ pub async fn run(
             span.record("model", model_name.as_str());
         }
 
-        let provider_runtime_options =
+        let provider_runtime_options_base =
             zeroclaw_providers::provider_runtime_options_from_config(&config);
+        let provider_runtime_options = zeroclaw_providers::options_for_provider_ref(
+            &config,
+            &provider_name,
+            &provider_runtime_options_base,
+        );
 
+        // Resolve api_key and uri from the actual provider being constructed.
+        // For dotted aliases (e.g. "openai.shartgpt"), look up the alias-specific
+        // config so a -p override does not leak the agent's current provider key
+        // (e.g. an xai key) to a different provider family that doesn't expect it.
+        let (initial_api_key, initial_uri) =
+            api_key_and_uri_for_provider(&config, &provider_name, agent_model_provider);
         let mut model_provider: Box<dyn ModelProvider> =
             zeroclaw_providers::create_routed_model_provider_with_options(
                 &config,
                 &provider_name,
-                agent_model_provider.and_then(|e| e.api_key.as_deref()),
-                agent_model_provider.and_then(|e| e.uri.as_deref()),
+                initial_api_key.as_deref(),
+                initial_uri.as_deref(),
                 &config.reliability,
                 &config.model_routes,
                 &model_name,
@@ -3611,16 +3707,25 @@ pub async fn run(
                                 )
                             );
 
+                            let (switch_api_key, switch_uri) = api_key_and_uri_for_provider(
+                                &config,
+                                &new_model_provider,
+                                agent_model_provider,
+                            );
                             model_provider =
                                 zeroclaw_providers::create_routed_model_provider_with_options(
                                     &config,
                                     &new_model_provider,
-                                    agent_model_provider.and_then(|e| e.api_key.as_deref()),
-                                    agent_model_provider.and_then(|e| e.uri.as_deref()),
+                                    switch_api_key.as_deref(),
+                                    switch_uri.as_deref(),
                                     &config.reliability,
                                     &config.model_routes,
                                     &new_model,
-                                    &provider_runtime_options,
+                                    &zeroclaw_providers::options_for_provider_ref(
+                                        &config,
+                                        &new_model_provider,
+                                        &provider_runtime_options_base,
+                                    ),
                                 )?;
 
                             provider_name = new_model_provider;
@@ -4004,16 +4109,25 @@ pub async fn run(
                                     )
                                 );
 
+                                let (switch_api_key2, switch_uri2) = api_key_and_uri_for_provider(
+                                    &config,
+                                    &new_model_provider,
+                                    agent_model_provider,
+                                );
                                 model_provider =
                                     zeroclaw_providers::create_routed_model_provider_with_options(
                                         &config,
                                         &new_model_provider,
-                                        agent_model_provider.and_then(|e| e.api_key.as_deref()),
-                                        agent_model_provider.and_then(|e| e.uri.as_deref()),
+                                        switch_api_key2.as_deref(),
+                                        switch_uri2.as_deref(),
                                         &config.reliability,
                                         &config.model_routes,
                                         &new_model,
-                                        &provider_runtime_options,
+                                        &zeroclaw_providers::options_for_provider_ref(
+                                            &config,
+                                            &new_model_provider,
+                                            &provider_runtime_options_base,
+                                        ),
                                     )?;
 
                                 provider_name = new_model_provider;
@@ -4238,7 +4352,7 @@ pub async fn process_message(
         let runtime: Arc<dyn platform::RuntimeAdapter> =
             Arc::from(platform::create_runtime(&config.runtime)?);
         let security = Arc::new(SecurityPolicy::for_agent(&config, agent_alias)?);
-        let (provider_name, _provider_alias, agent_model_provider) = match config
+        let (provider_name, provider_alias, agent_model_provider) = match config
             .resolved_model_provider_for_agent(agent_alias)
         {
             Some(resolved) => (resolved.0, resolved.1.to_string(), Some(resolved.2.clone())),
@@ -4309,10 +4423,18 @@ pub async fn process_message(
         };
         tools_registry.extend(peripheral_tools);
 
+        // ── Capability-based tool access control ─────────────────────
+        // Mirror the `run()` path: apply the SecurityPolicy filter
+        // (allowed_tools + excluded_tools) so daemon-provisioned agents get
+        // the same restriction as CLI-invoked agents. Extracted into
+        // `filter_channel_builtin_tools` so the production path is
+        // regression-tested (see process_message_policy_filters_eager_builtins).
+        filter_channel_builtin_tools(&mut tools_registry, security.as_ref());
+
         // ── Wire MCP tools (non-fatal) — process_message path ────────
         // NOTE: Same ordering contract as the CLI path above — MCP tools must be
-        // injected after filter_primary_agent_tools_or_fail (or equivalent built-in
-        // tool allow/deny filtering) to avoid MCP tools being silently dropped.
+        // injected after the policy tool filter to avoid MCP tools being
+        // silently dropped by a restrictive allowlist.
         let mut deferred_section = String::new();
         let mut activated_handle_pm: Option<
             std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>,
@@ -4346,16 +4468,26 @@ pub async fn process_message(
                                 registry.server_count()
                             )
                         );
-                        deferred_section =
-                            crate::tools::build_deferred_tools_section(&deferred_set);
+                        let mcp_policy_pm =
+                            zeroclaw_tools::tool_search::ToolAccessPolicy::from_security(
+                                security.allowed_tools.as_deref(),
+                                security.excluded_tools.as_deref(),
+                                None, // no caller-supplied allowlist in channel path
+                            );
+                        deferred_section = crate::tools::build_deferred_tools_section_filtered(
+                            &deferred_set,
+                            mcp_policy_pm.as_ref(),
+                        );
                         let activated = std::sync::Arc::new(std::sync::Mutex::new(
                             crate::tools::ActivatedToolSet::new(),
                         ));
                         activated_handle_pm = Some(std::sync::Arc::clone(&activated));
-                        tools_registry.push(Box::new(crate::tools::ToolSearchTool::new(
-                            deferred_set,
-                            activated,
-                        )));
+                        let mut tool_search_pm =
+                            crate::tools::ToolSearchTool::new(deferred_set, activated);
+                        if let Some(policy) = mcp_policy_pm {
+                            tool_search_pm = tool_search_pm.with_access_policy(policy);
+                        }
+                        tools_registry.push(Box::new(tool_search_pm));
                     } else {
                         let names = registry.tool_names();
                         let mut registered = 0usize;
@@ -4412,12 +4544,15 @@ pub async fn process_message(
              `model` set. Configure [model_providers.{provider_name}.<alias>] model = \"...\"."
             ),
         };
-        let provider_runtime_options =
-            zeroclaw_providers::provider_runtime_options_from_config(&config);
+        let provider_runtime_options = zeroclaw_providers::provider_runtime_options_for_alias(
+            &config,
+            provider_name,
+            provider_alias.as_str(),
+        );
         let model_provider: Box<dyn ModelProvider> =
             zeroclaw_providers::create_routed_model_provider_with_options(
                 &config,
-                provider_name,
+                &format!("{provider_name}.{provider_alias}"),
                 agent_model_provider
                     .as_ref()
                     .and_then(|e| e.api_key.as_deref()),
@@ -11555,6 +11690,167 @@ Let me check the result."#;
         assert!(
             tools.is_empty(),
             "Some(vec![]) on policy must deny every tool"
+        );
+    }
+
+    // ── agent_provider_composite regression ───────────────────────────────
+
+    #[test]
+    fn agent_provider_composite_returns_dotted_ref_not_bare_family() {
+        use zeroclaw_config::providers::ModelProviderRef;
+        use zeroclaw_config::schema::{
+            AliasedAgentConfig, ModelProviderConfig, OpenAIModelProviderConfig,
+        };
+
+        let alias = "qwertfoozp";
+
+        let mut config = zeroclaw_config::schema::Config::default();
+        config.providers.models.openai.insert(
+            alias.to_string(),
+            OpenAIModelProviderConfig {
+                base: ModelProviderConfig {
+                    requires_openai_auth: true,
+                    ..Default::default()
+                },
+            },
+        );
+        config.agents.insert(
+            "my_agent".to_string(),
+            AliasedAgentConfig {
+                model_provider: ModelProviderRef::new(format!("openai.{alias}")),
+                ..Default::default()
+            },
+        );
+
+        let result = super::agent_provider_composite(&config, "my_agent");
+
+        // Must be the full dotted ref so the alias-aware factory path is taken.
+        assert_eq!(
+            result.as_deref(),
+            Some("openai.qwertfoozp"),
+            "agent_provider_composite must return the dotted composite ref"
+        );
+        // Explicitly assert it is NOT the bare family — this is the regression
+        // this test protects against.
+        assert_ne!(
+            result.as_deref(),
+            Some("openai"),
+            "bare family name would bypass the alias-aware factory path and drop \
+             requires_openai_auth from the config, routing to the wrong provider"
+        );
+    }
+
+    // ── process_message() path regression (#6959) ─────────────────
+    //
+    // The bug was not that `apply_policy_tool_filter` filtered wrong; it
+    // was that the daemon/channel `process_message` path never called it,
+    // so a restrictive SecurityPolicy did not apply when the same agent was
+    // reached through a channel. This drives the exact seam that path now
+    // calls (`filter_channel_builtin_tools`) against the *real* eager
+    // built-in registry produced by `all_tools`, and proves an agent
+    // allowlisted to `file_read` does not get raw `shell` / `file_write`.
+    #[test]
+    fn process_message_policy_filters_eager_builtins() {
+        use std::sync::Arc;
+
+        let config = zeroclaw_config::schema::Config::default();
+        let security = Arc::new(TestPolicy {
+            workspace_dir: std::env::temp_dir(),
+            ..TestPolicy::default()
+        });
+        let risk = zeroclaw_config::schema::RiskProfileConfig::default();
+        let mem: Arc<dyn zeroclaw_memory::Memory> =
+            Arc::new(zeroclaw_memory::NoneMemory::new("test"));
+
+        let (mut registry, ..) = crate::tools::all_tools(
+            Arc::new(config.clone()),
+            &security,
+            &risk,
+            "test",
+            mem,
+            None,
+            None,
+            &config.browser,
+            &config.http_request,
+            &config.web_fetch,
+            &security.workspace_dir,
+            &config.agents,
+            None,
+            &config,
+            None,
+            false,
+        );
+
+        // Sanity: the unrestricted channel registry exposes the dangerous
+        // eager built-ins a restrictive policy is expected to remove.
+        let unrestricted = tool_names(&registry);
+        assert!(
+            unrestricted.contains(&"file_read"),
+            "expected file_read in unrestricted registry, got {unrestricted:?}"
+        );
+        assert!(
+            unrestricted.contains(&"shell"),
+            "expected shell in unrestricted registry, got {unrestricted:?}"
+        );
+        assert!(
+            unrestricted.contains(&"file_write"),
+            "expected file_write in unrestricted registry, got {unrestricted:?}"
+        );
+
+        // Allowlist the agent to `file_read` only, then run the exact filter
+        // `process_message` applies.
+        let policy = TestPolicy {
+            allowed_tools: Some(vec!["file_read".into()]),
+            ..TestPolicy::default()
+        };
+        super::filter_channel_builtin_tools(&mut registry, &policy);
+
+        let filtered = tool_names(&registry);
+        assert!(
+            filtered.contains(&"file_read"),
+            "allowlisted tool must survive on process_message path, got {filtered:?}"
+        );
+        assert!(
+            !filtered.contains(&"shell"),
+            "shell must be filtered out on process_message path, got {filtered:?}"
+        );
+        assert!(
+            !filtered.contains(&"file_write"),
+            "file_write must be filtered out on process_message path, got {filtered:?}"
+        );
+
+        // Denylist variant: an exclusion drops only the named tool.
+        let (mut registry2, ..) = crate::tools::all_tools(
+            Arc::new(config.clone()),
+            &security,
+            &risk,
+            "test",
+            Arc::new(zeroclaw_memory::NoneMemory::new("test")),
+            None,
+            None,
+            &config.browser,
+            &config.http_request,
+            &config.web_fetch,
+            &security.workspace_dir,
+            &config.agents,
+            None,
+            &config,
+            None,
+            false,
+        );
+        let deny = TestPolicy {
+            excluded_tools: Some(vec!["shell".into()]),
+            ..TestPolicy::default()
+        };
+        super::filter_channel_builtin_tools(&mut registry2, &deny);
+        let after_deny = tool_names(&registry2);
+        assert!(
+            !after_deny.contains(&"shell"),
+            "excluded shell must be removed on process_message path, got {after_deny:?}"
+        );
+        assert!(
+            after_deny.contains(&"file_read"),
+            "non-excluded file_read must remain, got {after_deny:?}"
         );
     }
 }
