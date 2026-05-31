@@ -190,9 +190,10 @@ fn format_ftl_message(
 }
 
 fn load_ftl_from_disk(locale: &str, filename: &str) -> Option<String> {
-    let workspace_path =
-        workspace_dir_from_config().map(|d| d.join("locales").join(locale).join(filename));
-    let search_paths = [workspace_path];
+    let path = zeroclaw_config::schema::ftl_locale_dir(locale)
+        .ok()
+        .map(|d| d.join(filename));
+    let search_paths = [path];
     for path in search_paths.into_iter().flatten() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             ::zeroclaw_log::record!(
@@ -213,11 +214,19 @@ pub fn detect_locale() -> String {
 }
 
 fn read_config_table() -> Option<toml::Table> {
-    let base = directories::BaseDirs::new()?;
-    let candidates = [
-        base.home_dir().join(".zeroclaw/config.toml"),
-        base.config_dir().join("zeroclaw/config.toml"),
-    ];
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    // Honor an explicit config dir first so locale detection and FTL loading
+    // (zeroclaw_config::ftl_locale_dir) resolve against the same directory.
+    if let Ok(custom) = std::env::var("ZEROCLAW_CONFIG_DIR") {
+        let trimmed = custom.trim();
+        if !trimmed.is_empty() {
+            candidates.push(std::path::PathBuf::from(trimmed).join("config.toml"));
+        }
+    }
+    if let Some(base) = directories::BaseDirs::new() {
+        candidates.push(base.home_dir().join(".zeroclaw/config.toml"));
+        candidates.push(base.config_dir().join("zeroclaw/config.toml"));
+    }
     for path in &candidates {
         if let Ok(contents) = std::fs::read_to_string(path) {
             return contents.parse().ok();
@@ -233,21 +242,6 @@ fn locale_from_config() -> Option<String> {
         return None;
     }
     Some(normalize_locale(&locale))
-}
-
-fn workspace_dir_from_config() -> Option<std::path::PathBuf> {
-    if let Some(dir) = read_config_table()
-        .as_ref()
-        .and_then(|t| t.get("workspace_dir"))
-        .and_then(|v| v.as_str())
-    {
-        return Some(std::path::PathBuf::from(dir));
-    }
-    Some(
-        directories::BaseDirs::new()?
-            .home_dir()
-            .join(".zeroclaw/workspace"),
-    )
 }
 
 /// Normalize "zh_CN.UTF-8" → "zh-CN".
@@ -530,5 +524,29 @@ mod tests {
     fn detect_locale_defaults_to_en_without_config() {
         // Locale is config-only. Without a config.toml present, must return "en".
         assert_eq!(detect_locale(), "en");
+    }
+
+    #[test]
+    fn load_ftl_from_disk_reads_config_dir_data_ftl() {
+        // Proves a fetched catalogue at <config_dir>/data/ftl/<locale>/<file>
+        // is found by the loader. Uses a unique temp dir via ZEROCLAW_CONFIG_DIR.
+        let tmp = std::env::temp_dir().join(format!("zc-i18n-{}", std::process::id()));
+        let dir = tmp.join("data/ftl/xx");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("cli.ftl"), "cli-probe = hit\n").unwrap();
+
+        // SAFETY: single-threaded test; restored before returning.
+        let prev = std::env::var("ZEROCLAW_CONFIG_DIR").ok();
+        unsafe { std::env::set_var("ZEROCLAW_CONFIG_DIR", &tmp) };
+
+        let loaded = load_ftl_from_disk("xx", "cli.ftl");
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("ZEROCLAW_CONFIG_DIR", v) },
+            None => unsafe { std::env::remove_var("ZEROCLAW_CONFIG_DIR") },
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        assert_eq!(loaded.as_deref(), Some("cli-probe = hit\n"));
     }
 }

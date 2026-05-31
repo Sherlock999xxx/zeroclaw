@@ -96,38 +96,40 @@ fn format_ftl_messages(ftl_source: &str, locale: &str) -> HashMap<String, String
     map
 }
 
+/// Disk lookup for a locale's zerocode catalogue. Reads the canonical shared
+/// location written by `zeroclaw locales fetch`:
+/// `<config_dir>/data/ftl/<locale>/zerocode.ftl`, where `<config_dir>` honors
+/// `ZEROCLAW_CONFIG_DIR` and otherwise defaults to `~/.zeroclaw`. This mirrors
+/// the runtime loader's path (zeroclaw-config::ftl_locale_dir) — kept inline
+/// because zerocode carries no `zeroclaw-*` dependency. `ZEROCODE_LOCALE_DIR`
+/// remains an explicit override for testing.
 fn load_ftl_from_disk(locale: &str) -> Option<String> {
     let filename = format!("{locale}/zerocode.ftl");
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(explicit) = std::env::var("ZEROCODE_LOCALE_DIR") {
         candidates.push(PathBuf::from(explicit).join(&filename));
     }
-    if let Some(base) = directories::BaseDirs::new() {
-        candidates.push(
-            base.config_dir()
-                .join("zerocode")
-                .join("locales")
-                .join(&filename),
-        );
-        candidates.push(
-            base.home_dir()
-                .join(".zeroclaw")
-                .join("zerocode")
-                .join("locales")
-                .join(&filename),
-        );
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(parent) = exe.parent()
-    {
-        candidates.push(parent.join("../share/zerocode/locales").join(&filename));
-    }
+    candidates.push(config_dir().join("data").join("ftl").join(&filename));
     for path in candidates {
         if let Ok(content) = std::fs::read_to_string(&path) {
             return Some(content);
         }
     }
     None
+}
+
+/// Resolve the ZeroClaw config directory the same way the backend does:
+/// `ZEROCLAW_CONFIG_DIR` if set, else `~/.zeroclaw`.
+fn config_dir() -> PathBuf {
+    if let Ok(custom) = std::env::var("ZEROCLAW_CONFIG_DIR") {
+        let trimmed = custom.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    directories::BaseDirs::new()
+        .map(|b| b.home_dir().join(".zeroclaw"))
+        .unwrap_or_else(|| PathBuf::from(".zeroclaw"))
 }
 
 fn locale_from_config() -> Option<String> {

@@ -178,7 +178,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let mut acc = String::new();
 
-        let sender = tokio::spawn(async move {
+        let sender = zeroclaw_spawn::spawn!(async move {
             let _ = tx
                 .send(TurnEvent::ToolCall {
                     id: "c1".to_string(),
@@ -235,7 +235,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let mut acc = String::new();
 
-        let sender = tokio::spawn(async move {
+        let sender = zeroclaw_spawn::spawn!(async move {
             for delta in ["he", "llo", " ", "world"] {
                 let _ = tx
                     .send(TurnEvent::Chunk {

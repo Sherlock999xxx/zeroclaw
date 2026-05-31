@@ -9,6 +9,7 @@
 - [YOLO mode](./getting-started/yolo.md)
 - [Multi-model setup](./getting-started/multi-model-setup.md)
 - [zerocode](./getting-started/tui.md)
+- [Language & translations](./getting-started/language.md)
 
 # Setup
 

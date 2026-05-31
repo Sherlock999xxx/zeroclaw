@@ -13519,6 +13519,16 @@ fn default_config_dir() -> Result<PathBuf> {
     Ok(home.join(".zeroclaw"))
 }
 
+/// Canonical on-disk directory for a locale's runtime/zerocode FTL catalogues:
+/// `<config_dir>/data/ftl/<locale>/`. This is where `zeroclaw locales fetch`
+/// writes downloaded translations and where the runtime i18n loader reads them.
+/// `<config_dir>` honors `ZEROCLAW_CONFIG_DIR` and otherwise defaults to
+/// `~/.zeroclaw`. The zerocode binary mirrors this path inline (it carries no
+/// `zeroclaw-*` dependency).
+pub fn ftl_locale_dir(locale: &str) -> Result<PathBuf> {
+    Ok(default_config_dir()?.join("data").join("ftl").join(locale))
+}
+
 /// Build a default path string by joining `relative` onto the resolved
 /// platform config dir. The form sees the resolved absolute path
 /// (`/home/<user>/.zeroclaw/<relative>` on Linux,

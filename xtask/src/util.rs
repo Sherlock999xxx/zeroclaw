@@ -142,11 +142,7 @@ pub fn fluent_catalog_roots_for(
             if let Some((_, path)) = all.iter().find(|(n, _)| *n == name) {
                 Ok(vec![path.clone()])
             } else {
-                let choices = all
-                    .iter()
-                    .map(|(n, _)| *n)
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let choices = all.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ");
                 anyhow::bail!("unknown --catalog '{name}'; valid choices: {choices}")
             }
         }
@@ -278,4 +274,3 @@ pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Res
     }
     Ok(())
 }
-
