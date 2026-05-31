@@ -66,6 +66,8 @@ pub use crate::signal::SignalChannel;
 pub use crate::slack::SlackChannel;
 pub use crate::transcription;
 pub use crate::tts::{TtsManager, TtsProvider};
+#[cfg(feature = "channel-twilio")]
+pub use crate::twilio::TwilioChannel;
 #[cfg(feature = "channel-twitter")]
 pub use crate::twitter::TwitterChannel;
 #[cfg(feature = "channel-voice-call")]
@@ -5765,10 +5767,42 @@ fn build_channel_by_id(
                 anyhow::bail!("Voice Call channel requires the `channel-voice-call` feature");
             }
         }
+        "twilio" => {
+            #[cfg(feature = "channel-twilio")]
+            {
+                let tw = config
+                    .channels
+                    .twilio
+                    .get("default")
+                    .context("Twilio channel is not configured")?;
+                let alias = "default".to_string();
+                let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                    let cfg_arc = config_arc.clone();
+                    let alias = alias.clone();
+                    Arc::new(move || cfg_arc.read().channel_external_peers("twilio", &alias))
+                };
+                Ok(Arc::new(
+                    TwilioChannel::new(
+                        tw.account_sid.clone(),
+                        tw.auth_token.clone(),
+                        tw.from_number.clone(),
+                        alias,
+                        peer_resolver,
+                    )
+                    .with_approval_timeout_secs(tw.approval_timeout_secs)
+                    .with_proxy_url(tw.proxy_url.clone())
+                    .with_mention_patterns(tw.mention_patterns.clone()),
+                ))
+            }
+            #[cfg(not(feature = "channel-twilio"))]
+            {
+                anyhow::bail!("Twilio channel requires the `channel-twilio` feature");
+            }
+        }
         other => anyhow::bail!(
             "Unknown channel '{other}'. Supported: telegram, discord, slack, mattermost, signal, \
             matrix, whatsapp, qq, lark, feishu, dingtalk, wecom, wecom_ws, nextcloud_talk, wati, linq, \
-            email, gmail_push, irc, twitter, mochat, imessage, line, voice-call"
+            email, gmail_push, irc, twitter, mochat, imessage, line, voice-call, twilio"
         ),
     }
 }
@@ -7144,6 +7178,48 @@ fn collect_configured_channels(
                 .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
             "Voice Call channel is configured but this build was compiled without \
              `channel-voice-call`; skipping Voice Call."
+        );
+    }
+
+    #[cfg(feature = "channel-twilio")]
+    for (alias, tw) in &config.channels.twilio {
+        if !active_channel_aliases.contains(&format!("twilio.{alias}")) {
+            continue;
+        }
+        if !tw.enabled {
+            continue;
+        }
+        let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+            let cfg_arc = config_arc.clone();
+            let alias = alias.clone();
+            Arc::new(move || cfg_arc.read().channel_external_peers("twilio", &alias))
+        };
+        channels.push(ConfiguredChannel {
+            display_name: "Twilio",
+            alias: Some(alias.clone()),
+            channel: Arc::new(
+                TwilioChannel::new(
+                    tw.account_sid.clone(),
+                    tw.auth_token.clone(),
+                    tw.from_number.clone(),
+                    alias.clone(),
+                    peer_resolver,
+                )
+                .with_approval_timeout_secs(tw.approval_timeout_secs)
+                .with_proxy_url(tw.proxy_url.clone())
+                .with_mention_patterns(tw.mention_patterns.clone()),
+            ),
+        });
+    }
+
+    #[cfg(not(feature = "channel-twilio"))]
+    if !config.channels.twilio.is_empty() {
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "Twilio channel is configured but this build was compiled without \
+             `channel-twilio`; skipping Twilio."
         );
     }
 

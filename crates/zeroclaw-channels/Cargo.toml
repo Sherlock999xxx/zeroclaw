@@ -86,6 +86,7 @@ rustls = { version = "0.23", default-features = false, features = [
 rustls-pki-types = "1.14.0"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
+sha1 = "0.10"
 sha2 = "0.10"
 tokio = { version = "1.50", default-features = false, features = [
   "fs",
@@ -171,6 +172,7 @@ default = [
   "channel-signal",
   "channel-slack",
   "channel-twitter",
+  "channel-twilio",
   "channel-voice-call",
   "channel-wati",
   "channel-webhook",
@@ -226,6 +228,7 @@ channel-wecom-ws = ["dep:aes", "dep:cbc"]
 channel-clawdtalk = []
 channel-webhook = []
 channel-whatsapp-cloud = []
+channel-twilio = []
 channel-voice-call = []
 channel-acp-server = []
 channel-matrix = ["dep:matrix-sdk", "dep:mime_guess"]

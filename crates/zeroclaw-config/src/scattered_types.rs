@@ -726,3 +726,65 @@ impl Default for VoiceCallConfig {
         }
     }
 }
+
+// ── Twilio SMS/MMS config ────────────────────────────────────────
+
+fn default_channel_approval_timeout_secs() -> u64 {
+    300
+}
+
+/// Twilio SMS/MMS channel configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "channels.twilio"]
+pub struct TwilioConfig {
+    /// Whether this channel is active. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Twilio Account SID.
+    pub account_sid: String,
+    /// Twilio Auth Token.
+    #[secret]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub auth_token: String,
+    /// Twilio phone number in E.164 format (e.g. `+15551234567`).
+    pub from_number: String,
+    /// Public URL where Twilio will send webhook events.
+    /// Must be HTTPS. Example: `https://your-server.com/twilio`
+    #[serde(default)]
+    pub webhook_base_url: Option<String>,
+    /// Per-channel proxy URL override.
+    #[serde(default)]
+    pub proxy_url: Option<String>,
+    /// Regex patterns for mention gating.
+    #[serde(default)]
+    pub mention_patterns: Vec<String>,
+    /// Seconds to wait for an operator reply to an approval prompt.
+    /// Default: 300.
+    #[serde(default = "default_channel_approval_timeout_secs")]
+    pub approval_timeout_secs: u64,
+}
+
+impl ChannelConfig for TwilioConfig {
+    fn name() -> &'static str {
+        "Twilio"
+    }
+    fn desc() -> &'static str {
+        "SMS/MMS messaging via Twilio"
+    }
+}
+
+impl Default for TwilioConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            account_sid: String::new(),
+            auth_token: String::new(),
+            from_number: String::new(),
+            webhook_base_url: None,
+            proxy_url: None,
+            mention_patterns: Vec::new(),
+            approval_timeout_secs: default_channel_approval_timeout_secs(),
+        }
+    }
+}

@@ -10043,6 +10043,10 @@ pub struct ChannelsConfig {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[nested]
     pub mqtt: HashMap<String, MqttConfig>,
+    /// Twilio SMS/MMS channel instances (`[channels.twilio.<alias>]`).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[nested]
+    pub twilio: HashMap<String, crate::scattered_types::TwilioConfig>,
     /// Base timeout in seconds for processing a single channel message (LLM + tools).
     /// Runtime uses this as a per-turn budget that scales with tool-loop depth
     /// (up to 4x, capped) so one slow/retried model call does not consume the
@@ -10234,6 +10238,11 @@ impl ChannelsConfig {
                 configured: !self.voice_call.is_empty(),
             },
             ChannelInfo {
+                name: "Twilio",
+                desc: "SMS/MMS messaging via Twilio",
+                configured: !self.twilio.is_empty(),
+            },
+            ChannelInfo {
                 name: "VoiceWake",
                 desc: "voice wake word detection",
                 configured: !self.voice_wake.is_empty(),
@@ -10293,6 +10302,7 @@ impl Default for ChannelsConfig {
             reddit: HashMap::new(),
             bluesky: HashMap::new(),
             voice_call: HashMap::new(),
+            twilio: HashMap::new(),
             voice_wake: HashMap::new(),
             voice_duplex: HashMap::new(),
             mqtt: HashMap::new(),

@@ -387,6 +387,8 @@ pub struct AppState {
     /// Nextcloud Talk webhook secret for signature verification
     pub nextcloud_talk_webhook_secret: Option<Arc<str>>,
     pub wati: Option<Arc<WatiChannel>>,
+    /// Twilio SMS/MMS channel
+    pub twilio: Option<Arc<zeroclaw_channels::orchestrator::TwilioChannel>>,
     /// Gmail Pub/Sub push notification channel
     pub gmail_push: Option<Arc<GmailPushChannel>>,
     /// Observability backend for metrics scraping
@@ -901,6 +903,39 @@ pub async fn run_gateway(
         })
         .map(Arc::from);
 
+    // Twilio SMS/MMS channel (if configured)
+    let twilio_channel: Option<Arc<zeroclaw_channels::orchestrator::TwilioChannel>> = config
+        .channels
+        .twilio
+        .values()
+        .find(|tw| tw.enabled)
+        .map(|tw| {
+            let alias = config
+                .channels
+                .twilio
+                .iter()
+                .find(|(_, v)| v.enabled)
+                .map(|(k, _)| k.clone())
+                .unwrap_or_else(|| "default".to_string());
+            let peer_resolver: Arc<dyn Fn() -> Vec<String> + Send + Sync> = {
+                let cfg_arc = config_state.clone();
+                let alias = alias.clone();
+                Arc::new(move || cfg_arc.read().channel_external_peers("twilio", &alias))
+            };
+            Arc::new(
+                zeroclaw_channels::orchestrator::TwilioChannel::new(
+                    tw.account_sid.clone(),
+                    tw.auth_token.clone(),
+                    tw.from_number.clone(),
+                    alias,
+                    peer_resolver,
+                )
+                .with_approval_timeout_secs(tw.approval_timeout_secs)
+                .with_proxy_url(tw.proxy_url.clone())
+                .with_mention_patterns(tw.mention_patterns.clone()),
+            )
+        });
+
     // Gmail Push channel (if configured and referenced by an enabled agent)
     let gmail_push_channel: Option<Arc<GmailPushChannel>> = {
         let active: std::collections::HashSet<String> = config
@@ -1139,6 +1174,9 @@ pub async fn run_gateway(
     if nextcloud_talk_channel.is_some() {
         println!("  POST {pfx}/nextcloud-talk — Nextcloud Talk bot webhook");
     }
+    if twilio_channel.is_some() {
+        println!("  POST {pfx}/twilio    — Twilio SMS/MMS webhook");
+    }
     println!("  GET  {pfx}/api/*     — REST API (bearer token required)");
     println!("  GET  {pfx}/ws/chat   — WebSocket agent chat");
     if config.nodes.enabled {
@@ -1218,6 +1256,7 @@ pub async fn run_gateway(
         nextcloud_talk: nextcloud_talk_channel,
         nextcloud_talk_webhook_secret,
         wati: wati_channel,
+        twilio: twilio_channel,
         gmail_push: gmail_push_channel,
         observer: state_observer,
         tools_registry,
@@ -1282,6 +1321,7 @@ pub async fn run_gateway(
         .route("/wati", post(handle_wati_webhook))
         .route("/nextcloud-talk", post(handle_nextcloud_talk_webhook))
         .route("/webhook/gmail", post(handle_gmail_push_webhook))
+        .route("/twilio", post(handle_twilio_webhook))
         // ── Claude Code runner hooks ──
         .route("/hooks/claude-code", post(api::handle_claude_code_hook))
         // ── Web Dashboard API routes ──
@@ -2485,6 +2525,183 @@ async fn handle_whatsapp_message(
     (StatusCode::OK, Json(serde_json::json!({"status": "ok"})))
 }
 
+/// POST /twilio — incoming SMS/MMS webhook
+async fn handle_twilio_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let Some(ref tw) = state.twilio else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Twilio not configured"})),
+        );
+    };
+
+    // ── Security: Verify X-Twilio-Signature ──
+    let signature = headers
+        .get("X-Twilio-Signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    // Parse form-encoded body into key-value pairs
+    let body_str = String::from_utf8_lossy(&body);
+    let params: Vec<(String, String)> = body_str
+        .split('&')
+        .filter_map(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            let key = parts.next()?;
+            let value = parts.next().unwrap_or("");
+            Some((urldecode_simple(key), urldecode_simple(value)))
+        })
+        .collect();
+
+    if !tw.verify_signature(
+        &format!("{}/twilio", "https://placeholder"),
+        &params,
+        signature,
+    ) {
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"channel": "twilio"})),
+            "webhook signature verification failed"
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Invalid signature"})),
+        );
+    }
+
+    // Parse into HashMap for the channel's parse_inbound
+    let fields: std::collections::HashMap<String, String> = params.into_iter().collect();
+    let Some(inbound) = tw.parse_inbound(&fields) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Missing required fields"})),
+        );
+    };
+
+    // Check allowlist
+    if !tw.is_number_allowed(&inbound.from) {
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"channel": "twilio", "sender": inbound.from})),
+            "inbound message from unauthorized number"
+        );
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "ignored"})),
+        );
+    }
+
+    let content = if inbound.body.is_empty() && !inbound.media_urls.is_empty() {
+        format!("[MMS: {} media attachment(s)]", inbound.media_urls.len())
+    } else {
+        inbound.body.clone()
+    };
+
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note).with_attrs(
+            ::serde_json::json!({"channel": "twilio", "sender": inbound.from, "content": content})
+        ),
+        "inbound webhook message"
+    );
+
+    let session_id = format!("tw_{}", inbound.from.replace('+', ""));
+
+    // Auto-save to memory
+    if state.auto_save && !zeroclaw_memory::should_skip_autosave_content(&content) {
+        let key = format!("twilio/{}/messages", inbound.from);
+        let _ = state
+            .mem
+            .store(
+                &key,
+                &content,
+                MemoryCategory::Conversation,
+                Some(&session_id),
+            )
+            .await;
+    }
+
+    match Box::pin(run_gateway_chat_with_tools(
+        &state,
+        &content,
+        Some(&session_id),
+    ))
+    .await
+    {
+        Ok(GatewayChatOutcome { response, .. }) => {
+            if let Err(e) = tw.send(&SendMessage::new(response, &inbound.from)).await {
+                ::zeroclaw_log::record!(
+                    ERROR,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                        .with_attrs(::serde_json::json!({"error": format!("{}", e)})),
+                    "Failed to send Twilio reply"
+                );
+            }
+        }
+        Err(e) => {
+            let reply = if is_needs_onboarding_err(&e) {
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "Twilio chat refused: gateway has no model configured; visit /onboard"
+                );
+                needs_onboarding_channel_reply()
+            } else {
+                ::zeroclaw_log::record!(
+                    ERROR,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                        .with_attrs(
+                            ::serde_json::json!({"channel": "twilio", "error": format!("{}", e)})
+                        ),
+                    "LLM error"
+                );
+                "Sorry, I couldn't process your message right now.".to_string()
+            };
+            let _ = tw.send(&SendMessage::new(reply, &inbound.from)).await;
+        }
+    }
+
+    (StatusCode::OK, Json(serde_json::json!({"status": "ok"})))
+}
+
+/// Minimal percent-decode for form data.
+fn urldecode_simple(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.bytes();
+    while let Some(b) = chars.next() {
+        if b == b'%' {
+            let hi = chars.next().unwrap_or(b'0');
+            let lo = chars.next().unwrap_or(b'0');
+            let val = hex_val_simple(hi) << 4 | hex_val_simple(lo);
+            result.push(val as char);
+        } else if b == b'+' {
+            result.push(' ');
+        } else {
+            result.push(b as char);
+        }
+    }
+    result
+}
+
+fn hex_val_simple(b: u8) -> u8 {
+    match b {
+        b'0'..=b'9' => b - b'0',
+        b'a'..=b'f' => b - b'a' + 10,
+        b'A'..=b'F' => b - b'A' + 10,
+        _ => 0,
+    }
+}
+
 /// POST /linq — incoming message webhook (iMessage/RCS/SMS via Linq)
 async fn handle_linq_webhook(
     State(state): State<AppState>,
@@ -3444,6 +3661,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            twilio: None,
             gmail_push: None,
             observer: Arc::new(zeroclaw_runtime::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -3514,6 +3732,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            twilio: None,
             gmail_push: None,
             observer,
             tools_registry: Arc::new(Vec::new()),
@@ -4066,6 +4285,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            twilio: None,
             gmail_push: None,
             observer: Arc::new(zeroclaw_runtime::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -4149,6 +4369,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            twilio: None,
             gmail_push: None,
             observer: Arc::new(zeroclaw_runtime::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -4244,6 +4465,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            twilio: None,
             gmail_push: None,
             observer: Arc::new(zeroclaw_runtime::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -4311,6 +4533,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            twilio: None,
             gmail_push: None,
             observer: Arc::new(zeroclaw_runtime::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -4383,6 +4606,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            twilio: None,
             gmail_push: None,
             observer: Arc::new(zeroclaw_runtime::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -4460,6 +4684,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            twilio: None,
             gmail_push: None,
             observer: Arc::new(zeroclaw_runtime::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -4537,6 +4762,7 @@ mod tests {
             nextcloud_talk: Some(channel),
             nextcloud_talk_webhook_secret: Some(Arc::from(secret)),
             wati: None,
+            twilio: None,
             gmail_push: None,
             observer: Arc::new(zeroclaw_runtime::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -4662,6 +4888,7 @@ mod tests {
             nextcloud_talk_webhook_secret: None,
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             wati: None,
+            twilio: None,
             gmail_push: None,
             observer: Arc::new(zeroclaw_runtime::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),

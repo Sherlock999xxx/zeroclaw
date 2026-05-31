@@ -51,6 +51,7 @@
 - [LINE](./channels/line.md)
 - [Nextcloud Talk](./channels/nextcloud-talk.md)
 - [Signal](./channels/signal.md)
+- [Twilio SMS/MMS](./channels/twilio.md)
 - [WhatsApp](./channels/whatsapp.md)
 - [Other chat platforms](./channels/chat-others.md)
 - [Social (Bluesky, Nostr, Twitter, Reddit)](./channels/social.md)

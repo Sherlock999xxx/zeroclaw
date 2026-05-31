@@ -70,6 +70,8 @@ pub fn compiled_channels(cfg: &ChannelsConfig) -> Vec<ChannelInfo> {
         "Bluesky",
         #[cfg(feature = "channel-twitter")]
         "X/Twitter",
+        #[cfg(feature = "channel-twilio")]
+        "Twilio",
         #[cfg(feature = "channel-mochat")]
         "Mochat",
         #[cfg(feature = "channel-line")]

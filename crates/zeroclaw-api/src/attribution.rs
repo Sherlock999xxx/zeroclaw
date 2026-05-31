@@ -99,6 +99,7 @@ pub enum ChannelKind {
     Slack,
     Telegram,
     Twitter,
+    Twilio,
     VoiceCall,
     VoiceWake,
     Wati,
