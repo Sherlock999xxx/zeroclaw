@@ -102,6 +102,7 @@ pub enum ChannelKind {
     VoiceCall,
     VoiceWake,
     Wati,
+    Twilio,
     #[strum(serialize = "wecom")]
     WeCom,
     #[strum(serialize = "wecom_ws")]

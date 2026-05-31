@@ -92,6 +92,8 @@ pub use crate::link_enricher;
 pub use crate::matrix::MatrixChannel;
 #[cfg(feature = "channel-telegram")]
 pub use crate::telegram::TelegramChannel;
+#[cfg(feature = "channel-twilio")]
+pub use crate::twilio::TwilioChannel;
 #[cfg(feature = "whatsapp-web")]
 pub use crate::whatsapp_web::WhatsAppWebChannel;
 pub use zeroclaw_infra::debounce::MessageDebouncer;
@@ -5667,10 +5669,31 @@ fn build_channel_by_id(
                 anyhow::bail!("Voice Call channel requires the `channel-voice-call` feature");
             }
         }
+        "twilio" => {
+            #[cfg(feature = "channel-twilio")]
+            {
+                let tw = config
+                    .channels
+                    .twilio
+                    .as_ref()
+                    .context("Twilio channel is not configured")?;
+                let twilio = TwilioChannel::new(
+                    tw.account_sid.clone(),
+                    tw.auth_token.clone(),
+                    tw.from_number.clone(),
+                    tw.allowed_numbers.clone(),
+                );
+                Ok(Arc::new(twilio))
+            }
+            #[cfg(not(feature = "channel-twilio"))]
+            {
+                anyhow::bail!("Twilio channel requires the `channel-twilio` feature");
+            }
+        }
         other => anyhow::bail!(
             "Unknown channel '{other}'. Supported: telegram, discord, slack, mattermost, signal, \
             matrix, whatsapp, qq, lark, feishu, dingtalk, wecom, wecom_ws, nextcloud_talk, wati, linq, \
-            email, gmail_push, irc, twitter, mochat, imessage, line, voice-call"
+            email, gmail_push, irc, twitter, mochat, imessage, line, voice-call, twilio"
         ),
     }
 }
@@ -6283,6 +6306,22 @@ fn collect_configured_channels(
             "Linq channel is configured but this build was compiled without \
              `channel-linq`; skipping Linq."
         );
+    }
+
+    #[cfg(feature = "channel-twilio")]
+    if let Some(ref tw) = config.channels.twilio
+        && tw.enabled
+    {
+        channels.push(ConfiguredChannel {
+            display_name: "Twilio",
+            alias: None,
+            channel: Arc::new(TwilioChannel::new(
+                tw.account_sid.clone(),
+                tw.auth_token.clone(),
+                tw.from_number.clone(),
+                tw.allowed_numbers.clone(),
+            )),
+        });
     }
 
     #[cfg(feature = "channel-wati")]

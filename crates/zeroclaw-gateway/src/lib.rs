@@ -61,7 +61,7 @@ use zeroclaw_api::channel::{Channel, SendMessage};
 use zeroclaw_api::tool::ToolSpec;
 use zeroclaw_channels::{
     gmail_push::GmailPushChannel, linq::LinqChannel, nextcloud_talk::NextcloudTalkChannel,
-    wati::WatiChannel, whatsapp::WhatsAppChannel,
+    twilio::TwilioChannel, wati::WatiChannel, whatsapp::WhatsAppChannel,
 };
 use zeroclaw_config::policy::SecurityPolicy;
 use zeroclaw_config::schema::Config;
@@ -128,6 +128,10 @@ fn wati_memory_key(msg: &zeroclaw_api::channel::ChannelMessage) -> String {
 
 fn nextcloud_talk_memory_key(msg: &zeroclaw_api::channel::ChannelMessage) -> String {
     format!("nextcloud_talk_{}_{}", msg.sender, msg.id)
+}
+
+fn twilio_memory_key(msg: &zeroclaw_api::channel::ChannelMessage) -> String {
+    format!("twilio_{}_{}", msg.sender, msg.id)
 }
 
 fn sender_session_id(channel: &str, msg: &zeroclaw_api::channel::ChannelMessage) -> String {
@@ -383,6 +387,7 @@ pub struct AppState {
     pub linq: Option<Arc<LinqChannel>>,
     /// Linq webhook signing secret for signature verification
     pub linq_signing_secret: Option<Arc<str>>,
+    pub twilio: Option<Arc<TwilioChannel>>,
     pub nextcloud_talk: Option<Arc<NextcloudTalkChannel>>,
     /// Nextcloud Talk webhook secret for signature verification
     pub nextcloud_talk_webhook_secret: Option<Arc<str>>,
@@ -834,6 +839,21 @@ pub async fn run_gateway(
         })
         .map(Arc::from);
 
+    // Twilio channel (if configured AND enabled)
+    let twilio_channel: Option<Arc<TwilioChannel>> = config
+        .channels
+        .twilio
+        .as_ref()
+        .filter(|tw| tw.enabled)
+        .map(|tw| {
+            Arc::new(TwilioChannel::new(
+                tw.account_sid.clone(),
+                tw.auth_token.clone(),
+                tw.from_number.clone(),
+                tw.allowed_numbers.clone(),
+            ))
+        });
+
     // WATI channel (if configured)
     let wati_channel: Option<Arc<WatiChannel>> =
         config.channels.wati.values().next().map(|wati_cfg| {
@@ -1122,6 +1142,9 @@ pub async fn run_gateway(
     if linq_channel.is_some() {
         println!("  POST {pfx}/linq      — Linq message webhook (iMessage/RCS/SMS)");
     }
+    if twilio_channel.is_some() {
+        println!("  POST {pfx}/twilio/sms — Twilio SMS webhook");
+    }
     if wati_channel.is_some() {
         println!("  GET  {pfx}/wati      — WATI webhook verification");
         println!("  POST {pfx}/wati      — WATI message webhook");
@@ -1205,6 +1228,7 @@ pub async fn run_gateway(
         whatsapp_app_secret,
         linq: linq_channel,
         linq_signing_secret,
+        twilio: twilio_channel,
         nextcloud_talk: nextcloud_talk_channel,
         nextcloud_talk_webhook_secret,
         wati: wati_channel,
@@ -1268,6 +1292,7 @@ pub async fn run_gateway(
         .route("/whatsapp", get(handle_whatsapp_verify))
         .route("/whatsapp", post(handle_whatsapp_message))
         .route("/linq", post(handle_linq_webhook))
+        .route("/twilio/sms", post(handle_twilio_sms_webhook))
         .route("/wati", get(handle_wati_verify))
         .route("/wati", post(handle_wati_webhook))
         .route("/nextcloud-talk", post(handle_nextcloud_talk_webhook))
@@ -2617,6 +2642,198 @@ async fn handle_linq_webhook(
     (StatusCode::OK, Json(serde_json::json!({"status": "ok"})))
 }
 
+/// POST /twilio/sms — incoming SMS webhook from Twilio Programmable Messaging.
+///
+/// Twilio sends `application/x-www-form-urlencoded` POSTs with `From`, `To`,
+/// `Body`, `MessageSid`, `AccountSid`, and other metadata. The handler:
+///
+/// 1. Reconstructs the full request URL (the operator's public webhook URL)
+///    using the `Host`/`X-Forwarded-Host` header so it matches what Twilio
+///    signed.
+/// 2. Verifies the `X-Twilio-Signature` header against
+///    `TwilioChannel::verify_signature`. A failure returns 401 and the SMS is
+///    dropped — no message ever reaches the agent.
+/// 3. Parses the form payload via `TwilioChannel::parse_webhook_payload`,
+///    which applies the `allowed_numbers` allowlist.
+/// 4. Forwards the resulting `ChannelMessage` to the agent loop and replies
+///    via `TwilioChannel::send`.
+///
+/// Successful runs return `200 OK` with an empty TwiML response so Twilio
+/// doesn't auto-reply.
+async fn handle_twilio_sms_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    use std::collections::BTreeMap;
+
+    let Some(ref twilio) = state.twilio else {
+        return (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "application/json")],
+            Json(serde_json::json!({"error": "Twilio not configured"})).to_string(),
+        );
+    };
+
+    // Parse the form-urlencoded body into a sorted map (BTreeMap so signature
+    // recomputation walks keys in the order Twilio expects).
+    let parsed: Vec<(String, String)> = match serde_urlencoded::from_bytes(&body) {
+        Ok(v) => v,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                [(header::CONTENT_TYPE, "application/json")],
+                Json(serde_json::json!({"error": "Invalid form body"})).to_string(),
+            );
+        }
+    };
+    let form_params: BTreeMap<String, String> = parsed.into_iter().collect();
+
+    // Reconstruct the URL Twilio used. Trust X-Forwarded-Host / X-Forwarded-Proto
+    // when present (set by tunnels and reverse proxies); otherwise fall back
+    // to the Host header and assume HTTPS (Twilio always sends over HTTPS).
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("https");
+    let host = headers
+        .get("x-forwarded-host")
+        .or_else(|| headers.get("host"))
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if host.is_empty() {
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"channel": "twilio"})),
+            "Twilio webhook missing Host/X-Forwarded-Host header"
+        );
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "application/json")],
+            Json(serde_json::json!({"error": "Missing Host header"})).to_string(),
+        );
+    }
+    let full_url = format!("{scheme}://{host}/twilio/sms");
+
+    let signature = headers
+        .get("x-twilio-signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !twilio.verify_signature(&full_url, &form_params, signature) {
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                .with_attrs(::serde_json::json!({"channel": "twilio"})),
+            &format!(
+                "Twilio webhook signature verification failed (signature: {})",
+                if signature.is_empty() {
+                    "missing"
+                } else {
+                    "invalid"
+                }
+            )
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::CONTENT_TYPE, "application/json")],
+            Json(serde_json::json!({"error": "Invalid signature"})).to_string(),
+        );
+    }
+
+    let Some(msg) = twilio.parse_webhook_payload(&form_params) else {
+        // Either the sender wasn't on the allowlist, the body was empty, or
+        // the payload is missing required fields. Twilio still wants 200
+        // back so it doesn't retry.
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/xml")],
+            "<Response/>".to_string(),
+        );
+    };
+
+    ::zeroclaw_log::record!(
+        INFO,
+        ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+            .with_attrs(::serde_json::json!({"channel": "twilio", "sender": msg.sender, "content": msg.content})),
+        "inbound webhook message"
+    );
+
+    let session_id = sender_session_id("twilio", &msg);
+
+    // Auto-save to memory
+    if state.auto_save && !zeroclaw_memory::should_skip_autosave_content(&msg.content) {
+        let key = twilio_memory_key(&msg);
+        let _ = state
+            .mem
+            .store(
+                &key,
+                &msg.content,
+                MemoryCategory::Conversation,
+                Some(&session_id),
+            )
+            .await;
+    }
+
+    // Call the LLM
+    match Box::pin(run_gateway_chat_with_tools(
+        &state,
+        &msg.content,
+        Some(&session_id),
+    ))
+    .await
+    {
+        Ok(GatewayChatOutcome { response, .. }) => {
+            // Send reply via Twilio
+            if let Err(e) = twilio
+                .send(&SendMessage::new(response, &msg.reply_target))
+                .await
+            {
+                ::zeroclaw_log::record!(
+                    ERROR,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                        .with_attrs(::serde_json::json!({"error": format!("{}", e)})),
+                    "Failed to send Twilio reply"
+                );
+            }
+        }
+        Err(e) => {
+            let reply = if is_needs_onboarding_err(&e) {
+                ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                    "Twilio chat refused: gateway has no model configured; \
+                     visit /onboard"
+                );
+                needs_onboarding_channel_reply()
+            } else {
+                ::zeroclaw_log::record!(
+                    ERROR,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Fail)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Failure)
+                        .with_attrs(
+                            ::serde_json::json!({"channel": "twilio", "error": format!("{}", e)})
+                        ),
+                    "LLM error"
+                );
+                "Sorry, I couldn't process your message right now.".to_string()
+            };
+            let _ = twilio.send(&SendMessage::new(reply, &msg.reply_target)).await;
+        }
+    }
+
+    // Empty TwiML response so Twilio doesn't auto-reply on its own.
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/xml")],
+        "<Response/>".to_string(),
+    )
+}
+
 /// GET /wati — WATI webhook verification (echoes hub.challenge)
 async fn handle_wati_verify(
     State(state): State<AppState>,
@@ -3431,6 +3648,7 @@ mod tests {
             whatsapp_app_secret: None,
             linq: None,
             linq_signing_secret: None,
+            twilio: None,
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -3501,6 +3719,7 @@ mod tests {
             whatsapp_app_secret: None,
             linq: None,
             linq_signing_secret: None,
+            twilio: None,
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4053,6 +4272,7 @@ mod tests {
             whatsapp_app_secret: None,
             linq: None,
             linq_signing_secret: None,
+            twilio: None,
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4136,6 +4356,7 @@ mod tests {
             whatsapp_app_secret: None,
             linq: None,
             linq_signing_secret: None,
+            twilio: None,
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4231,6 +4452,7 @@ mod tests {
             whatsapp_app_secret: None,
             linq: None,
             linq_signing_secret: None,
+            twilio: None,
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4298,6 +4520,7 @@ mod tests {
             whatsapp_app_secret: None,
             linq: None,
             linq_signing_secret: None,
+            twilio: None,
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4370,6 +4593,7 @@ mod tests {
             whatsapp_app_secret: None,
             linq: None,
             linq_signing_secret: None,
+            twilio: None,
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4447,6 +4671,7 @@ mod tests {
             whatsapp_app_secret: None,
             linq: None,
             linq_signing_secret: None,
+            twilio: None,
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
@@ -4524,6 +4749,7 @@ mod tests {
             whatsapp_app_secret: None,
             linq: None,
             linq_signing_secret: None,
+            twilio: None,
             nextcloud_talk: Some(channel),
             nextcloud_talk_webhook_secret: Some(Arc::from(secret)),
             wati: None,
@@ -4648,6 +4874,7 @@ mod tests {
             whatsapp_app_secret: None,
             linq: None,
             linq_signing_secret: None,
+            twilio: None,
             nextcloud_talk: Some(channel),
             nextcloud_talk_webhook_secret: None,
             pending_reload: Arc::new(std::sync::atomic::AtomicBool::new(false)),

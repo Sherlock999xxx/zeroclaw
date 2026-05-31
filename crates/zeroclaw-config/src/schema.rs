@@ -9841,6 +9841,10 @@ pub struct ChannelsConfig {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[nested]
     pub linq: HashMap<String, LinqConfig>,
+    /// Twilio SMS channel configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[nested]
+    pub twilio: Option<TwilioConfig>,
     /// WATI WhatsApp Business API channel instances (`[channels.wati.<alias>]`).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[nested]
@@ -10159,6 +10163,7 @@ impl Default for ChannelsConfig {
             signal: HashMap::new(),
             whatsapp: HashMap::new(),
             linq: HashMap::new(),
+            twilio: None,
             wati: HashMap::new(),
             nextcloud_talk: HashMap::new(),
             email: HashMap::new(),
@@ -10932,6 +10937,48 @@ impl ChannelConfig for LinqConfig {
     }
     fn desc() -> &'static str {
         "iMessage/RCS/SMS via Linq API"
+    }
+}
+
+/// Twilio SMS channel configuration.
+///
+/// Inbound SMS arrives via the gateway at the hardcoded path `/twilio/sms`.
+/// The operator must point Twilio's "A MESSAGE COMES IN" webhook setting
+/// at `https://{public-gateway-url}/twilio/sms` — usually behind one of the
+/// configured `[tunnel]` providers (Cloudflare Tunnel, Tailscale Funnel,
+/// ngrok, Pinggy, or a custom command).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "channels.twilio"]
+pub struct TwilioConfig {
+    /// Whether this channel is active (must be explicitly enabled). Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Twilio Account SID (`ACxxxxxxxx…`) — public identifier, used as the
+    /// HTTP Basic auth username and the path component of the Messages API.
+    pub account_sid: String,
+    /// Twilio Auth Token. Used as both the HTTP Basic auth password for
+    /// outbound calls and the HMAC-SHA1 key for inbound webhook signature
+    /// verification.
+    #[secret]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub auth_token: String,
+    /// Phone number to send from, in E.164 format (e.g. `"+15555550100"`).
+    /// Must be a number you have provisioned in the Twilio console.
+    pub from_number: String,
+    /// Allowed sender numbers in E.164 format (e.g. `"+15555550199"`). Empty
+    /// list = deny all. `"*"` allows everyone (use with care; this is a
+    /// public PSTN endpoint).
+    #[serde(default)]
+    pub allowed_numbers: Vec<String>,
+}
+
+impl ChannelConfig for TwilioConfig {
+    fn name() -> &'static str {
+        "Twilio"
+    }
+    fn desc() -> &'static str {
+        "SMS via Twilio Programmable Messaging"
     }
 }
 
@@ -17459,6 +17506,7 @@ allowed_users = ["@u:matrix.org"]
             signal: HashMap::new(),
             whatsapp: HashMap::new(),
             linq: HashMap::new(),
+            twilio: None,
             wati: HashMap::new(),
             nextcloud_talk: HashMap::new(),
             email: HashMap::new(),
@@ -17843,6 +17891,7 @@ allowed_numbers = ["+1", "+2"]
                 },
             )]),
             linq: HashMap::new(),
+            twilio: None,
             wati: HashMap::new(),
             nextcloud_talk: HashMap::new(),
             email: HashMap::new(),
