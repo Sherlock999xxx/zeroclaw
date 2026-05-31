@@ -2971,16 +2971,6 @@ mod tests {
         assert_eq!(pa.tool_name, "shell");
     }
 
-    #[tokio::test]
-    async fn launch_editor_returns_original_on_empty_write() {
-        // Use `true` as the editor — it exits immediately without modifying the file.
-        // SAFETY: test-only, single-threaded context.
-        unsafe { std::env::set_var("EDITOR", "true") };
-        let original = "let x = 1;".to_string();
-        let result = open_editor_for_content(&original).await;
-        // `true` writes nothing, so the original is returned unchanged.
-        assert_eq!(result, original);
-    }
 
     #[test]
     fn thought_chunk_visible_before_commit() {

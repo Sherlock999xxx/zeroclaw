@@ -387,13 +387,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_named_keys_are_case_insensitive() {
+    fn parse_modifier_and_named_keys_are_case_insensitive() {
         assert_eq!(Chord::from_str("UP").unwrap(), Chord::key(KeyCode::Up));
         assert_eq!(
             Chord::from_str("Enter").unwrap(),
             Chord::key(KeyCode::Enter)
         );
-        assert_eq!(Chord::from_str("CTRL+K").unwrap(), Chord::ctrl('k'));
+        assert_eq!(Chord::from_str("CTRL+k").unwrap(), Chord::ctrl('k'));
+        assert_eq!(Chord::from_str("ctrl+k").unwrap(), Chord::ctrl('k'));
+        assert_eq!(Chord::from_str("Ctrl+K").unwrap(), Chord::ctrl('K'));
         assert_eq!(
             Chord::from_str("Shift+Up").unwrap(),
             Chord::shift(KeyCode::Up)
