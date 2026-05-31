@@ -64,6 +64,12 @@ if [[ -f "$TAURI_CONF" ]]; then
   changed=$((changed + 1))
 fi
 
+# ── Windows installer (setup.bat) ──────────────────────────────────
+echo "Windows setup.bat..."
+bump "setup.bat" \
+  'set "VERSION=[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]*)?"' \
+  "set \"VERSION=${VERSION}\""
+
 # ── Workspace Cargo.toml ───────────────────────────────────────────
 # Bumps [workspace.package] version (the root version inherited by every child
 # crate via `version.workspace = true`) and the version pins on every path dep
