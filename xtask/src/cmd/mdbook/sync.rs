@@ -174,6 +174,7 @@ fn normalize_gettext_catalog(path: &Path) -> anyhow::Result<()> {
     run_cmd(
         Command::new("msgcat")
             .args([
+                "--use-first",
                 "--sort-output",
                 "--no-wrap",
                 "--add-location=file",
