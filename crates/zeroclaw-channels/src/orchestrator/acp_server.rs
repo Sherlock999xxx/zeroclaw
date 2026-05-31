@@ -1301,15 +1301,15 @@ impl AcpServer {
                         "ACP tool call dispatched"
                     );
                 }
-                TurnEvent::ToolResult { id, name, output } => {
+                TurnEvent::ToolResult(r) => {
                     ::zeroclaw_log::record!(
                         DEBUG,
                         ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Complete).with_category(::zeroclaw_log::EventCategory::Channel)
                             .with_outcome(::zeroclaw_log::EventOutcome::Success)
                             .with_attrs(::serde_json::json!({
-                                "tool_call_id": id,
-                                "tool": name,
-                                "output_len": output.len(),
+                                "tool_call_id": r.id,
+                                "tool": r.name,
+                                "output_len": r.output.len(),
                             })),
                         "ACP tool call completed"
                     );
@@ -1903,7 +1903,7 @@ fn notification_for_turn_event(session_id: &str, event: &TurnEvent) -> Option<Js
                 }),
             }
         }
-        TurnEvent::ToolResult { id, name, output } => JsonRpcNotification {
+        TurnEvent::ToolResult(zeroclaw_api::agent::ToolResultData { id, name, output, .. }) => JsonRpcNotification {
             jsonrpc: "2.0",
             method: "session/update",
             params: serde_json::json!({
@@ -2786,11 +2786,12 @@ mod tests {
 
         let result = notification_for_turn_event(
             "test-sid",
-            &TurnEvent::ToolResult {
+            &TurnEvent::ToolResult(zeroclaw_api::agent::ToolResultData {
                 id: "tc-12345".to_string(),
                 name: "shell".to_string(),
                 output: "file1.txt\nfile2.txt".to_string(),
-            },
+                start_line: None,
+            }),
         );
         let result_value =
             serde_json::to_value(result.expect("ToolResult maps to a notification")).unwrap();

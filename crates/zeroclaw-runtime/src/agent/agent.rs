@@ -25,7 +25,6 @@ use zeroclaw_tool_call_parser::strip_think_tags;
 
 // Re-export TurnEvent from zeroclaw-types for backwards compatibility.
 pub use zeroclaw_api::agent::TurnEvent;
-
 pub struct Agent {
     model_provider: Box<dyn ModelProvider>,
     tools: Vec<Box<dyn Tool>>,
@@ -1480,6 +1479,7 @@ impl Agent {
                         output: format!("Cancelled by hook: {reason}"),
                         success: false,
                         tool_call_id: call.tool_call_id.clone(),
+                        start_line: None,
                     };
                 }
             }
@@ -1585,6 +1585,7 @@ impl Agent {
                     output: "Denied by user.".to_string(),
                     success: false,
                     tool_call_id: call.tool_call_id.clone(),
+                    start_line: None,
                 };
             }
 
@@ -1594,6 +1595,7 @@ impl Agent {
                     output: replacement.clone(),
                     success: true,
                     tool_call_id: call.tool_call_id.clone(),
+                    start_line: None,
                 };
             }
 
@@ -1746,11 +1748,18 @@ impl Agent {
                 .await;
         }
 
+        let start_line = if success {
+            crate::agent::dispatcher::file_edit_start_line(&tool_name, &tool_args)
+        } else {
+            None
+        };
+
         ToolExecutionResult {
             name: tool_name,
             output: result,
             success,
             tool_call_id: call.tool_call_id.clone(),
+            start_line,
         }
     }
 
@@ -2354,11 +2363,12 @@ impl Agent {
                             Self::send_turn_event(
                                 &event_tx,
                                 cancel_token.as_ref(),
-                                TurnEvent::ToolResult {
+                                TurnEvent::ToolResult(zeroclaw_api::agent::ToolResultData {
                                     id: result_id,
                                     name,
                                     output,
-                                },
+                                    start_line: None,
+                                }),
                             )
                             .await;
                         }
@@ -2682,11 +2692,12 @@ impl Agent {
                 Self::send_turn_event(
                     &event_tx,
                     cancel_token.as_ref(),
-                    TurnEvent::ToolResult {
+                    TurnEvent::ToolResult(zeroclaw_api::agent::ToolResultData {
                         id: result_id,
                         name: result.name.clone(),
                         output: result.output.clone(),
-                    },
+                        start_line: result.start_line,
+                    }),
                 )
                 .await;
             }
@@ -4508,7 +4519,7 @@ mod tests {
             .any(|e| matches!(e, TurnEvent::ToolCall { name, .. } if name == "echo"));
         let has_tool_result = events
             .iter()
-            .any(|e| matches!(e, TurnEvent::ToolResult { name, .. } if name == "echo"));
+            .any(|e| matches!(e, TurnEvent::ToolResult(r) if r.name == "echo"));
         assert!(
             has_tool_call,
             "Should have emitted a ToolCall event for 'echo'"
@@ -4533,8 +4544,8 @@ mod tests {
         let result_id = events
             .iter()
             .find_map(|e| {
-                if let TurnEvent::ToolResult { id, .. } = e {
-                    Some(id.clone())
+                if let TurnEvent::ToolResult(r) = e {
+                    Some(r.id.clone())
                 } else {
                     None
                 }
@@ -4674,8 +4685,8 @@ mod tests {
                 TurnEvent::ToolCall { id, name, .. } => {
                     call_ids.insert(name, id);
                 }
-                TurnEvent::ToolResult { id, name, .. } => {
-                    result_ids.insert(name, id);
+                TurnEvent::ToolResult(r) => {
+                    result_ids.insert(r.name, r.id);
                 }
                 _ => {}
             }
