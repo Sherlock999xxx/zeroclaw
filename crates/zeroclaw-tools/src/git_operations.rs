@@ -1055,6 +1055,28 @@ mod tests {
         GitOperationsTool::new(security, dir.to_path_buf())
     }
 
+    /// Initialise a git repo for tests with commit/tag signing disabled and a
+    /// fixed identity. Tests run real `git commit`; without this they inherit
+    /// the developer's global `commit.gpgsign`, blocking the suite on a
+    /// hardware-key tap.
+    fn git_init_no_sign(dir: &std::path::Path, extra_init: &[&str]) {
+        let mut init = vec!["init"];
+        init.extend_from_slice(extra_init);
+        for args in [
+            init.as_slice(),
+            &["config", "user.email", "test@test.com"],
+            &["config", "user.name", "Test"],
+            &["config", "commit.gpgsign", "false"],
+            &["config", "tag.gpgsign", "false"],
+        ] {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap();
+        }
+    }
+
     fn test_tool_with_allowed_root(
         dir: &std::path::Path,
         allowed_root: std::path::PathBuf,
@@ -1238,12 +1260,7 @@ mod tests {
     #[tokio::test]
     async fn blocks_readonly_mode_for_write_ops() {
         let tmp = TempDir::new().unwrap();
-        // Initialize a git repository
-        std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(tmp.path())
-            .output()
-            .unwrap();
+        git_init_no_sign(tmp.path(), &[]);
 
         let security = Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::ReadOnly,
@@ -1269,12 +1286,7 @@ mod tests {
     #[tokio::test]
     async fn allows_branch_listing_in_readonly_mode() {
         let tmp = TempDir::new().unwrap();
-        // Initialize a git repository so the command can succeed
-        std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(tmp.path())
-            .output()
-            .unwrap();
+        git_init_no_sign(tmp.path(), &[]);
 
         let security = Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::ReadOnly,
@@ -1330,12 +1342,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_unknown_operation() {
         let tmp = TempDir::new().unwrap();
-        // Initialize a git repository
-        std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(tmp.path())
-            .output()
-            .unwrap();
+        git_init_no_sign(tmp.path(), &[]);
 
         let tool = test_tool(tmp.path());
 
@@ -1357,21 +1364,7 @@ mod tests {
     #[tokio::test]
     async fn commit_message_preserves_blank_line_between_subject_and_body() {
         let tmp = TempDir::new().unwrap();
-        std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(tmp.path())
-            .output()
-            .unwrap();
-        std::process::Command::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(tmp.path())
-            .output()
-            .unwrap();
-        std::process::Command::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(tmp.path())
-            .output()
-            .unwrap();
+        git_init_no_sign(tmp.path(), &[]);
         // Create an initial commit so HEAD exists.
         std::fs::write(tmp.path().join("README.md"), "hello").unwrap();
         std::process::Command::new("git")
@@ -1470,21 +1463,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let sub = tmp.path().join("nested");
         std::fs::create_dir(&sub).unwrap();
-        std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(&sub)
-            .output()
-            .unwrap();
-        std::process::Command::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(&sub)
-            .output()
-            .unwrap();
-        std::process::Command::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(&sub)
-            .output()
-            .unwrap();
+        git_init_no_sign(&sub, &[]);
 
         let tool = test_tool(tmp.path());
 
@@ -1503,11 +1482,7 @@ mod tests {
     #[tokio::test]
     async fn git_worktree_list_works() {
         let tmp = TempDir::new().unwrap();
-        std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(tmp.path())
-            .output()
-            .unwrap();
+        git_init_no_sign(tmp.path(), &[]);
 
         let tool = test_tool(tmp.path());
 
@@ -1537,17 +1512,7 @@ mod tests {
     /// modifications when later edited — `git stash` only handles tracked
     /// files by default, so all stash test fixtures must use this seam.
     async fn bootstrap_repo(dir: &std::path::Path, tracked_files: &[&str]) {
-        for args in [
-            &["init", "-b", "master"][..],
-            &["config", "user.email", "test@test.com"][..],
-            &["config", "user.name", "Test"][..],
-        ] {
-            std::process::Command::new("git")
-                .args(args)
-                .current_dir(dir)
-                .output()
-                .unwrap();
-        }
+        git_init_no_sign(dir, &["-b", "master"]);
         std::fs::write(dir.join("README.md"), "hello").unwrap();
         for f in tracked_files {
             std::fs::write(dir.join(f), "initial").unwrap();
@@ -1750,11 +1715,7 @@ mod tests {
     #[tokio::test]
     async fn add_stages_multiple_space_separated_paths() {
         let tmp = TempDir::new().unwrap();
-        std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(tmp.path())
-            .output()
-            .unwrap();
+        git_init_no_sign(tmp.path(), &[]);
         std::fs::write(tmp.path().join("a.txt"), "a").unwrap();
         std::fs::write(tmp.path().join("b.txt"), "b").unwrap();
 
