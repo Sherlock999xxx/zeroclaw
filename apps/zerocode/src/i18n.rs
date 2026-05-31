@@ -1,24 +1,45 @@
-use fluent::{FluentBundle, FluentResource};
+use fluent::{FluentArgs, FluentBundle, FluentResource};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use unic_langid::LanguageIdentifier;
 
 static STRINGS: OnceLock<HashMap<String, String>> = OnceLock::new();
+static FTL_SOURCES: OnceLock<FtlSources> = OnceLock::new();
 static LOCALE: OnceLock<String> = OnceLock::new();
 static REPORTED_MISSING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 const EN_FTL: &str = include_str!("../locales/en.ftl");
 
+struct FtlSources {
+    locale: String,
+    disk: Option<String>,
+}
+
 pub fn init(locale: &str) {
     let locale = LOCALE.get_or_init(|| normalize_locale(locale));
     STRINGS.get_or_init(|| load_strings(locale));
+    FTL_SOURCES.get_or_init(|| load_ftl_sources(locale));
 }
 
 pub fn t(key: &str) -> String {
     let map = STRINGS.get_or_init(|| load_strings(active_locale()));
     if let Some(value) = map.get(key) {
         return value.clone();
+    }
+    record_missing(key);
+    format!("{{{key}}}")
+}
+
+pub fn t_args(key: &str, args: &[(&str, &str)]) -> String {
+    let sources = FTL_SOURCES.get_or_init(|| load_ftl_sources(active_locale()));
+    if let Some(disk) = sources.disk.as_deref()
+        && let Some(value) = format_ftl_message(disk, &sources.locale, key, args)
+    {
+        return value;
+    }
+    if let Some(value) = format_ftl_message(EN_FTL, "en", key, args) {
+        return value;
     }
     record_missing(key);
     format!("{{{key}}}")
@@ -129,6 +150,44 @@ fn locale_from_config() -> Option<String> {
         }
     }
     None
+}
+
+fn load_ftl_sources(locale: &str) -> FtlSources {
+    FtlSources {
+        locale: locale.to_string(),
+        disk: (locale != "en")
+            .then(|| load_ftl_from_disk(locale))
+            .flatten(),
+    }
+}
+
+fn format_ftl_message(
+    ftl_source: &str,
+    locale: &str,
+    key: &str,
+    args: &[(&str, &str)],
+) -> Option<String> {
+    let resource =
+        FluentResource::try_new(ftl_source.to_string()).unwrap_or_else(|(resource, _)| resource);
+    let language_identifier: LanguageIdentifier =
+        locale.parse().unwrap_or_else(|_| "en".parse().unwrap());
+    let mut bundle = FluentBundle::new(vec![language_identifier]);
+    bundle.set_use_isolating(false);
+    let _ = bundle.add_resource(resource);
+
+    let message = bundle.get_message(key)?;
+    let pattern = message.value()?;
+    let mut fluent_args = FluentArgs::new();
+    for (name, value) in args {
+        fluent_args.set(*name, *value);
+    }
+    let mut errors = vec![];
+    let value = bundle.format_pattern(pattern, Some(&fluent_args), &mut errors);
+    if errors.is_empty() {
+        Some(value.into_owned())
+    } else {
+        None
+    }
 }
 
 fn record_missing(key: &str) {

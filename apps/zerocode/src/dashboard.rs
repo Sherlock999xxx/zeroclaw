@@ -48,15 +48,15 @@ const TABS: [Tab; 7] = [
 ];
 
 impl Tab {
-    fn label(self) -> &'static str {
+    fn fluent_key(self) -> &'static str {
         match self {
-            Self::Overview => "Overview",
-            Self::Sessions => "Sessions",
-            Self::Agents => "Agents",
-            Self::Memories => "Memories",
-            Self::Health => "Health",
-            Self::Cost => "Cost",
-            Self::Cron => "Cron",
+            Self::Overview => "zc-dashboard-tab-overview",
+            Self::Sessions => "zc-dashboard-tab-sessions",
+            Self::Agents => "zc-dashboard-tab-agents",
+            Self::Memories => "zc-dashboard-tab-memories",
+            Self::Health => "zc-dashboard-tab-health",
+            Self::Cost => "zc-dashboard-tab-cost",
+            Self::Cron => "zc-dashboard-tab-cron",
         }
     }
 }
@@ -241,7 +241,8 @@ impl<'a> Dashboard<'a> {
                     Err(e) => {
                         let msg = e.to_string();
                         if msg.contains("not available") {
-                            self.memory_error = Some("Memory subsystem not configured".to_string());
+                            self.memory_error =
+                                Some(crate::i18n::t("zc-dashboard-memory-not-configured"));
                         } else {
                             self.memory_error = Some(msg);
                         }
@@ -342,7 +343,7 @@ impl<'a> Dashboard<'a> {
             } else {
                 theme::body_style()
             };
-            spans.push(Span::styled(tab.label(), style));
+            spans.push(Span::styled(crate::i18n::t(tab.fluent_key()), style));
         }
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
@@ -354,10 +355,14 @@ impl<'a> Dashboard<'a> {
             .map(|s| s.server_version.as_str())
             .unwrap_or("?");
         let active = self.status.as_ref().map(|s| s.active_sessions).unwrap_or(0);
-        let help = if self.search_active {
-            "Enter:apply  Esc:cancel"
+        let help: String = if self.search_active {
+            format!(
+                "Enter:{apply}  Esc:{cancel}",
+                apply = crate::i18n::t("zc-dashboard-search-action-apply"),
+                cancel = crate::i18n::t("zc-dashboard-search-action-cancel"),
+            )
         } else {
-            ""
+            String::new()
         };
 
         // Process stats from health
@@ -379,7 +384,10 @@ impl<'a> Dashboard<'a> {
                 theme::dim_style(),
             )];
             if !self.search_query.is_empty() {
-                spans.push(Span::styled("search:", theme::dim_style()));
+                spans.push(Span::styled(
+                    crate::i18n::t("zc-dashboard-search-prefix"),
+                    theme::dim_style(),
+                ));
                 spans.push(Span::styled(&self.search_query, theme::accent_style()));
                 spans.push(Span::styled(" ", theme::dim_style()));
             }
@@ -443,19 +451,31 @@ impl<'a> Dashboard<'a> {
         if let Some(ref s) = self.status {
             let mut lines = vec![
                 Line::from(vec![
-                    Span::styled("Connected  ", theme::dim_style()),
+                    Span::styled(
+                        format!("{:<11}", crate::i18n::t("zc-dashboard-label-connected")),
+                        theme::dim_style(),
+                    ),
                     Span::styled(&self.connect_label, theme::accent_style()),
                 ]),
                 Line::from(vec![
-                    Span::styled("Server     ", theme::dim_style()),
+                    Span::styled(
+                        format!("{:<11}", crate::i18n::t("zc-dashboard-label-server")),
+                        theme::dim_style(),
+                    ),
                     Span::styled(format!("v{}", s.server_version), theme::body_style()),
                 ]),
                 Line::from(vec![
-                    Span::styled("Protocol   ", theme::dim_style()),
+                    Span::styled(
+                        format!("{:<11}", crate::i18n::t("zc-dashboard-label-protocol")),
+                        theme::dim_style(),
+                    ),
                     Span::styled(format!("{}", s.protocol_version), theme::body_style()),
                 ]),
                 Line::from(vec![
-                    Span::styled("Sessions   ", theme::dim_style()),
+                    Span::styled(
+                        format!("{:<11}", crate::i18n::t("zc-dashboard-label-sessions")),
+                        theme::dim_style(),
+                    ),
                     Span::styled(format!("{}", s.active_sessions), theme::accent_style()),
                 ]),
             ];
@@ -479,7 +499,10 @@ impl<'a> Dashboard<'a> {
                         rss_str
                     };
                     lines.push(Line::from(vec![
-                        Span::styled("Memory     ", theme::dim_style()),
+                        Span::styled(
+                            format!("{:<11}", crate::i18n::t("zc-dashboard-label-memory")),
+                            theme::dim_style(),
+                        ),
                         Span::styled(val, theme::body_style()),
                     ]));
                 }
@@ -494,7 +517,10 @@ impl<'a> Dashboard<'a> {
                         format!("{cpu:.1}%")
                     };
                     lines.push(Line::from(vec![
-                        Span::styled("CPU        ", theme::dim_style()),
+                        Span::styled(
+                            format!("{:<11}", crate::i18n::t("zc-dashboard-label-cpu")),
+                            theme::dim_style(),
+                        ),
                         Span::styled(val, theme::body_style()),
                     ]));
                 }
@@ -553,7 +579,10 @@ impl<'a> Dashboard<'a> {
 
         if self.tuis.is_empty() {
             frame.render_widget(
-                Paragraph::new(Span::styled("No TUIs connected", theme::dim_style())),
+                Paragraph::new(Span::styled(
+                    crate::i18n::t("zc-dashboard-no-tuis"),
+                    theme::dim_style(),
+                )),
                 inner,
             );
             return;
@@ -660,7 +689,10 @@ impl<'a> Dashboard<'a> {
 
         let Some(idx) = self.selected_session_index() else {
             frame.render_widget(
-                Paragraph::new(Span::styled("No session selected", theme::dim_style())),
+                Paragraph::new(Span::styled(
+                    crate::i18n::t("zc-dashboard-no-session"),
+                    theme::dim_style(),
+                )),
                 inner,
             );
             return;
@@ -669,20 +701,41 @@ impl<'a> Dashboard<'a> {
         let s = &self.sessions[idx];
         let mut lines = vec![
             detail_line("ID", &s.session_id),
-            detail_line("Key", &s.session_key),
-            detail_line("Agent", s.agent_alias.as_deref().unwrap_or("\u{2014}")),
-            detail_line("Channel", s.channel_id.as_deref().unwrap_or("\u{2014}")),
-            detail_line("Name", s.name.as_deref().unwrap_or("\u{2014}")),
-            detail_line("Messages", &s.message_count.to_string()),
-            detail_line("Created", &s.created_at),
-            detail_line("Activity", &s.last_activity),
+            detail_line(&crate::i18n::t("zc-dashboard-detail-key"), &s.session_key),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-agent"),
+                s.agent_alias.as_deref().unwrap_or("\u{2014}"),
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-channel"),
+                s.channel_id.as_deref().unwrap_or("\u{2014}"),
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-name"),
+                s.name.as_deref().unwrap_or("\u{2014}"),
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-messages"),
+                &s.message_count.to_string(),
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-created"),
+                &s.created_at,
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-activity"),
+                &s.last_activity,
+            ),
         ];
 
         // Show message history if loaded
         if self.session_messages_id.as_deref() == Some(&s.session_id) {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                format!("Message History ({})", self.session_messages.len()),
+                crate::i18n::t_args(
+                    "zc-dashboard-message-history",
+                    &[("count", &self.session_messages.len().to_string())],
+                ),
                 theme::heading_style(),
             )));
             lines.push(Line::from(""));
@@ -711,7 +764,7 @@ impl<'a> Dashboard<'a> {
         } else {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "Loading messages...",
+                crate::i18n::t("zc-dashboard-loading-messages"),
                 theme::dim_style(),
             )));
         }
@@ -773,7 +826,11 @@ impl<'a> Dashboard<'a> {
                     Span::styled(format!("{dot} "), status_style),
                     Span::styled(format!("{:<20}", a.alias), theme::body_style()),
                     Span::styled(
-                        if a.enabled { "enabled " } else { "disabled" },
+                        if a.enabled {
+                            crate::i18n::t("zc-dashboard-enabled")
+                        } else {
+                            crate::i18n::t("zc-dashboard-disabled")
+                        },
                         status_style,
                     ),
                     Span::styled(
@@ -809,7 +866,10 @@ impl<'a> Dashboard<'a> {
 
         let Some(idx) = self.selected_agent_index() else {
             frame.render_widget(
-                Paragraph::new(Span::styled("No agent selected", theme::dim_style())),
+                Paragraph::new(Span::styled(
+                    crate::i18n::t("zc-dashboard-no-agent"),
+                    theme::dim_style(),
+                )),
                 inner,
             );
             return;
@@ -817,13 +877,26 @@ impl<'a> Dashboard<'a> {
 
         let a = &self.agents[idx];
         let mut lines = vec![
-            detail_line("Alias", &a.alias),
-            detail_line("Enabled", if a.enabled { "yes" } else { "no" }),
-            detail_line("Sessions", &a.active_sessions.to_string()),
+            detail_line(&crate::i18n::t("zc-dashboard-detail-alias"), &a.alias),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-enabled"),
+                &if a.enabled {
+                    crate::i18n::t("zc-dashboard-yes")
+                } else {
+                    crate::i18n::t("zc-dashboard-no")
+                },
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-sessions"),
+                &a.active_sessions.to_string(),
+            ),
         ];
 
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("Channels", theme::heading_style())));
+        lines.push(Line::from(Span::styled(
+            crate::i18n::t("zc-dashboard-section-channels"),
+            theme::heading_style(),
+        )));
         if a.channels.is_empty() {
             lines.push(Line::from(Span::styled(
                 "  (none configured)",
@@ -954,27 +1027,48 @@ impl<'a> Dashboard<'a> {
             (None, Some(idx)) => &self.memories[idx],
             (None, None) => {
                 frame.render_widget(
-                    Paragraph::new(Span::styled("No entry selected", theme::dim_style())),
+                    Paragraph::new(Span::styled(
+                        crate::i18n::t("zc-dashboard-no-entry"),
+                        theme::dim_style(),
+                    )),
                     inner,
                 );
                 return;
             }
         };
         let mut lines = vec![
-            detail_line("Key", &m.key),
-            detail_line("Category", &m.category),
-            detail_line("Namespace", &m.namespace),
-            detail_line("Timestamp", &m.timestamp),
-            detail_line("Agent", m.agent_alias.as_deref().unwrap_or("\u{2014}")),
+            detail_line(&crate::i18n::t("zc-dashboard-detail-key"), &m.key),
+            detail_line(&crate::i18n::t("zc-dashboard-detail-category"), &m.category),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-namespace"),
+                &m.namespace,
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-timestamp"),
+                &m.timestamp,
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-agent"),
+                m.agent_alias.as_deref().unwrap_or("\u{2014}"),
+            ),
         ];
         if let Some(score) = m.score {
-            lines.push(detail_line("Score", &format!("{score:.3}")));
+            lines.push(detail_line(
+                &crate::i18n::t("zc-dashboard-detail-score"),
+                &format!("{score:.3}"),
+            ));
         }
         if let Some(imp) = m.importance {
-            lines.push(detail_line("Importance", &format!("{imp:.2}")));
+            lines.push(detail_line(
+                &crate::i18n::t("zc-dashboard-detail-importance"),
+                &format!("{imp:.2}"),
+            ));
         }
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("Content", theme::heading_style())));
+        lines.push(Line::from(Span::styled(
+            crate::i18n::t("zc-dashboard-section-content"),
+            theme::heading_style(),
+        )));
         for l in m.content.lines() {
             lines.push(Line::from(Span::styled(l.to_string(), theme::body_style())));
         }
@@ -1020,7 +1114,10 @@ impl<'a> Dashboard<'a> {
 
         let Some(ref h) = self.health else {
             frame.render_widget(
-                Paragraph::new(Span::styled("Loading...", theme::dim_style())),
+                Paragraph::new(Span::styled(
+                    crate::i18n::t("zc-dashboard-loading"),
+                    theme::dim_style(),
+                )),
                 inner,
             );
             return;
@@ -1031,13 +1128,19 @@ impl<'a> Dashboard<'a> {
             // Overall status
             if let Some(uptime) = obj.get("uptime_seconds").and_then(|v| v.as_u64()) {
                 lines.push(Line::from(vec![
-                    Span::styled("Uptime     ", theme::dim_style()),
+                    Span::styled(
+                        format!("{:<11}", crate::i18n::t("zc-dashboard-label-uptime")),
+                        theme::dim_style(),
+                    ),
                     Span::styled(format_uptime(uptime), theme::body_style()),
                 ]));
             }
             if let Some(pid) = obj.get("pid").and_then(|v| v.as_u64()) {
                 lines.push(Line::from(vec![
-                    Span::styled("PID        ", theme::dim_style()),
+                    Span::styled(
+                        format!("{:<11}", crate::i18n::t("zc-dashboard-label-pid")),
+                        theme::dim_style(),
+                    ),
                     Span::styled(pid.to_string(), theme::body_style()),
                 ]));
             }
@@ -1045,7 +1148,10 @@ impl<'a> Dashboard<'a> {
             // Process stats
             if let Some(process) = obj.get("process") {
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled("Process", theme::heading_style())));
+                lines.push(Line::from(Span::styled(
+                    crate::i18n::t("zc-dashboard-section-process"),
+                    theme::heading_style(),
+                )));
                 if let Some(rss) = process.get("rss_bytes").and_then(|v| v.as_u64())
                     && rss > 0
                 {
@@ -1086,7 +1192,7 @@ impl<'a> Dashboard<'a> {
             if let Some(components) = obj.get("components").and_then(|v| v.as_object()) {
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
-                    "Components",
+                    crate::i18n::t("zc-dashboard-section-components"),
                     theme::heading_style(),
                 )));
                 for (name, val) in components {
@@ -1127,7 +1233,10 @@ impl<'a> Dashboard<'a> {
                 .collect();
             if !extras.is_empty() {
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled("Details", theme::heading_style())));
+                lines.push(Line::from(Span::styled(
+                    crate::i18n::t("zc-dashboard-section-details"),
+                    theme::heading_style(),
+                )));
                 for key in extras {
                     if let Some(val) = obj.get(key) {
                         let val_str = if let Some(s) = val.as_str() {
@@ -1180,24 +1289,48 @@ impl<'a> Dashboard<'a> {
 
         let Some(ref c) = self.cost else {
             frame.render_widget(
-                Paragraph::new(Span::styled("Loading...", theme::dim_style())),
+                Paragraph::new(Span::styled(
+                    crate::i18n::t("zc-dashboard-loading"),
+                    theme::dim_style(),
+                )),
                 inner,
             );
             return;
         };
 
         let mut lines = vec![
-            Line::from(Span::styled("Summary", theme::heading_style())),
-            detail_line("Session", &format!("${:.6}", c.session_cost_usd)),
-            detail_line("Daily", &format!("${:.6}", c.daily_cost_usd)),
-            detail_line("Monthly", &format!("${:.6}", c.monthly_cost_usd)),
-            detail_line("Tokens", &format_tokens(c.total_tokens)),
-            detail_line("Requests", &c.request_count.to_string()),
+            Line::from(Span::styled(
+                crate::i18n::t("zc-dashboard-section-summary"),
+                theme::heading_style(),
+            )),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-session"),
+                &format!("${:.6}", c.session_cost_usd),
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-daily"),
+                &format!("${:.6}", c.daily_cost_usd),
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-monthly"),
+                &format!("${:.6}", c.monthly_cost_usd),
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-tokens"),
+                &format_tokens(c.total_tokens),
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-requests"),
+                &c.request_count.to_string(),
+            ),
         ];
 
         if !c.by_model.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("By Model", theme::heading_style())));
+            lines.push(Line::from(Span::styled(
+                crate::i18n::t("zc-dashboard-section-by-model"),
+                theme::heading_style(),
+            )));
             let mut models: Vec<_> = c.by_model.values().collect();
             models.sort_by(|a, b| {
                 b.cost_usd
@@ -1222,7 +1355,10 @@ impl<'a> Dashboard<'a> {
 
         if !c.by_agent.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("By Agent", theme::heading_style())));
+            lines.push(Line::from(Span::styled(
+                crate::i18n::t("zc-dashboard-section-by-agent"),
+                theme::heading_style(),
+            )));
             let mut agents: Vec<_> = c.by_agent.values().collect();
             agents.sort_by(|a, b| {
                 b.cost_usd
@@ -1326,7 +1462,10 @@ impl<'a> Dashboard<'a> {
 
         let Some(idx) = self.selected_cron_index() else {
             frame.render_widget(
-                Paragraph::new(Span::styled("No job selected", theme::dim_style())),
+                Paragraph::new(Span::styled(
+                    crate::i18n::t("zc-dashboard-no-job"),
+                    theme::dim_style(),
+                )),
                 inner,
             );
             return;
@@ -1344,29 +1483,51 @@ impl<'a> Dashboard<'a> {
 
         let mut lines = vec![
             detail_line("ID", &j.id),
-            detail_line("Name", j.name.as_deref().unwrap_or("\u{2014}")),
-            detail_line("Agent", &j.agent_alias),
-            detail_line("Enabled", if j.enabled { "yes" } else { "no" }),
-            detail_line("Schedule", &sched_str),
-            detail_line("Created", &j.created_at),
-            detail_line("Next Run", &j.next_run),
-            detail_line("Last Run", j.last_run.as_deref().unwrap_or("\u{2014}")),
             detail_line(
-                "Last Status",
+                &crate::i18n::t("zc-dashboard-detail-name"),
+                j.name.as_deref().unwrap_or("\u{2014}"),
+            ),
+            detail_line(&crate::i18n::t("zc-dashboard-detail-agent"), &j.agent_alias),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-enabled"),
+                &if j.enabled {
+                    crate::i18n::t("zc-dashboard-yes")
+                } else {
+                    crate::i18n::t("zc-dashboard-no")
+                },
+            ),
+            detail_line(&crate::i18n::t("zc-dashboard-detail-schedule"), &sched_str),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-created"),
+                &j.created_at,
+            ),
+            detail_line(&crate::i18n::t("zc-dashboard-detail-next-run"), &j.next_run),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-last-run"),
+                j.last_run.as_deref().unwrap_or("\u{2014}"),
+            ),
+            detail_line(
+                &crate::i18n::t("zc-dashboard-detail-last-status"),
                 j.last_status.as_deref().unwrap_or("\u{2014}"),
             ),
         ];
 
         if !j.command.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("Command", theme::heading_style())));
+            lines.push(Line::from(Span::styled(
+                crate::i18n::t("zc-dashboard-section-command"),
+                theme::heading_style(),
+            )));
             for l in j.command.lines() {
                 lines.push(Line::from(Span::styled(l.to_string(), theme::body_style())));
             }
         }
         if let Some(ref prompt) = j.prompt {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("Prompt", theme::heading_style())));
+            lines.push(Line::from(Span::styled(
+                crate::i18n::t("zc-dashboard-section-prompt"),
+                theme::heading_style(),
+            )));
             for l in prompt.lines() {
                 lines.push(Line::from(Span::styled(l.to_string(), theme::body_style())));
             }
@@ -1374,7 +1535,7 @@ impl<'a> Dashboard<'a> {
         if let Some(ref output) = j.last_output {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "Last Output",
+                crate::i18n::t("zc-dashboard-section-last-output"),
                 theme::heading_style(),
             )));
             for l in output.lines() {
@@ -1635,8 +1796,12 @@ impl<'a> Dashboard<'a> {
         match evt.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 // Tab bar clicks
-                let labels: Vec<&str> = TABS.iter().map(|t| t.label()).collect();
-                if let Some(idx) = mouse::tab_click_index(col, row, self.tab_area, &labels, 3) {
+                let labels: Vec<String> = TABS
+                    .iter()
+                    .map(|t| crate::i18n::t(t.fluent_key()))
+                    .collect();
+                let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                if let Some(idx) = mouse::tab_click_index(col, row, self.tab_area, &label_refs, 3) {
                     self.tab = TABS[idx];
                     return;
                 }
@@ -1785,33 +1950,54 @@ impl crate::widgets::HelpContext for Dashboard<'_> {
 
         // Global tab-switching always available.
         let tab_nav = vec![
-            E::new(vec!["Tab", "l", "→"], "Next tab"),
-            E::new(vec!["Shift+Tab", "h", "←"], "Previous tab"),
-            E::key("1–7", "Jump to tab"),
-            E::key("r", "Refresh now"),
-            E::key("q", "Quit TUI"),
-            E::key("?", "This help"),
+            E::new(
+                vec!["Tab", "l", "→"],
+                crate::i18n::t("zc-dashboard-help-next-tab"),
+            ),
+            E::new(
+                vec!["Shift+Tab", "h", "←"],
+                crate::i18n::t("zc-dashboard-help-prev-tab"),
+            ),
+            E::key("1–7", crate::i18n::t("zc-dashboard-help-jump-tab")),
+            E::key("r", crate::i18n::t("zc-dashboard-help-refresh")),
+            E::key("q", crate::i18n::t("zc-dashboard-help-quit")),
+            E::key("?", crate::i18n::t("zc-dashboard-help-this-help")),
         ];
 
         if self.search_active {
             return HelpNode::entries(vec![
-                E::key("Enter", "Apply search"),
-                E::key("Esc", "Cancel search"),
+                E::key("Enter", crate::i18n::t("zc-dashboard-help-apply-search")),
+                E::key("Esc", crate::i18n::t("zc-dashboard-help-cancel-search")),
             ]);
         }
 
         if self.detail_open {
             return HelpNode::entries(vec![
-                E::new(vec!["Esc", "Enter"], "Close detail"),
-                E::new(vec!["j", "k"], "Move list cursor"),
-                E::new(vec!["J", "K"], "Scroll detail"),
-                E::new(vec!["Shift+↑", "Shift+↓"], "Scroll detail"),
-                E::key("Shift+←/→", "Resize detail pane"),
-                E::key("r", "Refresh"),
-                E::key("/", "Search"),
-                E::key("c", "Clear search"),
-                E::key("q", "Quit TUI"),
-                E::key("?", "This help"),
+                E::new(
+                    vec!["Esc", "Enter"],
+                    crate::i18n::t("zc-dashboard-help-close-detail"),
+                ),
+                E::new(
+                    vec!["j", "k"],
+                    crate::i18n::t("zc-dashboard-help-move-cursor"),
+                ),
+                E::new(
+                    vec!["J", "K"],
+                    crate::i18n::t("zc-dashboard-help-scroll-detail"),
+                ),
+                E::new(
+                    vec!["Shift+↑", "Shift+↓"],
+                    crate::i18n::t("zc-dashboard-help-scroll-detail"),
+                ),
+                E::key(
+                    "Shift+←/→",
+                    crate::i18n::t("zc-dashboard-help-resize-detail"),
+                ),
+                E::key("r", crate::i18n::t("zc-dashboard-help-refresh-short")),
+                E::key("/", crate::i18n::t("zc-dashboard-help-search")),
+                E::key("c", crate::i18n::t("zc-dashboard-help-clear-search")),
+                E::key("q", crate::i18n::t("zc-dashboard-help-quit")),
+                E::key("?", crate::i18n::t("zc-dashboard-help-this-help")),
             ]);
         }
 
@@ -1823,12 +2009,30 @@ impl crate::widgets::HelpContext for Dashboard<'_> {
             }
             Tab::Sessions | Tab::Agents | Tab::Memories | Tab::Cron => {
                 entries.push(E::spacer());
-                entries.push(E::new(vec!["j", "k", "↑↓"], "Move cursor"));
-                entries.push(E::new(vec!["G", "End"], "Jump to bottom"));
-                entries.push(E::new(vec!["g", "Home"], "Jump to top"));
-                entries.push(E::key("Enter", "Open detail pane"));
-                entries.push(E::key("/", "Search / filter"));
-                entries.push(E::key("c", "Clear search"));
+                entries.push(E::new(
+                    vec!["j", "k", "↑↓"],
+                    crate::i18n::t("zc-dashboard-help-move-cursor-list"),
+                ));
+                entries.push(E::new(
+                    vec!["G", "End"],
+                    crate::i18n::t("zc-dashboard-help-jump-bottom"),
+                ));
+                entries.push(E::new(
+                    vec!["g", "Home"],
+                    crate::i18n::t("zc-dashboard-help-jump-top"),
+                ));
+                entries.push(E::key(
+                    "Enter",
+                    crate::i18n::t("zc-dashboard-help-open-detail"),
+                ));
+                entries.push(E::key(
+                    "/",
+                    crate::i18n::t("zc-dashboard-help-search-filter"),
+                ));
+                entries.push(E::key(
+                    "c",
+                    crate::i18n::t("zc-dashboard-help-clear-search"),
+                ));
             }
         }
         HelpNode::entries(entries)

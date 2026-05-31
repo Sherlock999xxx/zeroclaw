@@ -253,11 +253,17 @@ impl LogDetail {
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         lines.push(Line::from(vec![
-            Span::styled("Timestamp  ", label_style),
+            Span::styled(
+                format!("{:<11}", crate::i18n::t("zc-logs-label-timestamp")),
+                label_style,
+            ),
             Span::styled(self.timestamp().to_string(), val_style),
         ]));
         lines.push(Line::from(vec![
-            Span::styled("Severity   ", label_style),
+            Span::styled(
+                format!("{:<11}", crate::i18n::t("zc-logs-label-severity")),
+                label_style,
+            ),
             Span::styled(
                 format!(
                     "{} ({})",
@@ -268,23 +274,35 @@ impl LogDetail {
             ),
         ]));
         lines.push(Line::from(vec![
-            Span::styled("Category   ", label_style),
+            Span::styled(
+                format!("{:<11}", crate::i18n::t("zc-logs-label-category")),
+                label_style,
+            ),
             Span::styled(self.event_field("category").to_string(), val_style),
         ]));
         lines.push(Line::from(vec![
-            Span::styled("Action     ", label_style),
+            Span::styled(
+                format!("{:<11}", crate::i18n::t("zc-logs-label-action")),
+                label_style,
+            ),
             Span::styled(self.event_field("action").to_string(), val_style),
         ]));
         let outcome = self.event_field("outcome");
         if !outcome.is_empty() && outcome != "unknown" {
             lines.push(Line::from(vec![
-                Span::styled("Outcome    ", label_style),
+                Span::styled(
+                    format!("{:<11}", crate::i18n::t("zc-logs-label-outcome")),
+                    label_style,
+                ),
                 Span::styled(outcome.to_string(), val_style),
             ]));
         }
         if let Some(ms) = self.duration_ms() {
             lines.push(Line::from(vec![
-                Span::styled("Duration   ", label_style),
+                Span::styled(
+                    format!("{:<11}", crate::i18n::t("zc-logs-label-duration")),
+                    label_style,
+                ),
                 Span::styled(format!("{ms}ms"), val_style),
             ]));
         }
@@ -292,7 +310,10 @@ impl LogDetail {
         let msg = self.message();
         if !msg.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("Message", theme::heading_style())));
+            lines.push(Line::from(Span::styled(
+                crate::i18n::t("zc-logs-section-message"),
+                theme::heading_style(),
+            )));
             for msg_line in msg.lines() {
                 lines.push(Line::from(Span::styled(msg_line.to_string(), val_style)));
             }
@@ -300,7 +321,10 @@ impl LogDetail {
 
         if self.trace_id().is_some() || self.span_id().is_some() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("Trace", theme::heading_style())));
+            lines.push(Line::from(Span::styled(
+                crate::i18n::t("zc-logs-section-trace"),
+                theme::heading_style(),
+            )));
             if let Some(tid) = self.trace_id() {
                 lines.push(Line::from(vec![
                     Span::styled("trace_id   ", label_style),
@@ -319,7 +343,7 @@ impl LogDetail {
         if !zc.is_empty() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "Attribution",
+                crate::i18n::t("zc-logs-section-attribution"),
                 theme::heading_style(),
             )));
             for (k, v) in &zc {
@@ -335,7 +359,7 @@ impl LogDetail {
         if !attrs.is_null() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "Attributes",
+                crate::i18n::t("zc-logs-section-attributes"),
                 theme::heading_style(),
             )));
             if let Ok(pretty) = serde_json::to_string_pretty(attrs) {
@@ -348,7 +372,7 @@ impl LogDetail {
         if self.is_preview_only() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "Full payload unavailable — showing preview fields only.",
+                crate::i18n::t("zc-logs-preview-only"),
                 theme::dim_style(),
             )));
         }
@@ -359,24 +383,48 @@ impl LogDetail {
     /// Plain-text rendering of the detail fields for clipboard.
     fn clipboard_text(&self) -> String {
         let mut out = String::new();
-        out.push_str(&format!("Timestamp  {}\n", self.timestamp()));
         out.push_str(&format!(
-            "Severity   {} ({})\n",
+            "{:<11}{}\n",
+            crate::i18n::t("zc-logs-label-timestamp"),
+            self.timestamp()
+        ));
+        out.push_str(&format!(
+            "{:<11}{} ({})\n",
+            crate::i18n::t("zc-logs-label-severity"),
             severity_label(self.severity_number()),
             self.severity_number()
         ));
-        out.push_str(&format!("Category   {}\n", self.event_field("category")));
-        out.push_str(&format!("Action     {}\n", self.event_field("action")));
+        out.push_str(&format!(
+            "{:<11}{}\n",
+            crate::i18n::t("zc-logs-label-category"),
+            self.event_field("category")
+        ));
+        out.push_str(&format!(
+            "{:<11}{}\n",
+            crate::i18n::t("zc-logs-label-action"),
+            self.event_field("action")
+        ));
         let outcome = self.event_field("outcome");
         if !outcome.is_empty() && outcome != "unknown" {
-            out.push_str(&format!("Outcome    {}\n", outcome));
+            out.push_str(&format!(
+                "{:<11}{}\n",
+                crate::i18n::t("zc-logs-label-outcome"),
+                outcome
+            ));
         }
         if let Some(ms) = self.duration_ms() {
-            out.push_str(&format!("Duration   {ms}ms\n"));
+            out.push_str(&format!(
+                "{:<11}{ms}ms\n",
+                crate::i18n::t("zc-logs-label-duration")
+            ));
         }
         let msg = self.message();
         if !msg.is_empty() {
-            out.push_str(&format!("\nMessage\n{}\n", msg));
+            out.push_str(&format!(
+                "\n{}\n{}\n",
+                crate::i18n::t("zc-logs-section-message"),
+                msg
+            ));
         }
         if self.trace_id().is_some() || self.span_id().is_some() {
             out.push('\n');
@@ -656,10 +704,14 @@ impl<'a> Logs<'a> {
             .split(area);
 
         // Status bar
-        let help = if self.search_active {
-            "Enter:apply  Esc:cancel"
+        let help: String = if self.search_active {
+            format!(
+                "Enter:{apply}  Esc:{cancel}",
+                apply = crate::i18n::t("zc-logs-search-action-apply"),
+                cancel = crate::i18n::t("zc-logs-search-action-cancel"),
+            )
         } else {
-            ""
+            String::new()
         };
 
         let status = Line::from(vec![
@@ -785,7 +837,10 @@ impl<'a> Logs<'a> {
         frame.render_widget(block, area);
 
         let Some(_idx) = self.selected_event_idx() else {
-            let hint = Paragraph::new(Span::styled("No event selected", theme::dim_style()));
+            let hint = Paragraph::new(Span::styled(
+                crate::i18n::t("zc-logs-no-event-selected"),
+                theme::dim_style(),
+            ));
             frame.render_widget(hint, inner);
             return;
         };
@@ -798,7 +853,10 @@ impl<'a> Logs<'a> {
         let lines = match &self.detail {
             DetailState::Ready(d) => d.detail_lines(),
             DetailState::Loading => {
-                vec![Line::from(Span::styled("Loading…", theme::dim_style()))]
+                vec![Line::from(Span::styled(
+                    crate::i18n::t("zc-logs-loading"),
+                    theme::dim_style(),
+                ))]
             }
         };
         let para = Paragraph::new(lines)
@@ -1140,38 +1198,54 @@ impl crate::widgets::HelpContext for Logs<'_> {
         use crate::widgets::{HelpEntry as E, HelpNode};
         if self.search_active {
             HelpNode::entries(vec![
-                E::key("Enter", "Apply search"),
-                E::key("Esc", "Cancel search"),
+                E::key("Enter", crate::i18n::t("zc-logs-help-apply-search")),
+                E::key("Esc", crate::i18n::t("zc-logs-help-cancel-search")),
             ])
         } else if self.detail_open {
             HelpNode::entries(vec![
-                E::new(vec!["Esc", "Enter"], "Close detail"),
-                E::new(vec!["j", "k", "↑↓"], "Move list cursor"),
-                E::new(vec!["J", "K", "Shift+↑↓"], "Scroll detail pane"),
-                E::key("Shift+←→", "Resize detail pane"),
-                E::key("f", "Toggle follow mode"),
-                E::key("/", "Search"),
-                E::key("+ / -", "Raise / lower severity filter"),
-                E::key("c", "Clear search filter"),
-                E::key("y", "Yank detail to clipboard"),
-                E::key("?", "This help"),
+                E::new(
+                    vec!["Esc", "Enter"],
+                    crate::i18n::t("zc-logs-help-close-detail"),
+                ),
+                E::new(
+                    vec!["j", "k", "↑↓"],
+                    crate::i18n::t("zc-logs-help-move-cursor"),
+                ),
+                E::new(
+                    vec!["J", "K", "Shift+↑↓"],
+                    crate::i18n::t("zc-logs-help-scroll-detail"),
+                ),
+                E::key("Shift+←→", crate::i18n::t("zc-logs-help-resize-detail")),
+                E::key("f", crate::i18n::t("zc-logs-help-toggle-follow")),
+                E::key("/", crate::i18n::t("zc-logs-help-search")),
+                E::key("+ / -", crate::i18n::t("zc-logs-help-severity-filter")),
+                E::key("c", crate::i18n::t("zc-logs-help-clear-search")),
+                E::key("y", crate::i18n::t("zc-logs-help-yank-detail")),
+                E::key("?", crate::i18n::t("zc-logs-help-this-help")),
             ])
         } else {
             HelpNode::entries(vec![
-                E::new(vec!["j", "k", "↑↓"], "Move cursor"),
-                E::new(vec!["G", "End"], "Jump to bottom (follow)"),
-                E::new(vec!["g", "Home"], "Jump to top"),
-                E::key("PgDn / PgUp", "Page down / up"),
-                E::key("Enter", "Open detail pane"),
-                E::key("f", "Toggle follow mode"),
-                E::key("/", "Search"),
-                E::key("+ / -", "Raise / lower severity filter"),
-                E::key("c", "Clear search filter"),
-                E::key("?", "This help"),
+                E::new(
+                    vec!["j", "k", "↑↓"],
+                    crate::i18n::t("zc-logs-help-move-cursor-list"),
+                ),
+                E::new(vec!["G", "End"], crate::i18n::t("zc-logs-help-jump-bottom")),
+                E::new(vec!["g", "Home"], crate::i18n::t("zc-logs-help-jump-top")),
+                E::key("PgDn / PgUp", crate::i18n::t("zc-logs-help-page")),
+                E::key("Enter", crate::i18n::t("zc-logs-help-open-detail")),
+                E::key("f", crate::i18n::t("zc-logs-help-toggle-follow")),
+                E::key("/", crate::i18n::t("zc-logs-help-search")),
+                E::key("+ / -", crate::i18n::t("zc-logs-help-severity-filter")),
+                E::key("c", crate::i18n::t("zc-logs-help-clear-search")),
+                E::key("?", crate::i18n::t("zc-logs-help-this-help")),
                 E::spacer(),
-                E::key(
-                    "Mouse",
-                    "Click to select, scroll wheel, double-click detail",
+                E::new(
+                    vec![],
+                    format!(
+                        "{}: {}",
+                        crate::i18n::t("zc-logs-help-mouse-label"),
+                        crate::i18n::t("zc-logs-help-mouse-desc"),
+                    ),
                 ),
             ])
         }

@@ -46,17 +46,21 @@ impl Selector {
         Selector::Submit,
     ];
 
-    fn title(self) -> &'static str {
+    fn fluent_key(self) -> &'static str {
         match self {
-            Selector::ModelProvider => "Model provider",
-            Selector::RiskProfile => "Risk profile",
-            Selector::RuntimeProfile => "Runtime profile",
-            Selector::Memory => "Memory",
-            Selector::Channels => "Channels (optional)",
-            Selector::PeerGroups => "Peer groups (optional)",
-            Selector::Agent => "Agent",
-            Selector::Submit => "Submit",
+            Selector::ModelProvider => "zc-quickstart-selector-model-provider",
+            Selector::RiskProfile => "zc-quickstart-selector-risk-profile",
+            Selector::RuntimeProfile => "zc-quickstart-selector-runtime-profile",
+            Selector::Memory => "zc-quickstart-selector-memory",
+            Selector::Channels => "zc-quickstart-selector-channels",
+            Selector::PeerGroups => "zc-quickstart-selector-peer-groups",
+            Selector::Agent => "zc-quickstart-selector-agent",
+            Selector::Submit => "zc-quickstart-selector-submit",
         }
+    }
+
+    fn title(self) -> String {
+        crate::i18n::t(self.fluent_key())
     }
 
     fn step(self) -> QuickstartStep {
@@ -73,11 +77,11 @@ impl Selector {
     }
 }
 
-fn opt(value: &str, label: &'static str, help: &'static str) -> PickerOption {
+fn opt(value: &str, label: impl Into<String>, help: impl Into<String>) -> PickerOption {
     PickerOption {
         value: value.to_string(),
-        label: label.to_string(),
-        help: help.to_string(),
+        label: label.into(),
+        help: help.into(),
         use_existing: false,
     }
 }
@@ -86,7 +90,7 @@ fn existing_opt(alias: String) -> PickerOption {
     PickerOption {
         label: format!("Use existing: {alias}"),
         value: alias,
-        help: "Reuse this alias instead of creating a new one.".to_string(),
+        help: crate::i18n::t("zc-quickstart-reuse-alias-help"),
         use_existing: true,
     }
 }
@@ -116,27 +120,39 @@ fn risk_options() -> [PickerOption; 3] {
     [
         opt(
             "locked_down",
-            "Locked Down",
-            "Tight defaults. Workspace-only fs, approval on med/high risk.",
+            crate::i18n::t("zc-quickstart-risk-locked-down"),
+            crate::i18n::t("zc-quickstart-risk-locked-down-desc"),
         ),
         opt(
             "balanced",
-            "Balanced",
-            "Day-to-day defaults. Approval on risky ops. Recommended.",
+            crate::i18n::t("zc-quickstart-risk-balanced"),
+            crate::i18n::t("zc-quickstart-risk-balanced-desc"),
         ),
         opt(
             "yolo",
-            "YOLO",
-            "Full autonomy. No approval gates. Use on disposable machines only.",
+            crate::i18n::t("zc-quickstart-risk-yolo"),
+            crate::i18n::t("zc-quickstart-risk-yolo-desc"),
         ),
     ]
 }
 
 fn runtime_options() -> [PickerOption; 3] {
     [
-        opt("tight", "Tight", "Low ceilings on iterations and tokens."),
-        opt("balanced", "Balanced", "Sensible ceilings. Recommended."),
-        opt("unbounded", "Unbounded", "No artificial caps."),
+        opt(
+            "tight",
+            crate::i18n::t("zc-quickstart-runtime-tight"),
+            crate::i18n::t("zc-quickstart-runtime-tight-desc"),
+        ),
+        opt(
+            "balanced",
+            crate::i18n::t("zc-quickstart-runtime-balanced"),
+            crate::i18n::t("zc-quickstart-runtime-balanced-desc"),
+        ),
+        opt(
+            "unbounded",
+            crate::i18n::t("zc-quickstart-runtime-unbounded"),
+            crate::i18n::t("zc-quickstart-runtime-unbounded-desc"),
+        ),
     ]
 }
 
@@ -204,9 +220,9 @@ fn provider_type_options(snapshot: Option<&QuickstartStateResult>) -> Vec<Picker
             value: t.kind.clone(),
             label: t.display_name.clone(),
             help: if t.local {
-                "Local. No credential required.".to_string()
+                crate::i18n::t("zc-quickstart-provider-local")
             } else {
-                "Cloud. Provide an API key when prompted.".to_string()
+                crate::i18n::t("zc-quickstart-provider-cloud")
             },
             use_existing: false,
         })
@@ -376,7 +392,7 @@ impl FormState {
                     self.agent_name.clone()
                 }
             }
-            Selector::Submit => "Create the agent".to_string(),
+            Selector::Submit => crate::i18n::t("zc-quickstart-submit-create"),
         }
     }
 
@@ -481,7 +497,7 @@ enum PickerPurpose {
 struct TextInputModal {
     selector: Selector,
     label: &'static str,
-    help: &'static str,
+    help: String,
     buf: String,
     is_secret: bool,
     /// When `Some`, this TextInput is the peers-buffer step of the
@@ -606,10 +622,13 @@ impl QuickstartPane {
 
     pub fn help_context(&self) -> HelpNode {
         HelpNode::entries(vec![
-            HelpEntry::new(vec!["↑/↓"], "Move between selectors"),
-            HelpEntry::new(vec!["Enter"], "Open the highlighted selector"),
-            HelpEntry::key("c", "Create the agent (or hit Enter on Submit)"),
-            HelpEntry::key("Esc", "Leave (no config written)"),
+            HelpEntry::new(vec!["↑/↓"], crate::i18n::t("zc-quickstart-help-move")),
+            HelpEntry::new(vec!["Enter"], crate::i18n::t("zc-quickstart-help-open")),
+            HelpEntry::key(
+                "c",
+                crate::i18n::t_args("zc-quickstart-help-create", &[("enter", "Enter")]),
+            ),
+            HelpEntry::key("Esc", crate::i18n::t("zc-quickstart-help-leave")),
         ])
     }
 
@@ -1000,7 +1019,7 @@ impl QuickstartPane {
                             self.active_modal = Some(Modal::TextInput(TextInputModal {
                                 selector: Selector::PeerGroups,
                                 label: "external_peers",
-                                help: "Comma- or newline-separated. Blank = no external peers.",
+                                help: crate::i18n::t("zc-quickstart-help-external-peers"),
                                 buf: String::new(),
                                 is_secret: false,
                                 peer_group_channel: Some(chosen),
@@ -1629,7 +1648,7 @@ impl QuickstartPane {
 
     fn draw_title(&self, frame: &mut Frame, area: Rect) {
         let title = Paragraph::new(Line::from(vec![
-            Span::styled("Quickstart", theme::accent_style()),
+            Span::styled(crate::i18n::t("zc-quickstart-title"), theme::accent_style()),
             Span::raw("  — create one working agent end-to-end."),
         ]));
         frame.render_widget(title, area);
@@ -1682,18 +1701,18 @@ impl QuickstartPane {
     fn draw_status_strip(&self, frame: &mut Frame, area: Rect) {
         let can_create = self.can_create();
         let label = if self.busy {
-            "Submitting…".to_string()
+            crate::i18n::t("zc-quickstart-status-submitting")
         } else if let Some(alias) = &self.applied_alias {
-            format!("Created `{alias}`. Reloading daemon — Chat will open when reconnected…")
+            crate::i18n::t_args("zc-quickstart-status-created", &[("alias", alias.as_str())])
         } else if !self.last_errors.is_empty() {
-            format!(
-                "{} error(s) — fix selectors and resubmit",
-                self.last_errors.len()
+            crate::i18n::t_args(
+                "zc-quickstart-status-errors",
+                &[("count", &self.last_errors.len().to_string())],
             )
         } else if can_create {
-            "All selectors ✓. Press `c` to Create.".to_string()
+            crate::i18n::t_args("zc-quickstart-status-can-create", &[("chord", "c")])
         } else {
-            "↑/↓ to move, Enter to open. `c` enables when every selector is ✓.".to_string()
+            crate::i18n::t_args("zc-quickstart-status-hint", &[("chord", "c")])
         };
         let style = if self.applied_alias.is_some() {
             Style::default()
@@ -1740,7 +1759,7 @@ fn draw_modal(
         String,
         Vec<Line>,
         Vec<Line>,
-        &str,
+        String,
         Vec<usize>,
     ) = match modal {
         Modal::Picker(p) => {
@@ -1770,7 +1789,12 @@ fn draw_modal(
                 format!(" {} ", p.selector.title()),
                 Vec::new(),
                 lines,
-                "↑/↓ move   Enter pick   Esc cancel",
+                format!(
+                    "↑/↓ {move_v}   Enter {pick}   Esc {cancel}",
+                    move_v = crate::i18n::t("zc-quickstart-modal-action-move"),
+                    pick = crate::i18n::t("zc-quickstart-modal-action-pick"),
+                    cancel = crate::i18n::t("zc-quickstart-modal-action-cancel"),
+                ),
                 cursor_lines,
             )
         }
@@ -1781,7 +1805,7 @@ fn draw_modal(
                 t.buf.clone()
             };
             let lines = vec![
-                Line::from(Span::styled(t.help, theme::dim_style())),
+                Line::from(Span::styled(t.help.clone(), theme::dim_style())),
                 Line::from(""),
                 Line::from(vec![
                     Span::styled(format!("{}: ", t.label), theme::accent_style()),
@@ -1793,7 +1817,11 @@ fn draw_modal(
                 format!(" {} ", t.selector.title()),
                 Vec::new(),
                 lines,
-                "Enter accept   Esc cancel",
+                format!(
+                    "Enter {accept}   Esc {cancel}",
+                    accept = crate::i18n::t("zc-quickstart-modal-action-accept"),
+                    cancel = crate::i18n::t("zc-quickstart-modal-action-cancel"),
+                ),
                 Vec::new(),
             )
         }
@@ -1801,7 +1829,10 @@ fn draw_modal(
             let mut lines: Vec<Line> = Vec::new();
             let mut cursor_lines = Vec::with_capacity(f.fields.len());
             lines.push(Line::from(vec![
-                Span::styled("Type: ", theme::dim_style()),
+                Span::styled(
+                    format!("{} ", crate::i18n::t("zc-quickstart-modal-type-prefix")),
+                    theme::dim_style(),
+                ),
                 Span::styled(f.type_key.as_str(), theme::accent_style()),
                 Span::styled("    Alias: ", theme::dim_style()),
                 Span::styled(f.alias.as_str(), theme::body_style()),
@@ -1869,7 +1900,13 @@ fn draw_modal(
                 format!(" {} ", f.selector.title()),
                 header_lines,
                 lines,
-                "Tab/↑/↓ move   ←/→ pick on ‹enum›   Enter accept   Esc cancel",
+                format!(
+                    "Tab/↑/↓ {move_v}   ←/→ {pick_enum}   Enter {accept}   Esc {cancel}",
+                    move_v = crate::i18n::t("zc-quickstart-modal-action-move"),
+                    pick_enum = crate::i18n::t("zc-quickstart-modal-action-pick-on-enum"),
+                    accept = crate::i18n::t("zc-quickstart-modal-action-accept"),
+                    cancel = crate::i18n::t("zc-quickstart-modal-action-cancel"),
+                ),
                 cursor_lines,
             )
         }
@@ -1880,7 +1917,7 @@ fn draw_modal(
             let row_count = drafts + 2;
             if drafts == 0 {
                 lines.push(Line::from(Span::styled(
-                    "No channels configured. An agent without channels still works via `zeroclaw agent <name>` from the CLI.",
+                    crate::i18n::t("zc-quickstart-channels-empty"),
                     theme::dim_style(),
                 )));
                 lines.push(Line::from(""));
@@ -1912,15 +1949,27 @@ fn draw_modal(
             let add_idx = drafts;
             let done_idx = drafts + 1;
             cursor_lines.push(lines.len());
-            lines.push(action_row_line("+ Add channel", cl.cursor == add_idx));
+            lines.push(action_row_line(
+                &crate::i18n::t("zc-quickstart-channels-add"),
+                cl.cursor == add_idx,
+            ));
             cursor_lines.push(lines.len());
-            lines.push(action_row_line("Done", cl.cursor == done_idx));
+            lines.push(action_row_line(
+                &crate::i18n::t("zc-quickstart-action-done"),
+                cl.cursor == done_idx,
+            ));
             let _ = row_count; // already encoded by the cursor styling above.
             (
-                " Channels ".to_string(),
+                format!(" {} ", crate::i18n::t("zc-quickstart-block-channels")),
                 Vec::new(),
                 lines,
-                "↑/↓ move   Enter activate   d delete   Esc close",
+                format!(
+                    "↑/↓ {move_v}   Enter {activate}   d {delete}   Esc {close}",
+                    move_v = crate::i18n::t("zc-quickstart-modal-action-move"),
+                    activate = crate::i18n::t("zc-quickstart-modal-action-activate"),
+                    delete = crate::i18n::t("zc-quickstart-modal-action-delete"),
+                    close = crate::i18n::t("zc-quickstart-modal-action-close"),
+                ),
                 cursor_lines,
             )
         }
@@ -1931,7 +1980,7 @@ fn draw_modal(
             let row_count = drafts + 2;
             if drafts == 0 {
                 lines.push(Line::from(Span::styled(
-                    "No peer groups configured. Optional — agents can still send messages to channels.",
+                    crate::i18n::t("zc-quickstart-no-peer-groups"),
                     theme::dim_style(),
                 )));
                 lines.push(Line::from(""));
@@ -1961,15 +2010,27 @@ fn draw_modal(
             let add_idx = drafts;
             let done_idx = drafts + 1;
             cursor_lines.push(lines.len());
-            lines.push(action_row_line("+ Add peer group", pl.cursor == add_idx));
+            lines.push(action_row_line(
+                &crate::i18n::t("zc-quickstart-peers-add"),
+                pl.cursor == add_idx,
+            ));
             cursor_lines.push(lines.len());
-            lines.push(action_row_line("Done", pl.cursor == done_idx));
+            lines.push(action_row_line(
+                &crate::i18n::t("zc-quickstart-action-done"),
+                pl.cursor == done_idx,
+            ));
             let _ = row_count;
             (
-                " Peer groups ".to_string(),
+                format!(" {} ", crate::i18n::t("zc-quickstart-block-peers")),
                 Vec::new(),
                 lines,
-                "↑/↓ move   Enter activate   d delete   Esc close",
+                format!(
+                    "↑/↓ {move_v}   Enter {activate}   d {delete}   Esc {close}",
+                    move_v = crate::i18n::t("zc-quickstart-modal-action-move"),
+                    activate = crate::i18n::t("zc-quickstart-modal-action-activate"),
+                    delete = crate::i18n::t("zc-quickstart-modal-action-delete"),
+                    close = crate::i18n::t("zc-quickstart-modal-action-close"),
+                ),
                 cursor_lines,
             )
         }
@@ -2006,7 +2067,7 @@ fn draw_modal(
             if !a.filenames.is_empty() {
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
-                    "Personality files (e=edit, t=use template, c=clear)",
+                    crate::i18n::t("zc-quickstart-personality-help"),
                     theme::dim_style(),
                 )));
             }
@@ -2039,13 +2100,22 @@ fn draw_modal(
             cursor_lines.push(lines.len());
             let last_row = a.filenames.len() + 1;
             let on_save = a.cursor == last_row;
-            lines.push(action_row_line("Save & close", on_save));
+            lines.push(action_row_line(
+                &crate::i18n::t("zc-quickstart-save-and-close"),
+                on_save,
+            ));
 
             (
-                " Agent ".to_string(),
+                format!(" {} ", crate::i18n::t("zc-quickstart-block-agent")),
                 Vec::new(),
                 lines,
-                "↑/↓ move   type to edit name   e/t/c on file rows   Esc save",
+                format!(
+                    "↑/↓ {move_v}   {edit_name}   e/t/c {on_files}   Esc {save}",
+                    move_v = crate::i18n::t("zc-quickstart-modal-action-move"),
+                    edit_name = crate::i18n::t("zc-quickstart-modal-action-edit-name"),
+                    on_files = crate::i18n::t("zc-quickstart-modal-action-on-file-rows"),
+                    save = crate::i18n::t("zc-quickstart-modal-action-save"),
+                ),
                 cursor_lines,
             )
         }

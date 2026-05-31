@@ -29,11 +29,11 @@ enum Focus {
 const FOCI: [Focus; 3] = [Focus::Theme, Focus::Presets, Focus::Bindings];
 
 impl Focus {
-    fn label(self) -> &'static str {
+    fn fluent_key(self) -> &'static str {
         match self {
-            Self::Theme => "Theme",
-            Self::Presets => "Presets",
-            Self::Bindings => "Keybindings",
+            Self::Theme => "zc-zerocode-tab-theme",
+            Self::Presets => "zc-zerocode-tab-presets",
+            Self::Bindings => "zc-zerocode-tab-bindings",
         }
     }
 }
@@ -150,7 +150,12 @@ impl ZerocodePane {
     fn draw_focus_list(&self, frame: &mut Frame, area: Rect) {
         let items: Vec<ListItem> = FOCI
             .iter()
-            .map(|f| ListItem::new(Line::from(Span::styled(f.label(), theme::body_style()))))
+            .map(|f| {
+                ListItem::new(Line::from(Span::styled(
+                    crate::i18n::t(f.fluent_key()),
+                    theme::body_style(),
+                )))
+            })
             .collect();
         let mut state = ListState::default();
         state.select(FOCI.iter().position(|f| *f == self.focus));
@@ -268,7 +273,7 @@ impl ZerocodePane {
                 theme::heading_style(),
             )),
             Line::from(Span::styled(
-                "Press a key combination…",
+                crate::i18n::t("zc-zerocode-capture-prompt"),
                 theme::body_style(),
             )),
         ];
@@ -276,7 +281,7 @@ impl ZerocodePane {
             lines.push(Line::from(Span::styled(err.clone(), theme::warn_style())));
         }
         lines.push(Line::from(Span::styled(
-            "Esc to cancel",
+            crate::i18n::t_args("zc-zerocode-hint-cancel", &[("keys", "Esc")]),
             theme::dim_style(),
         )));
 
@@ -286,7 +291,10 @@ impl ZerocodePane {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(theme::approval_border_style())
-                    .title(Span::styled(" Assign Key ", theme::title_style())),
+                    .title(Span::styled(
+                        format!(" {} ", crate::i18n::t("zc-zerocode-capture-modal-title")),
+                        theme::title_style(),
+                    )),
             ),
             modal,
         );
@@ -445,33 +453,49 @@ impl ZerocodePane {
         use crate::widgets::{HelpEntry as E, HelpNode};
         if self.capture.is_some() {
             return HelpNode::entries(vec![
-                E::key("any key", "Assign as the new binding"),
-                E::key("Esc", "Cancel capture"),
+                E::key("any key", crate::i18n::t("zc-zerocode-capture-assign")),
+                E::key("Esc", crate::i18n::t("zc-zerocode-capture-cancel")),
             ]);
         }
         let mut entries = vec![
             E::new(
                 vec!["←", "→", "h", "l"],
-                "Switch pane (Theme/Presets/Keybindings)",
+                crate::i18n::t("zc-zerocode-help-switch-pane"),
             ),
-            E::new(vec!["↑", "↓", "j", "k"], "Navigate"),
+            E::new(
+                vec!["↑", "↓", "j", "k"],
+                crate::i18n::t("zc-zerocode-help-navigate"),
+            ),
         ];
         match self.focus {
             Focus::Theme => {
-                entries.push(E::key("Enter", "Apply theme (live + saved)"));
+                entries.push(E::key(
+                    "Enter",
+                    crate::i18n::t("zc-zerocode-help-apply-theme"),
+                ));
             }
             Focus::Presets => {
-                entries.push(E::key("Enter", "Apply preset (overwrites keybindings)"));
+                entries.push(E::key(
+                    "Enter",
+                    crate::i18n::t("zc-zerocode-help-apply-preset"),
+                ));
             }
             Focus::Bindings => {
-                entries.push(E::key("Enter", "Rebind selected action"));
-                entries.push(E::key("d", "Reset action to default"));
+                entries.push(E::key("Enter", crate::i18n::t("zc-zerocode-help-rebind")));
+                entries.push(E::key(
+                    "d",
+                    crate::i18n::t("zc-zerocode-help-reset-default"),
+                ));
             }
         }
         entries.push(E::spacer());
-        entries.push(E::key(
-            "Mouse",
-            "Click pane / row, scroll, click section tab",
+        entries.push(E::new(
+            vec![],
+            format!(
+                "{}: {}",
+                crate::i18n::t("zc-zerocode-help-mouse-label"),
+                crate::i18n::t("zc-zerocode-help-mouse-desc"),
+            ),
         ));
         HelpNode::entries(entries)
     }

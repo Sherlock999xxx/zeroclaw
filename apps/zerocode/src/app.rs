@@ -185,10 +185,10 @@ pub async fn run(
                 let mut node = HelpNode::entries(vec![
                     HelpEntry::new(
                         vec!["Ctrl+←", "Ctrl+→"],
-                        &crate::i18n::t("zc-app-help-cycle-mode"),
+                        crate::i18n::t("zc-app-help-cycle-mode"),
                     ),
-                    HelpEntry::key("Ctrl+R", &crate::i18n::t("zc-app-help-reload")),
-                    HelpEntry::key("Ctrl+C", &crate::i18n::t("zc-app-help-quit")),
+                    HelpEntry::key("Ctrl+R", crate::i18n::t("zc-app-help-reload")),
+                    HelpEntry::key("Ctrl+C", crate::i18n::t("zc-app-help-quit")),
                     HelpEntry::spacer(),
                 ]);
                 let pane_node = match mode {
@@ -292,7 +292,7 @@ pub async fn run(
                         Some(ModalAction::Confirm) => {
                             reload_confirm = false;
                             reload_status = Some(match rpc.config_reload().await {
-                                Ok(_) => "Daemon reload signalled — reconnecting…".into(),
+                                Ok(_) => crate::i18n::t("zc-app-reload-status-signalled"),
                                 Err(e) => format!("Reload requested ({e})"),
                             });
                         }
@@ -519,7 +519,7 @@ fn flatten_help_node(node: &HelpNode, out: &mut Vec<(String, String)>, inner_wid
     // Description prose → soft-wrapped plain lines, no key column.
     if let Some(desc) = &node.description {
         let wrap_at = inner_width.saturating_sub(2).max(20);
-        for line in soft_wrap(&desc, wrap_at) {
+        for line in soft_wrap(desc, wrap_at) {
             out.push(("".into(), line));
         }
         out.push(("".into(), "".into())); // blank after prose
@@ -726,7 +726,10 @@ fn draw_reload_confirm_modal(frame: &mut ratatui::Frame, area: Rect) {
     );
     frame.render_widget(
         Paragraph::new(Span::styled(
-            "Enter / y = reload   Esc / n = cancel",
+            crate::i18n::t_args(
+                "zc-app-reload-confirm-row",
+                &[("confirm_chord", "Enter / y"), ("cancel_chord", "Esc / n")],
+            ),
             theme::dim_style(),
         ))
         .style(theme::fill_style()),

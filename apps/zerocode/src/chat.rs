@@ -66,10 +66,15 @@ pub(crate) enum PaneKind {
 
 impl PaneKind {
     /// Short name for this pane (no padding — callers format as needed).
-    pub(crate) fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> String {
+        crate::i18n::t(self.fluent_key())
+    }
+
+    /// Stable Fluent key for this pane's display name.
+    pub(crate) fn fluent_key(self) -> &'static str {
         match self {
-            PaneKind::Chat => "Chat",
-            PaneKind::Acp => "ACP",
+            PaneKind::Chat => "zc-chat-pane-chat",
+            PaneKind::Acp => "zc-chat-pane-acp",
         }
     }
 }
@@ -117,15 +122,16 @@ impl Chat {
                 .map(|a| a.alias)
                 .collect::<Vec<_>>(),
             Err(e) => {
-                self.phase = ChatPhase::Error(format!("Failed to fetch agents: {e}"));
+                self.phase = ChatPhase::Error(crate::i18n::t_args(
+                    "zc-chat-error-fetch-agents",
+                    &[("error", &e.to_string())],
+                ));
                 return Ok(());
             }
         };
 
         if agents.is_empty() {
-            self.phase = ChatPhase::Error(
-                "No enabled agents. Configure an agent in the Config tab.".to_string(),
-            );
+            self.phase = ChatPhase::Error(crate::i18n::t("zc-chat-no-agents"));
             return Ok(());
         }
 
@@ -204,7 +210,10 @@ impl Chat {
                 self.phase = ChatPhase::Active(Box::new(state));
             }
             Err(e) => {
-                self.phase = ChatPhase::Error(format!("Failed to create session: {e}"));
+                self.phase = ChatPhase::Error(crate::i18n::t_args(
+                    "zc-chat-error-create-session",
+                    &[("error", &e.to_string())],
+                ));
             }
         }
     }
@@ -292,7 +301,7 @@ impl Chat {
                     agents,
                     list_state,
                     *loading,
-                    self.pane_kind.name(),
+                    &self.pane_kind.name(),
                 );
             }
             ChatPhase::PickCwd { explorer, .. } => {
@@ -302,7 +311,7 @@ impl Chat {
                 render(frame, state, area);
             }
             ChatPhase::Error(msg) => {
-                draw_error(frame, area, msg, self.pane_kind.name());
+                draw_error(frame, area, msg, &self.pane_kind.name());
             }
         }
     }
@@ -549,9 +558,9 @@ impl Chat {
                     state.show_thoughts = !state.show_thoughts;
                     state.mark_dirty_full();
                     let status = if state.show_thoughts {
-                        "Thinking output: visible"
+                        crate::i18n::t("zc-chat-thinking-visible")
                     } else {
-                        "Thinking output: hidden"
+                        crate::i18n::t("zc-chat-thinking-hidden")
                     };
                     state
                         .entries
@@ -998,64 +1007,78 @@ impl crate::widgets::HelpContext for Chat {
         match &self.phase {
             ChatPhase::PickAgent { loading, .. } => {
                 if *loading {
-                    HelpNode::entries(vec![E::key("", "Loading agents…")])
+                    HelpNode::entries(vec![E::key("", crate::i18n::t("zc-chat-loading-agents"))])
                 } else {
                     HelpNode::entries(vec![
-                        E::new(vec!["↑", "↓"], "Navigate"),
-                        E::key("Enter", "Select agent"),
-                        E::key("q", "Quit"),
+                        E::new(vec!["↑", "↓"], crate::i18n::t("zc-chat-help-navigate")),
+                        E::key("Enter", crate::i18n::t("zc-chat-help-select-agent")),
+                        E::key("q", crate::i18n::t("zc-chat-help-quit")),
                     ])
                 }
             }
             ChatPhase::PickCwd { explorer, .. } => explorer.help_context(),
-            ChatPhase::Error(_) => HelpNode::entries(vec![E::key("q", "Quit")]),
+            ChatPhase::Error(_) => {
+                HelpNode::entries(vec![E::key("q", crate::i18n::t("zc-chat-help-quit"))])
+            }
             ChatPhase::Active(state) => {
                 match &state.session_overlay {
                     SessionOverlay::List { .. } => {
                         return HelpNode::entries(vec![
-                            E::new(vec!["↑", "↓"], "Navigate"),
-                            E::key("Enter", "Switch session"),
-                            E::key("Esc", "Close"),
+                            E::new(vec!["↑", "↓"], crate::i18n::t("zc-chat-help-navigate")),
+                            E::key("Enter", crate::i18n::t("zc-chat-help-switch-session")),
+                            E::key("Esc", crate::i18n::t("zc-chat-help-close")),
                         ]);
                     }
                     SessionOverlay::Rename { .. } => {
                         return HelpNode::entries(vec![
-                            E::key("Enter", "Submit name"),
-                            E::key("Esc", "Cancel"),
+                            E::key("Enter", crate::i18n::t("zc-chat-help-submit-name")),
+                            E::key("Esc", crate::i18n::t("zc-chat-help-cancel")),
                         ]);
                     }
                     SessionOverlay::None => {}
                 }
                 if state.pending_approval().is_some() {
                     return HelpNode::entries(vec![
-                        E::key("Enter", "Approve"),
-                        E::key("a", "Always approve"),
-                        E::key("Ctrl+D", "Deny"),
-                        E::key("Ctrl+C", "Cancel turn"),
+                        E::key("Enter", crate::i18n::t("zc-chat-help-approve")),
+                        E::key("a", crate::i18n::t("zc-chat-help-always-approve")),
+                        E::key("Ctrl+D", crate::i18n::t("zc-chat-help-deny")),
+                        E::key("Ctrl+C", crate::i18n::t("zc-chat-help-cancel-turn")),
                     ]);
                 }
                 if state.in_browse_mode() {
                     return HelpNode::entries(vec![
-                        E::new(vec!["↑", "k"], "Move cursor up"),
-                        E::new(vec!["↓", "j"], "Move cursor down"),
-                        E::key("Shift+↑/↓", "Extend selection"),
-                        E::key("y", "Yank selection"),
-                        E::new(vec!["Ctrl+↓", "Esc"], "Return to input"),
+                        E::new(vec!["↑", "k"], crate::i18n::t("zc-chat-help-move-up")),
+                        E::new(vec!["↓", "j"], crate::i18n::t("zc-chat-help-move-down")),
+                        E::key("Shift+↑/↓", crate::i18n::t("zc-chat-help-extend-selection")),
+                        E::key("y", crate::i18n::t("zc-chat-help-yank-selection")),
+                        E::new(
+                            vec!["Ctrl+↓", "Esc"],
+                            crate::i18n::t("zc-chat-help-return-to-input"),
+                        ),
                     ]);
                 }
                 if state.turn_in_flight {
-                    return HelpNode::entries(vec![E::new(vec!["Ctrl+C", "Esc"], "Cancel turn")]);
+                    return HelpNode::entries(vec![E::new(
+                        vec!["Ctrl+C", "Esc"],
+                        crate::i18n::t("zc-chat-help-cancel-turn"),
+                    )]);
                 }
                 // Idle: compose pane-level bindings + input bar as child.
                 let pane = HelpNode::entries(vec![
-                    E::key("Ctrl+↑", "Browse mode"),
-                    E::key("Shift+↑/↓", "Scroll conversation"),
-                    E::key("t", "Toggle thoughts"),
-                    E::key("/toggle-thinking", "Toggle thinking visibility"),
+                    E::key("Ctrl+↑", crate::i18n::t("zc-chat-help-browse-mode")),
+                    E::key(
+                        "Shift+↑/↓",
+                        crate::i18n::t("zc-chat-help-scroll-conversation"),
+                    ),
+                    E::key("t", crate::i18n::t("zc-chat-help-toggle-thoughts")),
+                    E::key(
+                        "/toggle-thinking",
+                        crate::i18n::t("zc-chat-help-toggle-thinking-cmd"),
+                    ),
                     E::spacer(),
-                    E::key("Ctrl+N", "New session"),
-                    E::key("Ctrl+S", "Session list"),
-                    E::key("Ctrl+R", "Rename session"),
+                    E::key("Ctrl+N", crate::i18n::t("zc-chat-help-new-session")),
+                    E::key("Ctrl+S", crate::i18n::t("zc-chat-help-session-list")),
+                    E::key("Ctrl+R", crate::i18n::t("zc-chat-help-rename-session")),
                 ]);
                 pane.with_child(state.input_bar.help_context())
             }
@@ -1082,7 +1105,7 @@ fn draw_agent_picker(
     frame.render_widget(block, area);
 
     if loading {
-        let p = Paragraph::new("Loading agents...")
+        let p = Paragraph::new(crate::i18n::t("zc-chat-loading-agents-msg"))
             .alignment(Alignment::Center)
             .style(theme::dim_style());
         let vert = Layout::default()
@@ -1107,8 +1130,14 @@ fn draw_agent_picker(
         .split(inner);
 
     let header = Paragraph::new(Line::from(vec![
-        Span::styled("Select an agent ", theme::body_style()),
-        Span::styled("(Up/Down, Enter)", theme::dim_style()),
+        Span::styled(
+            format!("{} ", crate::i18n::t("zc-chat-picker-header")),
+            theme::body_style(),
+        ),
+        Span::styled(
+            crate::i18n::t_args("zc-chat-picker-header-hint", &[("keys", "Up/Down, Enter")]),
+            theme::dim_style(),
+        ),
     ]));
     frame.render_widget(header, chunks[0]);
 
@@ -1359,7 +1388,10 @@ fn render_entry_into(
     };
     match entry {
         ChatEntry::UserMessage { text, attachments } => {
-            let label_span = Span::styled("You: ", theme::user_label_style().add_modifier(sel_mod));
+            let label_span = Span::styled(
+                format!("{} ", crate::i18n::t("zc-chat-label-you")),
+                theme::user_label_style().add_modifier(sel_mod),
+            );
             let body_style = theme::body_style().add_modifier(sel_mod);
             let mut text_lines: Vec<&str> = match text {
                 Some(t) => t.split('\n').collect(),
@@ -1390,7 +1422,7 @@ fn render_entry_into(
         }
         ChatEntry::AgentMessage(text) => {
             lines.push(Line::from(vec![Span::styled(
-                "Agent: ",
+                format!("{} ", crate::i18n::t("zc-chat-label-agent")),
                 theme::agent_label_style().add_modifier(sel_mod),
             )]));
             let md_lines = markdown_to_lines(text.as_ref(), width);
@@ -1468,7 +1500,7 @@ fn render_conversation(f: &mut Frame, state: &mut ChatState, area: Rect) {
 
     if !state.streaming_text.is_empty() {
         lines.push(Line::from(vec![Span::styled(
-            "Agent: ",
+            format!("{} ", crate::i18n::t("zc-chat-label-agent")),
             theme::agent_label_style(),
         )]));
         lines.extend(markdown_to_lines(&state.streaming_text, inner_width));
@@ -1584,10 +1616,14 @@ fn render_approval_overlay(f: &mut Frame, state: &ChatState, area: Rect) {
     f.render_widget(Clear, overlay_area);
 
     let is_edit_tool = matches!(pa.tool_name.as_str(), "file_edit" | "file_write");
+    let allow = crate::i18n::t("zc-chat-approval-action-allow");
+    let always = crate::i18n::t("zc-chat-approval-action-always");
+    let reject = crate::i18n::t("zc-chat-approval-action-reject");
+    let edit = crate::i18n::t("zc-chat-approval-action-edit");
     let keys = if is_edit_tool {
-        "Enter=Allow  a=Always  Ctrl+D=Reject  e=Edit"
+        format!("Enter={allow}  a={always}  Ctrl+D={reject}  e={edit}")
     } else {
-        "Enter=Allow  a=Always  Ctrl+D=Reject"
+        format!("Enter={allow}  a={always}  Ctrl+D={reject}")
     };
 
     // For file_edit/file_write, strip the bulk content fields — the diff
@@ -1598,16 +1634,15 @@ fn render_approval_overlay(f: &mut Frame, state: &ChatState, area: Rect) {
         pa.arguments_summary.clone()
     };
 
+    let secs = pa.timeout_secs.to_string();
+    let title = crate::i18n::t_args(
+        "zc-chat-approval-title",
+        &[("tool", &pa.tool_name), ("secs", &secs)],
+    );
     let text = if summary.is_empty() {
-        format!(
-            "Approve tool call: {}  [{}s]\n\n  {keys}",
-            pa.tool_name, pa.timeout_secs
-        )
+        format!("{title}\n\n  {keys}")
     } else {
-        format!(
-            "Approve tool call: {}  [{}s]\n\n  {summary}\n\n  {keys}",
-            pa.tool_name, pa.timeout_secs
-        )
+        format!("{title}\n\n  {summary}\n\n  {keys}")
     };
 
     let p = Paragraph::new(text)
@@ -1718,7 +1753,10 @@ fn render_rename_overlay(f: &mut Frame, area: Rect, buf: &str) {
 
     f.render_widget(Clear, overlay_area);
 
-    let text = format!("New name: {buf}\u{2588}\n\nEnter=submit  Esc=cancel");
+    let prompt = crate::i18n::t("zc-chat-rename-prompt");
+    let submit = crate::i18n::t("zc-chat-rename-action-submit");
+    let cancel = crate::i18n::t("zc-chat-rename-action-cancel");
+    let text = format!("{prompt} {buf}\u{2588}\n\nEnter={submit}  Esc={cancel}");
     let p = Paragraph::new(text)
         .block(
             Block::default()
@@ -2842,8 +2880,13 @@ fn clipboard_text(entry: &ChatEntry) -> String {
 /// Role-prefixed clipboard text. Used when ≥2 entries are yanked.
 fn labelled_clipboard_text(entry: &ChatEntry) -> String {
     match entry {
-        ChatEntry::UserMessage { .. } => format!("You: {}", clipboard_text(entry)),
-        ChatEntry::AgentMessage(_) => format!("Agent: {}", clipboard_text(entry)),
+        ChatEntry::UserMessage { .. } => {
+            crate::i18n::t_args("zc-chat-clipboard-you", &[("text", &clipboard_text(entry))])
+        }
+        ChatEntry::AgentMessage(_) => crate::i18n::t_args(
+            "zc-chat-clipboard-agent",
+            &[("text", &clipboard_text(entry))],
+        ),
         _ => clipboard_text(entry),
     }
 }
