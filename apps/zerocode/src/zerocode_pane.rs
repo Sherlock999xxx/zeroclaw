@@ -75,13 +75,14 @@ pub(crate) struct ZerocodePane {
     locale_cursor: usize,
     /// Selected locale persisted to zerocode-config.toml (the active one).
     active_locale: Option<String>,
-    /// Free-entry fallback buffer (a locale not in the registry list).
-    locale_input: String,
-    locale_input_active: bool,
     /// Set when the user requests "Download locale file"; config_manager (which
     /// holds the RpcClient) drains this, performs the async fetch, and writes.
     pending_fetch: Option<String>,
     status: Option<String>,
+    /// Last `locales/list` error, if the registry fetch failed. Distinguishes
+    /// a genuine failure from the transient "loading…" state so the Locale tab
+    /// does not sit on "loading locales…" forever when the daemon errors.
+    list_error: Option<String>,
     last_area: Rect,
     focus_area: Rect,
     content_area: Rect,
@@ -114,10 +115,9 @@ impl ZerocodePane {
             active_locale: config::ensure_and_load(config_dir)
                 .ok()
                 .and_then(|c| c.resolve_locale()),
-            locale_input: String::new(),
-            locale_input_active: false,
             pending_fetch: None,
             status: None,
+            list_error: None,
             last_area: Rect::default(),
             focus_area: Rect::default(),
             content_area: Rect::default(),
@@ -137,9 +137,9 @@ impl ZerocodePane {
     }
 
     pub(crate) fn wants_text_input(&self) -> bool {
-        // Capture grabs raw keys, but it is not text entry — the app
-        // still routes keys to handle_key. Returning false keeps global
-        // chords (Ctrl+C) working while armed.
+        // No pane state consumes raw text: the Locale tab is a pick-from-list
+        // surface (no free-entry), and binding capture grabs keys but is not
+        // text entry. Returning false keeps global chords (Ctrl+C) live.
         false
     }
 
@@ -267,18 +267,14 @@ impl ZerocodePane {
         );
     }
 
-    /// Total selectable rows on the Locale tab: one per registry locale, plus a
-    /// free-entry row, plus the download action row.
+    /// Total selectable rows on the Locale tab: one per registry locale, plus
+    /// the download action row.
     fn locale_row_count(&self) -> usize {
-        self.locales.len() + 2
-    }
-
-    fn locale_free_row(&self) -> usize {
-        self.locales.len()
+        self.locales.len() + 1
     }
 
     fn locale_download_row(&self) -> usize {
-        self.locales.len() + 1
+        self.locales.len()
     }
 
     fn draw_locale(&self, frame: &mut Frame, area: Rect) {
@@ -301,17 +297,21 @@ impl ZerocodePane {
             .collect();
 
         // Free-entry fallback row.
-        let free_label = if self.locale_input_active {
-            format!("  other: {}_", self.locale_input)
-        } else if self.locales.is_empty() {
-            crate::i18n::t("zc-zerocode-locale-loading")
-        } else {
-            crate::i18n::t("zc-zerocode-locale-other")
-        };
-        items.push(ListItem::new(Line::from(Span::styled(
-            free_label,
-            theme::body_style(),
-        ))));
+        // Status line for the registry load (loading / error). Only shown
+        // when there are no locales yet; it is informational, never a
+        // selectable row, so there is no "type a locale" affordance that
+        // implies users can invent locales the build does not ship.
+        if self.locales.is_empty() {
+            let (msg, style) = if let Some(err) = &self.list_error {
+                (
+                    crate::i18n::t_args("zc-zerocode-locale-list-failed", &[("err", err)]),
+                    theme::error_style(),
+                )
+            } else {
+                (crate::i18n::t("zc-zerocode-locale-loading"), theme::dim_style())
+            };
+            items.push(ListItem::new(Line::from(Span::styled(msg, style))));
+        }
 
         // Download action row.
         items.push(ListItem::new(Line::from(Span::styled(
@@ -336,15 +336,18 @@ impl ZerocodePane {
     /// Feed the locale registry fetched via `locales/list`.
     pub(crate) fn set_locales(&mut self, locales: Vec<crate::client::LocaleOption>) {
         self.locales = locales;
+        self.list_error = None;
         if self.locale_cursor >= self.locale_row_count() {
             self.locale_cursor = self.locale_row_count().saturating_sub(1);
         }
     }
 
     /// True if the Locale tab is focused and the registry hasn't loaded yet —
-    /// config_manager uses this to know when to call `locales/list`.
+    /// config_manager uses this to know when to call `locales/list`. Once a
+    /// list attempt has failed, stop re-requesting on every keypress; the user
+    /// sees the error and can retry explicitly.
     pub(crate) fn locale_needs_list(&self) -> bool {
-        self.focus == Focus::Locale && self.locales.is_empty()
+        self.focus == Focus::Locale && self.locales.is_empty() && self.list_error.is_none()
     }
 
     /// Drain a pending "download locale file" request (the locale code).
@@ -364,16 +367,16 @@ impl ZerocodePane {
             self.status = Some(format!("locale write failed: {e}"));
             return;
         }
-        let mut written = 0;
+        let mut written: Vec<&str> = Vec::new();
         for cat in catalogs {
             if std::fs::write(dir.join(&cat.filename), &cat.content).is_ok() {
-                written += 1;
+                written.push(cat.name.as_str());
             }
         }
         self.status = Some(crate::i18n::t_args(
             "zc-zerocode-locale-downloaded",
             &[
-                ("count", &written.to_string()),
+                ("written", &written.join(", ")),
                 ("locale", locale),
                 ("skipped", &skipped.join(", ")),
             ],
@@ -389,23 +392,23 @@ impl ZerocodePane {
         ));
     }
 
+    /// Surface a failed `locales/list` so the Locale tab shows the error
+    /// instead of hanging on "loading locales…". Stored separately from the
+    /// transient empty state so `draw_locale` can render it.
+    pub(crate) fn report_list_error(&mut self, err: &str) {
+        self.list_error = Some(err.to_string());
+        self.status = Some(crate::i18n::t_args(
+            "zc-zerocode-locale-list-failed",
+            &[("err", err)],
+        ));
+    }
+
     fn select_locale_row(&mut self) {
         let cursor = self.locale_cursor;
         if cursor < self.locales.len() {
             // Persist the chosen registry locale.
             let code = self.locales[cursor].code.clone();
             self.set_active_locale(&code);
-        } else if cursor == self.locale_free_row() {
-            if self.locale_input_active {
-                let code = self.locale_input.trim().to_string();
-                self.locale_input_active = false;
-                if !code.is_empty() {
-                    self.set_active_locale(&code);
-                }
-            } else {
-                self.locale_input_active = true;
-                self.locale_input.clear();
-            }
         } else if cursor == self.locale_download_row() {
             // Queue a fetch for the active (or selected) locale.
             let target = self
@@ -502,26 +505,6 @@ impl ZerocodePane {
             self.handle_capture_key(key);
             return;
         }
-        // Free-entry locale text input grabs raw chars.
-        if self.focus == Focus::Locale && self.locale_input_active {
-            use crossterm::event::KeyCode;
-            match key.code {
-                KeyCode::Char(c) => {
-                    self.locale_input.push(c);
-                    return;
-                }
-                KeyCode::Backspace => {
-                    self.locale_input.pop();
-                    return;
-                }
-                KeyCode::Esc => {
-                    self.locale_input_active = false;
-                    self.locale_input.clear();
-                    return;
-                }
-                _ => {}
-            }
-        }
         use crate::keymap::ConfigTabAction;
         match ConfigTabAction::from_chord(&key) {
             Some(ConfigTabAction::Up) => self.move_cursor(-1),
@@ -547,7 +530,7 @@ impl ZerocodePane {
             Focus::Theme => (&mut self.theme_cursor, self.themes.len()),
             Focus::Presets => (&mut self.preset_cursor, self.presets.len()),
             Focus::Bindings => (&mut self.binding_cursor, self.rows.len()),
-            Focus::Locale => (&mut self.locale_cursor, self.locales.len() + 2),
+            Focus::Locale => (&mut self.locale_cursor, self.locales.len() + 1),
         };
         if len == 0 {
             return;
@@ -773,7 +756,7 @@ impl ZerocodePane {
             Focus::Theme => self.themes.len(),
             Focus::Presets => self.presets.len(),
             Focus::Bindings => self.rows.len(),
-            Focus::Locale => self.locales.len() + 2,
+            Focus::Locale => self.locales.len() + 1,
         }
     }
 
@@ -860,5 +843,55 @@ fn defaults_in<A: crate::keymap::RebindableActions>(
             *found = Some(v.defaults());
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    // The Locale tab is a pick-from-list surface with no free-entry, so the
+    // pane never claims text input — typing a locale code by hand was removed
+    // because it implied users could conjure locales the build does not ship.
+    #[test]
+    fn locale_tab_never_claims_text_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut pane = ZerocodePane::new(dir.path());
+        while pane.focus != Focus::Locale {
+            pane.handle_key(key(KeyCode::Right));
+        }
+        // Pressing Enter on the (empty) list must not open any text buffer.
+        pane.handle_key(key(KeyCode::Enter));
+        assert!(!pane.wants_text_input());
+    }
+
+    // Regression: once a `locales/list` attempt fails, the pane must stop
+    // requesting on every keypress (else it hammers the daemon and sits on
+    // "loading…"); the error is surfaced instead.
+    #[test]
+    fn list_error_stops_needing_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut pane = ZerocodePane::new(dir.path());
+        while pane.focus != Focus::Locale {
+            pane.handle_key(key(KeyCode::Right));
+        }
+        assert!(pane.locale_needs_list(), "empty list should need a fetch");
+        pane.report_list_error("daemon unreachable");
+        assert!(
+            !pane.locale_needs_list(),
+            "a failed list must not keep re-requesting"
+        );
+    }
+
+    #[test]
+    fn wants_text_input_false_when_locale_buffer_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let pane = ZerocodePane::new(dir.path());
+        assert!(!pane.wants_text_input());
     }
 }

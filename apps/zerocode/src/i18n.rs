@@ -143,26 +143,28 @@ fn config_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".zeroclaw"))
 }
 
+/// Read the persisted locale from the same file the Locale pane writes:
+/// `<config_dir>/zerocode-config.toml` (config_dir honoring `--config-dir`,
+/// then `ZEROCLAW_CONFIG_DIR`, then `~/.zeroclaw`). Reading and writing the
+/// exact same path keeps the startup locale in sync with what the pane saved;
+/// the previous candidate list checked `~/.config/zerocode/...` first, which
+/// the writer never touches, so a saved locale was silently ignored.
 fn locale_from_config() -> Option<String> {
-    let base = directories::BaseDirs::new()?;
-    let candidates = [
-        base.config_dir().join("zerocode/zerocode-config.toml"),
-        base.home_dir().join(".zeroclaw/zerocode-config.toml"),
-        base.home_dir().join(".zeroclaw/config.toml"),
-        base.config_dir().join("zeroclaw/config.toml"),
-    ];
-    for path in &candidates {
-        if let Ok(contents) = std::fs::read_to_string(path)
-            && let Ok(table) = contents.parse::<toml::Table>()
-            && let Some(locale) = table.get("locale").and_then(|v| v.as_str())
-        {
-            let trimmed = locale.trim();
-            if !trimmed.is_empty() {
-                return Some(normalize_locale(trimmed));
-            }
-        }
+    locale_from_config_dir(&config_dir())
+}
+
+/// Path-pure core of [`locale_from_config`]: read the `locale` key from
+/// `<dir>/zerocode-config.toml`. Kept separate so the read path can be tested
+/// against the writer's filename without touching process-global state.
+fn locale_from_config_dir(dir: &std::path::Path) -> Option<String> {
+    let contents = std::fs::read_to_string(dir.join("zerocode-config.toml")).ok()?;
+    let table = contents.parse::<toml::Table>().ok()?;
+    let locale = table.get("locale").and_then(|v| v.as_str())?;
+    let trimmed = locale.trim();
+    if trimmed.is_empty() {
+        return None;
     }
-    None
+    Some(normalize_locale(trimmed))
 }
 
 fn load_ftl_sources(locale: &str) -> FtlSources {
@@ -234,5 +236,27 @@ mod tests {
         assert_eq!(normalize_locale("en_US.UTF-8"), "en-US");
         assert_eq!(normalize_locale("zh_CN.utf8"), "zh-CN");
         assert_eq!(normalize_locale("fr"), "fr");
+    }
+
+    // Regression: the locale read path must match the writer's path. The
+    // Locale pane persists to `<config_dir>/zerocode-config.toml` via
+    // `config::persist_locale`; `locale_from_config_dir` must read that same
+    // file. A prior bug read `~/.config/zerocode/...` first, so a saved
+    // locale was silently ignored on the next launch.
+    #[test]
+    fn locale_round_trips_through_writer_path() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::persist_locale(dir.path(), "zh-CN").unwrap();
+        assert_eq!(
+            locale_from_config_dir(dir.path()),
+            Some("zh-CN".to_string()),
+            "i18n must read the locale from the same file the Locale pane writes"
+        );
+    }
+
+    #[test]
+    fn locale_from_config_dir_none_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(locale_from_config_dir(dir.path()), None);
     }
 }

@@ -1281,7 +1281,6 @@ pub struct LocalesListResult {
 /// One fetched catalogue's bytes (`locales/fetch`).
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct FetchedCatalog {
-    #[allow(dead_code)]
     pub name: String,
     pub filename: String,
     pub content: String,

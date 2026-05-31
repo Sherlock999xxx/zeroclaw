@@ -28,12 +28,12 @@ zc-zerocode-tab-presets = Presets
 zc-zerocode-tab-bindings = Keybindings
 zc-zerocode-tab-locale = Locale
 zc-zerocode-locale-loading = loading locales…
-zc-zerocode-locale-other = other (type a locale code)
 zc-zerocode-locale-download = ⬇ Download locale file
 zc-zerocode-locale-set = Locale set to { $locale }. Restart to apply.
 zc-zerocode-locale-fetching = Downloading locale files for { $locale }…
-zc-zerocode-locale-downloaded = Downloaded { $count } file(s) for { $locale }. Skipped: { $skipped }
+zc-zerocode-locale-downloaded = Downloaded { $written } for { $locale }. Skipped: { $skipped }
 zc-zerocode-locale-fetch-failed = Locale download failed for { $locale }: { $err }
+zc-zerocode-locale-list-failed = Failed to load locale list: { $err }
 zc-zerocode-locale-pick-first = Select a locale first, then download.
 zc-zerocode-help-locale = select / download locale
 

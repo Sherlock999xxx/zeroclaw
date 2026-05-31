@@ -801,10 +801,13 @@ impl<'a> App<'a> {
         if self.section != ConfigSection::Zerocode {
             return;
         }
-        if self.zerocode.locale_needs_list()
-            && let Ok(locales) = self.rpc.locales_list().await
-        {
-            self.zerocode.set_locales(locales);
+        if self.zerocode.locale_needs_list() {
+            match self.rpc.locales_list().await {
+                Ok(locales) => self.zerocode.set_locales(locales),
+                // Surface the failure instead of silently retrying forever on
+                // every keypress with the tab stuck on "loading locales…".
+                Err(e) => self.zerocode.report_list_error(&e.to_string()),
+            }
         }
         if let Some(locale) = self.zerocode.take_pending_fetch() {
             match self.rpc.locales_fetch(&locale, &[]).await {
