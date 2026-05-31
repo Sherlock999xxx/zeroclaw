@@ -13543,6 +13543,7 @@ dependencies = [
  "clap",
  "crossterm",
  "directories",
+ "fluent",
  "futures-util",
  "inkjet",
  "libc",
@@ -13558,6 +13559,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.29.0",
  "toml 1.1.2+spec-1.1.0",
+ "unic-langid",
  "unicode-width 0.2.2",
 ]
 

@@ -28,6 +28,7 @@ mod config_manager;
 mod dashboard;
 mod diff;
 mod file_explorer;
+mod i18n;
 mod input_bar;
 mod jsonrpc;
 mod keymap;
@@ -156,6 +157,11 @@ async fn run() -> anyhow::Result<()> {
         std::process::exit(1);
     });
     theme::set_active(active_theme);
+
+    let resolved_locale = loaded_config
+        .resolve_locale()
+        .unwrap_or_else(i18n::detect_locale);
+    i18n::init(&resolved_locale);
 
     // Apply persisted keybinding overrides into the keymap. A bad table
     // fails loud (same posture as an unknown theme) rather than silently

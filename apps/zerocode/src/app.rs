@@ -61,14 +61,14 @@ enum Mode {
 }
 
 impl Mode {
-    fn name(self) -> &'static str {
+    fn fluent_key(self) -> &'static str {
         match self {
-            Mode::Dashboard => "Dashboard",
-            Mode::Config => "Config",
-            Mode::Acp => "Code",
-            Mode::Chat => "Chat",
-            Mode::Logs => "Logs",
-            Mode::Quickstart => "Quickstart",
+            Mode::Dashboard => "zc-pane-dashboard",
+            Mode::Config => "zc-pane-config",
+            Mode::Acp => "zc-pane-code",
+            Mode::Chat => "zc-pane-chat",
+            Mode::Logs => "zc-pane-logs",
+            Mode::Quickstart => "zc-pane-quickstart",
         }
     }
 
@@ -183,9 +183,12 @@ pub async fn run(
             // Help modal overlay (drawn last so it sits on top).
             if show_help {
                 let mut node = HelpNode::entries(vec![
-                    HelpEntry::new(vec!["Ctrl+←", "Ctrl+→"], "Cycle mode"),
-                    HelpEntry::key("Ctrl+R", "Reload daemon"),
-                    HelpEntry::key("Ctrl+C", "Quit"),
+                    HelpEntry::new(
+                        vec!["Ctrl+←", "Ctrl+→"],
+                        &crate::i18n::t("zc-app-help-cycle-mode"),
+                    ),
+                    HelpEntry::key("Ctrl+R", &crate::i18n::t("zc-app-help-reload")),
+                    HelpEntry::key("Ctrl+C", &crate::i18n::t("zc-app-help-quit")),
                     HelpEntry::spacer(),
                 ]);
                 let pane_node = match mode {
@@ -366,7 +369,7 @@ pub async fn run(
                 if matches!(mouse.kind, MouseEventKind::Down(_)) {
                     let labels: Vec<(&str, String)> = MODES
                         .iter()
-                        .map(|m| ("", format!(" {} ", m.name())))
+                        .map(|m| ("", format!(" {} ", crate::i18n::t(m.fluent_key()))))
                         .collect();
                     let label_refs: Vec<(&str, &str)> =
                         labels.iter().map(|(k, l)| (*k, l.as_str())).collect();
@@ -430,7 +433,10 @@ fn draw_mode_bar(frame: &mut ratatui::Frame, area: Rect, active: Mode) {
         } else {
             theme::body_style()
         };
-        spans.push(Span::styled(format!(" {} ", m.name()), label_style));
+        spans.push(Span::styled(
+            format!(" {} ", crate::i18n::t(m.fluent_key())),
+            label_style,
+        ));
         spans.push(Span::raw(" "));
     }
 
@@ -506,14 +512,14 @@ fn draw_status_bar(
 /// key non-empty = section header; key == "\x01" = dim rule separator.
 fn flatten_help_node(node: &HelpNode, out: &mut Vec<(String, String)>, inner_width: usize) {
     // Section title → dim header line.
-    if let Some(title) = node.title {
+    if let Some(title) = &node.title {
         out.push(("\x01".into(), title.to_string())); // sentinel = separator/header
     }
 
     // Description prose → soft-wrapped plain lines, no key column.
-    if let Some(desc) = node.description {
+    if let Some(desc) = &node.description {
         let wrap_at = inner_width.saturating_sub(2).max(20);
-        for line in soft_wrap(desc, wrap_at) {
+        for line in soft_wrap(&desc, wrap_at) {
             out.push(("".into(), line));
         }
         out.push(("".into(), "".into())); // blank after prose
@@ -638,7 +644,7 @@ fn draw_help_modal(frame: &mut ratatui::Frame, area: Rect, node: &HelpNode) {
 
     text_lines.push(Line::from(""));
     text_lines.push(Line::from(Span::styled(
-        "Press any key to close",
+        crate::i18n::t("zc-app-press-any-key-to-close"),
         theme::dim_style(),
     )));
 
@@ -648,34 +654,37 @@ fn draw_help_modal(frame: &mut ratatui::Frame, area: Rect, node: &HelpNode) {
 fn draw_reload_confirm_modal(frame: &mut ratatui::Frame, area: Rect) {
     let body_lines: Vec<Line> = vec![
         Line::from(Span::styled(
-            "The daemon process stays running (same PID), but every",
+            crate::i18n::t("zc-app-reload-line-1"),
             theme::body_style(),
         )),
         Line::from(Span::styled(
-            "subsystem tears down and re-initializes from the on-disk",
-            theme::body_style(),
-        )),
-        Line::from(Span::styled("config:", theme::body_style())),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  • Gateway listener stops and rebinds",
+            crate::i18n::t("zc-app-reload-line-2"),
             theme::body_style(),
         )),
         Line::from(Span::styled(
-            "  • Channel listeners (Matrix, Slack, etc.) respawn",
-            theme::body_style(),
-        )),
-        Line::from(Span::styled(
-            "  • MCP servers, scheduler, heartbeat re-init",
-            theme::body_style(),
-        )),
-        Line::from(Span::styled(
-            "  • Provider clients pick up new API keys / model defaults",
+            crate::i18n::t("zc-app-reload-line-3"),
             theme::body_style(),
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "The RPC socket will briefly drop. The TUI will reconnect.",
+            crate::i18n::t("zc-app-reload-bullet-gateway"),
+            theme::body_style(),
+        )),
+        Line::from(Span::styled(
+            crate::i18n::t("zc-app-reload-bullet-channels"),
+            theme::body_style(),
+        )),
+        Line::from(Span::styled(
+            crate::i18n::t("zc-app-reload-bullet-mcp"),
+            theme::body_style(),
+        )),
+        Line::from(Span::styled(
+            crate::i18n::t("zc-app-reload-bullet-provider"),
+            theme::body_style(),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            crate::i18n::t("zc-app-reload-socket-note"),
             theme::dim_style(),
         )),
     ];
@@ -727,10 +736,13 @@ fn draw_reload_confirm_modal(frame: &mut ratatui::Frame, area: Rect) {
 
 fn draw_quit_confirm_modal(frame: &mut ratatui::Frame, area: Rect) {
     let body_lines: Vec<Line> = vec![
-        Line::from(Span::styled("Quit zerocode?", theme::heading_style())),
+        Line::from(Span::styled(
+            crate::i18n::t("zc-app-quit-prompt"),
+            theme::heading_style(),
+        )),
         Line::from(""),
         Line::from(Span::styled(
-            "The TUI closes. The daemon keeps running; reconnect anytime.",
+            crate::i18n::t("zc-app-quit-explainer"),
             theme::dim_style(),
         )),
     ];

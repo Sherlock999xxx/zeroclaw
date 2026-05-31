@@ -9,19 +9,22 @@ pub struct HelpEntry {
     /// Keys that trigger this action, e.g. ["↑", "k"].
     pub keys: Vec<&'static str>,
     /// Human-readable description of the action.
-    pub action: &'static str,
+    pub action: String,
 }
 
 impl HelpEntry {
-    pub fn new(keys: Vec<&'static str>, action: &'static str) -> Self {
-        Self { keys, action }
+    pub fn new(keys: Vec<&'static str>, action: impl Into<String>) -> Self {
+        Self {
+            keys,
+            action: action.into(),
+        }
     }
 
     /// Convenience: single key.
-    pub fn key(key: &'static str, action: &'static str) -> Self {
+    pub fn key(key: &'static str, action: impl Into<String>) -> Self {
         Self {
             keys: vec![key],
-            action,
+            action: action.into(),
         }
     }
 
@@ -29,7 +32,7 @@ impl HelpEntry {
     pub fn spacer() -> Self {
         Self {
             keys: vec![],
-            action: "",
+            action: String::new(),
         }
     }
 
@@ -57,9 +60,9 @@ impl HelpEntry {
 #[derive(Debug, Clone, Default)]
 pub struct HelpNode {
     /// Short label shown as a dim section header (e.g. "Tab", "Widget"). None = no header.
-    pub title: Option<&'static str>,
+    pub title: Option<String>,
     /// Prose description shown above the keybindings, soft-wrapped to modal width.
-    pub description: Option<&'static str>,
+    pub description: Option<String>,
     /// Keybinding entries for this level.
     pub entries: Vec<HelpEntry>,
     /// Child nodes (tab-level, widget-level, etc.).

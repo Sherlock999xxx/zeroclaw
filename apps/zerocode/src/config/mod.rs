@@ -55,6 +55,8 @@ impl Default for ThemeSection {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct ZerocodeConfig {
     #[serde(default)]
+    pub locale: Option<String>,
+    #[serde(default)]
     pub theme: ThemeSection,
     /// Sparse keybinding overrides keyed `"<tag>.<variant>"`. Absent
     /// entries fall back to compile-time defaults.
@@ -89,6 +91,14 @@ impl ZerocodeConfig {
             .collect();
         keybindings::build_override_table(rows)
     }
+
+    pub fn resolve_locale(&self) -> Option<String> {
+        self.locale
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    }
 }
 
 pub(crate) fn config_path(config_dir: &Path) -> PathBuf {
@@ -116,6 +126,12 @@ pub(crate) fn ensure_and_load(config_dir: &Path) -> Result<ZerocodeConfig> {
 
     let doc = load_document(&path)?;
     let mut config = ZerocodeConfig::default();
+    if let Some(v) = doc.get("locale").and_then(|v| v.as_str()) {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            config.locale = Some(trimmed.to_string());
+        }
+    }
     if let Some(v) = doc.get("theme") {
         match v.clone().try_into::<ThemeSection>() {
             Ok(section) => config.theme = section,
