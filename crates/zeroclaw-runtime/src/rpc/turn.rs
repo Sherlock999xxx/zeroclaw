@@ -188,12 +188,11 @@ mod tests {
                 .await;
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             let _ = tx
-                .send(TurnEvent::ToolResult(zeroclaw_api::agent::ToolResultData {
+                .send(TurnEvent::ToolResult {
                     id: "c1".to_string(),
                     name: "shell".to_string(),
                     output: "ok".to_string(),
-                    start_line: None,
-                }))
+                })
                 .await;
             let _ = tx
                 .send(TurnEvent::Chunk {

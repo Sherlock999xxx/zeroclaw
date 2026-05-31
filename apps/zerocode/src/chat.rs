@@ -1284,7 +1284,6 @@ fn render_tool_entry(
     name: &str,
     input_json: &str,
     result: Option<&str>,
-    start_line: Option<usize>,
     is_selected: bool,
 ) {
     let sel_mod = if is_selected {
@@ -1314,12 +1313,17 @@ fn render_tool_entry(
                 .and_then(|v| v.get("new_string"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
+            let path = input.and_then(|v| v.get("path")).and_then(|v| v.as_str());
             let ext = input.and_then(|v| file_ext(v));
-            // The daemon supplies the true start line in the tool result
-            // (works for remote sessions where the file isn't local). Until
-            // the result arrives, fall back to 1; the entry re-renders once
-            // the result lands.
-            lines.extend(diff::diff_lines(old, new, ext, start_line.unwrap_or(1)));
+            let start_line = path
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .and_then(|content| {
+                    content
+                        .find(old)
+                        .map(|idx| content[..idx].bytes().filter(|b| *b == b'\n').count() + 1)
+                })
+                .unwrap_or(1);
+            lines.extend(diff::diff_lines(old, new, ext, start_line));
         }
         "file_write" => {
             let input = parsed.as_ref();
@@ -1456,7 +1460,6 @@ fn render_entry_into(
             name,
             input_json,
             result,
-            start_line,
             ..
         } => {
             render_tool_entry(
@@ -1464,7 +1467,6 @@ fn render_entry_into(
                 name.as_ref(),
                 input_json.as_ref(),
                 result.as_deref().map(|s| s as &str),
-                *start_line,
                 is_selected,
             );
         }
@@ -2200,10 +2202,6 @@ pub enum ChatEntry {
         /// Tool output. `None` while the call is in flight,
         /// `Some(Arc<str>)` once the result arrives.
         result: Option<Arc<str>>,
-        /// 1-based start line of a `file_edit` change, supplied by the daemon
-        /// in the tool result. Set when the result arrives; drives the diff
-        /// gutter so line numbers are correct even for remote sessions.
-        start_line: Option<usize>,
     },
 }
 
@@ -2684,14 +2682,12 @@ impl ChatState {
                         serde_json::to_string(&raw_input).unwrap_or_default(),
                     ),
                     result: None,
-                    start_line: None,
                 });
                 self.mark_dirty_append();
             }
             SessionUpdate::ToolResult {
                 tool_call_id,
                 raw_output,
-                start_line: result_start_line,
                 ..
             } => {
                 // Cap stored output so large tool responses (bash, file reads) don't
@@ -2707,13 +2703,11 @@ impl ChatState {
                     if let ChatEntry::Tool {
                         tool_call_id: id,
                         result,
-                        start_line,
                         ..
                     } = entry
                         && id.as_ref() == tool_call_id.as_str()
                     {
                         *result = Some(Arc::<str>::from(raw_output));
-                        *start_line = result_start_line;
                         self.mark_dirty_full(); // mutation of existing entry
                         break;
                     }
@@ -3009,7 +3003,6 @@ mod tests {
             session_id: "sess-1".to_string(),
             tool_call_id: "tc1".to_string(),
             raw_output: "file.txt\n".to_string(),
-            start_line: None,
         });
         let entries = s.entries();
         assert_eq!(entries.len(), 1);
@@ -3187,7 +3180,6 @@ mod tests {
             session_id: "sess-1".to_string(),
             tool_call_id: "tc1".to_string(),
             raw_output: "file.txt\n".to_string(),
-            start_line: None,
         });
         // Post-tool text.
         s.apply_update(SessionUpdate::AgentMessageChunk {

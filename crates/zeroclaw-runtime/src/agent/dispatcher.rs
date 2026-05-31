@@ -17,24 +17,6 @@ pub struct ToolExecutionResult {
     pub output: String,
     pub success: bool,
     pub tool_call_id: Option<String>,
-    /// 1-based line where a `file_edit` change begins, computed daemon-side
-    /// (so it is correct for remote clients that cannot read the file). `None`
-    /// for other tools or when the location cannot be determined.
-    pub start_line: Option<usize>,
-}
-
-/// Compute the 1-based start line of a `file_edit` change from its arguments,
-/// by locating `old_string` in the on-disk file. Returns `None` for other
-/// tools, unreadable paths, or no match — callers fall back to no line marker.
-pub fn file_edit_start_line(tool_name: &str, args: &Value) -> Option<usize> {
-    if tool_name != "file_edit" {
-        return None;
-    }
-    let path = args.get("path")?.as_str()?;
-    let old = args.get("old_string")?.as_str()?;
-    let content = std::fs::read_to_string(path).ok()?;
-    let idx = content.find(old)?;
-    Some(content[..idx].bytes().filter(|b| *b == b'\n').count() + 1)
 }
 
 pub trait ToolDispatcher: Send + Sync {
@@ -358,7 +340,6 @@ mod tests {
             output: "hello".into(),
             success: true,
             tool_call_id: Some("tc1".into()),
-            start_line: None,
         }]);
         match msg {
             ConversationMessage::ToolResults(results) => {
@@ -377,7 +358,6 @@ mod tests {
             output: "ok".into(),
             success: true,
             tool_call_id: None,
-            start_line: None,
         }]);
         let rendered = match msg {
             ConversationMessage::Chat(chat) => chat.content,
@@ -395,7 +375,6 @@ mod tests {
             output: "ok".into(),
             success: true,
             tool_call_id: Some("tc-1".into()),
-            start_line: None,
         }]);
 
         match msg {
@@ -476,52 +455,5 @@ mod tests {
         // XmlToolDispatcher returns text only, not JSON payload
         assert_eq!(messages[0].content, "answer");
         assert!(!messages[0].content.contains("reasoning_content"));
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // file_edit_start_line — diff gutter line-number source (zerocode)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn file_edit_start_line_reports_one_based_match_line() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("sample.txt");
-        std::fs::write(&path, "line one\nline two\nTARGET\nline four\n").unwrap();
-        let args = serde_json::json!({
-            "path": path.to_str().unwrap(),
-            "old_string": "TARGET",
-            "new_string": "CHANGED",
-        });
-        // TARGET sits on the third line.
-        assert_eq!(file_edit_start_line("file_edit", &args), Some(3));
-    }
-
-    #[test]
-    fn file_edit_start_line_none_for_other_tools() {
-        let args = serde_json::json!({ "path": "x", "old_string": "y" });
-        assert_eq!(file_edit_start_line("file_write", &args), None);
-        assert_eq!(file_edit_start_line("shell", &args), None);
-    }
-
-    #[test]
-    fn file_edit_start_line_none_when_unreadable_or_unmatched() {
-        // Missing file → None (the renderer falls back to line 1).
-        let missing = serde_json::json!({
-            "path": "/nonexistent/zerocode/path.txt",
-            "old_string": "z",
-            "new_string": "q",
-        });
-        assert_eq!(file_edit_start_line("file_edit", &missing), None);
-
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("f.txt");
-        std::fs::write(&path, "alpha\nbeta\n").unwrap();
-        // old_string not present → None.
-        let unmatched = serde_json::json!({
-            "path": path.to_str().unwrap(),
-            "old_string": "gamma",
-            "new_string": "delta",
-        });
-        assert_eq!(file_edit_start_line("file_edit", &unmatched), None);
     }
 }

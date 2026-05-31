@@ -2949,12 +2949,11 @@ fn notification_for_turn_event(
             name: name.clone(),
             raw_input: args.clone(),
         },
-        TurnEvent::ToolResult(r) => SessionUpdateEvent::ToolResult {
+        TurnEvent::ToolResult { id, name, output } => SessionUpdateEvent::ToolResult {
             session_id: session_id.to_string(),
-            tool_call_id: r.id.clone(),
-            name: r.name.clone(),
-            raw_output: r.output.clone(),
-            start_line: r.start_line,
+            tool_call_id: id.clone(),
+            name: name.clone(),
+            raw_output: output.clone(),
         },
         TurnEvent::ApprovalRequest {
             request_id,
@@ -3068,12 +3067,11 @@ mod tests {
 
     #[test]
     fn tool_result_notification() {
-        let event = TurnEvent::ToolResult(zeroclaw_api::agent::ToolResultData {
+        let event = TurnEvent::ToolResult {
             id: "tc_1".into(),
             name: "bash".into(),
             output: "file.txt".into(),
-            start_line: None,
-        });
+        };
         let json = notification_for_turn_event("s1", &event, None).unwrap();
         let v = parse(&json);
         assert_eq!(v["params"]["type"], "tool_result");

@@ -1334,14 +1334,12 @@ fn xml_format_results_includes_status_and_output() {
             output: "file1.txt\nfile2.txt".into(),
             success: true,
             tool_call_id: None,
-            start_line: None,
         },
         ToolExecutionResult {
             name: "file_read".into(),
             output: "Error: file not found".into(),
             success: false,
             tool_call_id: None,
-            start_line: None,
         },
     ];
 
@@ -1375,14 +1373,12 @@ fn native_format_results_maps_tool_call_ids() {
             output: format!("File: {}", image_path.display().to_string()),
             success: true,
             tool_call_id: Some("tc-001".into()),
-            start_line: None,
         },
         ToolExecutionResult {
             name: "b".into(),
             output: "out2".into(),
             success: true,
             tool_call_id: Some("tc-002".into()),
-            start_line: None,
         },
     ];
 
@@ -1416,7 +1412,6 @@ fn xml_format_results_wraps_local_image_paths() {
         output: format!("Saved image to {}", image_path.display().to_string()),
         success: true,
         tool_call_id: None,
-        start_line: None,
     }];
 
     let msg = dispatcher.format_results(&results);

@@ -4,21 +4,6 @@
 /// Consumers that pattern-match on [`TurnEvent::ToolCall`] or
 /// [`TurnEvent::ToolResult`] should preserve the stable `id` field for
 /// call/result correlation.
-/// Payload for a returned tool result, shared by the in-process
-/// [`TurnEvent::ToolResult`] and any transport that relays it. Defined once
-/// so a new field (e.g. `start_line`) propagates through every hop without
-/// re-declaring it per enum variant.
-#[derive(Debug, Clone)]
-pub struct ToolResultData {
-    /// Stable correlation ID shared with the originating [`TurnEvent::ToolCall`].
-    pub id: String,
-    pub name: String,
-    pub output: String,
-    /// 1-based line where the change begins in the target file, when the tool
-    /// can determine it (e.g. `file_edit`). `None` when not applicable.
-    pub start_line: Option<usize>,
-}
-
 #[derive(Debug, Clone)]
 pub enum TurnEvent {
     /// A text chunk from the LLM response (may arrive many times).
@@ -33,7 +18,12 @@ pub enum TurnEvent {
         args: serde_json::Value,
     },
     /// A tool has returned a result.
-    ToolResult(ToolResultData),
+    ToolResult {
+        /// Stable correlation ID shared with the originating [`TurnEvent::ToolCall`].
+        id: String,
+        name: String,
+        output: String,
+    },
     /// The agent is waiting for the operator to approve, deny, or always-allow
     /// a tool call. The transport (e.g. gateway WebSocket) is expected to
     /// surface this to the operator and route the response back through the

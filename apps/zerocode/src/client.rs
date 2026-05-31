@@ -191,7 +191,6 @@ pub enum SessionUpdate {
         session_id: String,
         tool_call_id: String,
         raw_output: String,
-        start_line: Option<usize>,
     },
     ApprovalRequest {
         session_id: String,
@@ -258,10 +257,6 @@ pub fn parse_session_update(params: &serde_json::Value) -> Option<SessionUpdate>
             session_id: sid,
             tool_call_id: params.get("tool_call_id")?.as_str()?.to_string(),
             raw_output: params.get("raw_output")?.as_str()?.to_string(),
-            start_line: params
-                .get("start_line")
-                .and_then(|v| v.as_u64())
-                .map(|n| n as usize),
         }),
         "approval_request" => Some(SessionUpdate::ApprovalRequest {
             session_id: sid,

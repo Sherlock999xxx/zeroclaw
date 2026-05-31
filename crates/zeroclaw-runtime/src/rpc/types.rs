@@ -1214,8 +1214,6 @@ pub enum SessionUpdateEvent {
         tool_call_id: String,
         name: String,
         raw_output: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        start_line: Option<usize>,
     },
     ApprovalRequest {
         session_id: String,
