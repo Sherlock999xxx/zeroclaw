@@ -291,7 +291,9 @@ fn read_config_table() -> Option<toml::Table> {
         let trimmed = custom.trim();
         if !trimmed.is_empty() {
             let path = std::path::PathBuf::from(trimmed).join("config.toml");
-            return std::fs::read_to_string(&path).ok().and_then(|c| c.parse().ok());
+            return std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|c| c.parse().ok());
         }
     }
 

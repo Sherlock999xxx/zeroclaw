@@ -3,7 +3,33 @@
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+
+#[cfg(feature = "agent-runtime")]
 use zeroclaw_runtime::i18n::get_required_cli_string_with_args;
+
+fn update_already_current_message(version: &str) -> String {
+    #[cfg(feature = "agent-runtime")]
+    {
+        get_required_cli_string_with_args("cli-update-already-current", &[("version", version)])
+    }
+
+    #[cfg(not(feature = "agent-runtime"))]
+    {
+        format!("Already up to date (v{version}).")
+    }
+}
+
+fn update_success_message(version: &str) -> String {
+    #[cfg(feature = "agent-runtime")]
+    {
+        get_required_cli_string_with_args("cli-update-success", &[("version", version)])
+    }
+
+    #[cfg(not(feature = "agent-runtime"))]
+    {
+        format!("Successfully updated to v{version}!")
+    }
+}
 
 const GITHUB_RELEASES_LATEST_URL: &str =
     "https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/latest";
@@ -87,10 +113,7 @@ pub async fn run(target_version: Option<&str>) -> Result<()> {
     if !update_info.is_newer {
         println!(
             "{}",
-            get_required_cli_string_with_args(
-                "cli-update-already-current",
-                &[("version", &update_info.current_version)],
-            )
+            update_already_current_message(&update_info.current_version)
         );
         return Ok(());
     }
@@ -177,13 +200,7 @@ pub async fn run(target_version: Option<&str>) -> Result<()> {
         Ok(()) => {
             // Cleanup backup on success
             let _ = tokio::fs::remove_file(&backup_path).await;
-            println!(
-                "{}",
-                get_required_cli_string_with_args(
-                    "cli-update-success",
-                    &[("version", &update_info.latest_version)],
-                )
-            );
+            println!("{}", update_success_message(&update_info.latest_version));
             Ok(())
         }
         Err(e) => {

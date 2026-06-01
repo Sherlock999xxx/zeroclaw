@@ -2684,6 +2684,7 @@ fn apply_cmd_translations(cmd: clap::Command, prefix: &str) -> clap::Command {
 /// fetch can never be coerced to a path/host outside the known set. Also
 /// enforces a strict syntactic allowlist as a belt-and-suspenders guard against
 /// path traversal.
+#[cfg(feature = "agent-runtime")]
 fn validated_locale(locale: &str) -> Result<String> {
     let ok_shape = !locale.is_empty()
         && locale.len() <= 16
@@ -2712,6 +2713,7 @@ fn validated_locale(locale: &str) -> Result<String> {
 /// and a strict syntactic allowlist; the destination path is built from
 /// `ftl_locale_dir` and canonicalized to confirm it stays under the data dir,
 /// so neither the locale nor catalog can drive a write outside the FTL store.
+#[cfg(feature = "agent-runtime")]
 async fn fetch_locales(locale: &str, catalog: Option<&str>) -> Result<()> {
     let locale = validated_locale(locale)?;
 
@@ -3193,6 +3195,12 @@ async fn main() -> Result<()> {
             // Wire CLI channel for interactive mode
             zeroclaw_runtime::agent::loop_::register_cli_channel_fn(Box::new(|| {
                 Box::new(zeroclaw_channels::cli::CliChannel::new("cli"))
+            }));
+
+            // Register channel map factory for late-bound tool handle population.
+            zeroclaw_runtime::agent::loop_::register_channel_map_fn(Box::new({
+                let config_clone = config.clone();
+                move || zeroclaw_channels::orchestrator::build_channel_map(&config_clone)
             }));
 
             Box::pin(agent::run(

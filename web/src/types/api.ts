@@ -185,6 +185,17 @@ export interface Session {
   channel_id: string | null;
 }
 
+export type ChannelReadinessState = 'ready' | 'missing' | 'unknown';
+
+export interface ChannelReadiness {
+  enabled: ChannelReadinessState;
+  bound_to_agent: ChannelReadinessState;
+  authenticated: ChannelReadinessState;
+  listening: ChannelReadinessState;
+  requirements: string[];
+  notes: string[];
+}
+
 export interface ChannelDetail {
   /** Composite `<type>.<alias>` identifier (v0.8.0). */
   name: string;

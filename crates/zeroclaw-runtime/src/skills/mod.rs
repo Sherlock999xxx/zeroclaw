@@ -83,12 +83,26 @@ impl ::zeroclaw_api::attribution::Attributable for Skill {
 pub struct SkillTool {
     pub name: String,
     pub description: String,
-    /// "shell", "http", "script"
+    /// "shell", "http", "script", "builtin", "mcp"
     pub kind: String,
-    /// The command/URL/script to execute
+    /// The command/URL/script to execute (unused for builtin/mcp kinds)
+    #[serde(default)]
     pub command: String,
     #[serde(default)]
     pub args: HashMap<String, String>,
+    /// For `kind = "builtin"`: the name of the built-in tool to delegate to.
+    /// For `kind = "mcp"`: the prefixed MCP tool name `{server}__{tool}`
+    /// (e.g. `images__generate`).
+    #[serde(default)]
+    pub target: Option<String>,
+    /// For `kind = "builtin"` / `kind = "mcp"`: arguments fixed by the skill
+    /// manifest. These are **locked** — they are applied on top of the
+    /// caller-supplied args and cannot be overridden by the model. This is
+    /// what scopes a delegated tool (e.g. `target = "composio"` +
+    /// `locked_args = { action_name = "TEXT_TO_PDF" }` exposes exactly one
+    /// action). Accepts the legacy key `default_args` for compatibility.
+    #[serde(default, alias = "default_args")]
+    pub locked_args: HashMap<String, String>,
 }
 
 /// Skill manifest parsed from SKILL.toml
@@ -1276,12 +1290,12 @@ pub fn skills_to_prompt_with_mode(
             let registered: Vec<_> = skill
                 .tools
                 .iter()
-                .filter(|t| matches!(t.kind.as_str(), "shell" | "script" | "http"))
+                .filter(|t| matches!(t.kind.as_str(), "shell" | "script" | "http" | "builtin"))
                 .collect();
             let unregistered: Vec<_> = skill
                 .tools
                 .iter()
-                .filter(|t| !matches!(t.kind.as_str(), "shell" | "script" | "http"))
+                .filter(|t| !matches!(t.kind.as_str(), "shell" | "script" | "http" | "builtin"))
                 .collect();
 
             if !registered.is_empty() {
@@ -1326,12 +1340,77 @@ pub fn skills_to_prompt_with_mode(
 /// Convert skill tools into callable `Tool` trait objects.
 ///
 /// Each skill's `[[tools]]` entries are converted to either `SkillShellTool`
-/// (for `shell`/`script` kinds) or `SkillHttpTool` (for `http` kind),
-/// enabling them to appear as first-class callable tool specs rather than
-/// only as XML in the system prompt.
+/// (for `shell`/`script` kinds), `SkillHttpTool` (for `http` kind), or
+/// `SkillBuiltinTool` (for `builtin` kind), enabling them to appear as
+/// first-class callable tool specs rather than only as XML in the system
+/// prompt.
+///
+/// The `builtin` kind requires the unfiltered tool registry. Use
+/// [`skills_to_tools_with_context`] to register that kind.
 pub fn skills_to_tools(
     skills: &[Skill],
     security: std::sync::Arc<crate::security::SecurityPolicy>,
+) -> Vec<Box<dyn zeroclaw_api::tool::Tool>> {
+    skills_to_tools_with_context(skills, security, &[])
+}
+
+/// Convert skill tools into callable `Tool` trait objects with full context.
+///
+/// `unfiltered_registry` provides the pre-policy tool list for `builtin`
+/// delegation.
+/// Resolve a skill elevation tool (`kind = "builtin"` or `kind = "mcp"`).
+///
+/// Both kinds delegate to a tool resolved by name from `resolution_registry`
+/// (built-in tools + MCP tool wrappers). The only difference is `kind_label`,
+/// used for diagnostics. Returns `None` (after a WARN) when the `target` is
+/// missing or not resolvable, so a misconfigured manifest is skipped, never
+/// fatal.
+fn resolve_elevated_tool(
+    skill_name: &str,
+    tool: &SkillTool,
+    kind_label: &str,
+    resolution_registry: &[std::sync::Arc<dyn zeroclaw_api::tool::Tool>],
+) -> Option<Box<dyn zeroclaw_api::tool::Tool>> {
+    let Some(target_name) = tool.target.as_deref() else {
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            &format!(
+                "Skill tool {}.{} has kind='{}' but no 'target' field, skipping",
+                skill_name, tool.name, kind_label
+            )
+        );
+        return None;
+    };
+    match resolution_registry.iter().find(|t| t.name() == target_name) {
+        Some(target) => Some(Box::new(crate::skills::skill_tool::SkillBuiltinTool::new(
+            skill_name,
+            tool,
+            std::sync::Arc::clone(target),
+            tool.locked_args.clone(),
+        ))),
+        None => {
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                &format!(
+                    "Skill tool {}.{} targets {} '{}' which was not found in the \
+                     resolution registry (for MCP, use the prefixed name \
+                     '{{server}}__{{tool}}' and ensure the server is connected), skipping",
+                    skill_name, tool.name, kind_label, target_name
+                )
+            );
+            None
+        }
+    }
+}
+
+pub fn skills_to_tools_with_context(
+    skills: &[Skill],
+    security: std::sync::Arc<crate::security::SecurityPolicy>,
+    unfiltered_registry: &[std::sync::Arc<dyn zeroclaw_api::tool::Tool>],
 ) -> Vec<Box<dyn zeroclaw_api::tool::Tool>> {
     let mut tools: Vec<Box<dyn zeroclaw_api::tool::Tool>> = Vec::new();
     for skill in skills {
@@ -1353,6 +1432,20 @@ pub fn skills_to_tools(
                         &skill.name,
                         tool,
                     )));
+                }
+                "builtin" => {
+                    if let Some(t) =
+                        resolve_elevated_tool(&skill.name, tool, "builtin", unfiltered_registry)
+                    {
+                        tools.push(t);
+                    }
+                }
+                "mcp" => {
+                    if let Some(t) =
+                        resolve_elevated_tool(&skill.name, tool, "MCP", unfiltered_registry)
+                    {
+                        tools.push(t);
+                    }
                 }
                 other => {
                     ::zeroclaw_log::record!(
@@ -2201,10 +2294,8 @@ mod registry_tests {
     fn english_tier_banner(name: &str, version: Option<&str>, tier: SkillTier) -> String {
         let version_label = version.unwrap_or("?");
         let args = [("name", name), ("version", version_label)];
-        let mut banner = crate::i18n::get_english_cli_string_with_args(
-            install_tier_banner_key(tier),
-            &args,
-        );
+        let mut banner =
+            crate::i18n::get_english_cli_string_with_args(install_tier_banner_key(tier), &args);
         if !banner.ends_with('\n') {
             banner.push('\n');
         }
@@ -2223,8 +2314,7 @@ mod registry_tests {
 
     #[test]
     fn build_install_tier_banner_community_warns() {
-        let banner =
-            english_tier_banner("discord-moderator", Some("0.1.2"), SkillTier::Community);
+        let banner = english_tier_banner("discord-moderator", Some("0.1.2"), SkillTier::Community);
         assert!(banner.contains("Community submission"));
         assert!(banner.contains("not audited by ZeroClaw"));
         assert!(banner.contains("zeroclaw skills audit discord-moderator"));

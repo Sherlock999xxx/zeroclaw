@@ -126,45 +126,46 @@ pub struct StreamedTurnError {
 /// cheap (Arc clones); the underlying maps are shared with the live tools.
 #[derive(Clone, Default)]
 pub struct AgentChannelHandles {
-    pub ask_user: Option<tools::ChannelMapHandle>,
-    pub reaction: Option<tools::ChannelMapHandle>,
-    pub escalate: Option<tools::ChannelMapHandle>,
-    pub poll: Option<tools::ChannelMapHandle>,
+    pub ask_user: Option<tools::PerToolChannelHandle>,
+    pub reaction: tools::PerToolChannelHandle,
+    pub poll: Option<tools::PerToolChannelHandle>,
+    pub escalate: Option<tools::PerToolChannelHandle>,
 }
 
 impl AgentChannelHandles {
-    /// Register a channel into every populated handle so all four
-    /// channel-driven tools can resolve it by name.
+    /// Return references to all populated per-tool channel handles.
+    fn populated_handles(&self) -> Vec<Option<&tools::PerToolChannelHandle>> {
+        vec![
+            self.ask_user.as_ref(),
+            Some(&self.reaction),
+            self.poll.as_ref(),
+            self.escalate.as_ref(),
+        ]
+    }
+
+    /// Register a channel into every populated handle so all channel-driven
+    /// tools can resolve it by name.
     pub fn register_channel(
         &self,
         name: impl Into<String>,
         channel: Arc<dyn zeroclaw_api::channel::Channel>,
     ) {
         let name = name.into();
-        for handle in [&self.ask_user, &self.reaction, &self.escalate, &self.poll]
-            .into_iter()
-            .flatten()
-        {
+        for handle in self.populated_handles().into_iter().flatten() {
             handle.write().insert(name.clone(), Arc::clone(&channel));
         }
     }
 
     /// Remove a channel from every populated handle (used on session/stop).
     pub fn unregister_channel(&self, name: &str) {
-        for handle in [&self.ask_user, &self.reaction, &self.escalate, &self.poll]
-            .into_iter()
-            .flatten()
-        {
+        for handle in self.populated_handles().into_iter().flatten() {
             handle.write().remove(name);
         }
     }
 
     /// Look up a registered channel by name from any populated channel map.
     pub fn get_channel(&self, name: &str) -> Option<Arc<dyn zeroclaw_api::channel::Channel>> {
-        for handle in [&self.ask_user, &self.reaction, &self.escalate, &self.poll]
-            .into_iter()
-            .flatten()
-        {
+        for handle in self.populated_handles().into_iter().flatten() {
             if let Some(channel) = handle.read().get(name) {
                 return Some(Arc::clone(channel));
             }
@@ -572,17 +573,36 @@ impl Agent {
         AgentBuilder::new()
     }
 
-    /// Late-bound channel-map handles for the four channel-driven tools.
+    pub fn history(&self) -> &[ConversationMessage] {
+        &self.history
+    }
+
+    /// Late-bound channel-map handles for the five channel-driven tools.
     /// Populated by `from_config_with_session_cwd`; empty when an Agent is
     /// constructed via the builder directly. Callers (e.g. the ACP server)
     /// use `channel_handles().register_channel(...)` to wire a back-channel
-    /// into all four tool maps in one shot.
+    /// into all five tool maps in one shot.
     pub fn channel_handles(&self) -> &AgentChannelHandles {
         &self.channel_handles
     }
 
-    pub fn history(&self) -> &[ConversationMessage] {
-        &self.history
+    /// Populate late-bound channel-map handles with configured channels.
+    ///
+    /// Seeds `ask_user`, `reaction`, `poll`, and `escalate`
+    /// handles from the provided map. Called by CLI and orchestrator paths
+    /// after agent construction but before the agent loop starts.
+    ///
+    /// Returns the list of registered channel names for logging.
+    pub fn populate_channels(
+        &self,
+        channel_map: &std::collections::HashMap<String, Arc<dyn zeroclaw_api::channel::Channel>>,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        for (name, ch) in channel_map {
+            self.channel_handles.register_channel(name, Arc::clone(ch));
+            names.push(name.clone());
+        }
+        names
     }
 
     /// Attribution fields for opening a turn span at external call sites
@@ -1042,14 +1062,7 @@ impl Agent {
             None
         };
 
-        let (
-            mut tools,
-            delegate_handle,
-            reaction_handle,
-            poll_handle,
-            ask_user_handle,
-            escalate_handle,
-        ) = tools::all_tools_with_runtime(
+        let all_tools_result = tools::all_tools_with_runtime(
             Arc::new(config.clone()),
             &security,
             risk_profile,
@@ -1069,12 +1082,50 @@ impl Agent {
             false,
             tui_env,
         );
+        let mut tools = all_tools_result.tools;
+        let delegate_handle = all_tools_result.delegate_handle;
+        let ask_user_handle = all_tools_result.ask_user_handle;
+        let reaction_handle = all_tools_result.reaction_handle;
+        let poll_handle = all_tools_result.poll_handle;
+        let escalate_handle = all_tools_result.escalate_handle;
+
+        // ── Built-in SecurityPolicy tool gate (parity with agent::run) ──
+        // Apply the agent's allowlist (`allowed_tools`) AND denylist
+        // (`excluded_tools`) to the built-in registry *before* MCP tools and
+        // skill tools are added. `from_config` (ws.rs / daemon) bypasses the
+        // channel orchestrator and previously enforced only the risk-profile
+        // denylist (further below) on this path — never the allowlist — so an
+        // agent allowlisted to e.g. `file_read` still kept raw `shell` /
+        // `file_write`. Filtering here, before skill registration, is also
+        // what lets a scoped elevation wrapper survive: the raw target is
+        // removed while the distinct prefixed `{skill}__{tool}` wrapper is
+        // appended later. MCP tools are injected after this gate and are
+        // intentionally exempt from the built-in allow/deny filter (a
+        // restrictive allowlist must not silently drop all MCP tools); the
+        // risk-profile denylist below still applies to them.
+        let before_policy_filter = tools.len();
+        crate::agent::loop_::apply_policy_tool_filter(&mut tools, Some(security.as_ref()), None);
+        if tools.len() != before_policy_filter {
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({
+                        "before": before_policy_filter,
+                        "retained": tools.len(),
+                        "policy_allowed": security.allowed_tools.as_ref().map(|v| v.len()),
+                        "policy_excluded": security.excluded_tools.as_ref().map(|v| v.len()),
+                    })),
+                "Applied SecurityPolicy built-in tool filter (from_config path)"
+            );
+        }
 
         // ── Wire MCP tools (non-fatal) ─────────────────────────────
         // Replicates the same MCP initialization logic used in the CLI
         // and webhook paths (loop_.rs) so that the WebSocket/daemon UI
         // path also has access to MCP tools.
         let mut activated_tools: Option<Arc<std::sync::Mutex<tools::ActivatedToolSet>>> = None;
+        // Resolution-only MCP wrappers for skill MCP elevation (kind = "mcp").
+        let mut mcp_elevation_arcs: Vec<Arc<dyn tools::Tool>> = Vec::new();
         if initialize_mcp && config.mcp.enabled && !config.mcp.servers.is_empty() {
             ::zeroclaw_log::record!(
                 INFO,
@@ -1087,6 +1138,7 @@ impl Agent {
             match tools::McpRegistry::connect_all(&config.mcp.servers).await {
                 Ok(registry) => {
                     let registry = std::sync::Arc::new(registry);
+                    mcp_elevation_arcs = tools::collect_mcp_elevation_arcs(&registry).await;
                     if config.mcp.deferred_loading {
                         let deferred_set = tools::DeferredMcpToolSet::from_registry(
                             std::sync::Arc::clone(&registry),
@@ -1229,7 +1281,20 @@ impl Agent {
         // through to `[skill_bundles.<alias>].directory` (defaulting to
         // `<install>/shared/skills/<alias>/`).
         let skills = crate::skills::load_skills_for_agent(&config.data_dir, config, agent_alias);
-        tools::register_skill_tools(&mut tools, &skills, security.clone());
+        // Resolution registry = built-in arcs + resolution-only MCP wrappers, so
+        // skill elevation (kind = "builtin" / "mcp") can resolve either target.
+        let skill_resolution_registry: Vec<Arc<dyn tools::Tool>> = all_tools_result
+            .unfiltered_tool_arcs
+            .iter()
+            .cloned()
+            .chain(mcp_elevation_arcs.iter().cloned())
+            .collect();
+        tools::register_skill_tools_with_context(
+            &mut tools,
+            &skills,
+            security.clone(),
+            &skill_resolution_registry,
+        );
 
         let approval_manager = if approval_backchannel {
             ApprovalManager::for_non_interactive_backchannel(risk_profile)
@@ -1289,11 +1354,13 @@ impl Agent {
             .approval_manager(Some(Arc::new(approval_manager)))
             .build()?;
 
+        // Wire per-tool channel-map handles into the agent so callers (e.g.
+        // the ACP server) can register back-channels after construction.
         agent.channel_handles = AgentChannelHandles {
             ask_user: ask_user_handle,
             reaction: reaction_handle,
+            poll: poll_handle,
             escalate: escalate_handle,
-            poll: Some(poll_handle),
         };
 
         Ok(agent)
@@ -2656,10 +2723,7 @@ impl Agent {
                     if let Some(ref token) = cancel_token
                         && token.is_cancelled()
                     {
-                        self.synthesize_cancelled_tool_results(
-                            &response.tool_calls,
-                            &mut new_msgs,
-                        );
+                        self.synthesize_cancelled_tool_results(&response.tool_calls, &mut new_msgs);
                         self.append_streamed_assistant_message_to_history(
                             "[interrupted by user]".to_string(),
                             &mut new_msgs,
@@ -3598,13 +3662,14 @@ mod tests {
             .build()
             .expect("agent builder should succeed with valid config");
 
-        let handle: tools::ChannelMapHandle = Arc::new(parking_lot::RwLock::new(HashMap::new()));
+        let handle: tools::PerToolChannelHandle =
+            Arc::new(parking_lot::RwLock::new(HashMap::new()));
         agent.channel_handles.ask_user = Some(Arc::clone(&handle));
         let channel: Arc<dyn zeroclaw_api::channel::Channel> = Arc::new(ApprovalChannel {
             response: zeroclaw_api::channel::ChannelApprovalResponse::Approve,
             requests: Arc::clone(&approval_requests),
         });
-        handle.write().insert("acp".to_string(), channel);
+        agent.channel_handles().register_channel("acp", channel);
 
         let result = agent
             .execute_tool_call(&ParsedToolCall {
@@ -3655,13 +3720,14 @@ mod tests {
             .build()
             .expect("agent builder should succeed with valid config");
 
-        let handle: tools::ChannelMapHandle = Arc::new(parking_lot::RwLock::new(HashMap::new()));
+        let handle: tools::PerToolChannelHandle =
+            Arc::new(parking_lot::RwLock::new(HashMap::new()));
         agent.channel_handles.ask_user = Some(Arc::clone(&handle));
         let channel: Arc<dyn zeroclaw_api::channel::Channel> = Arc::new(ApprovalChannel {
             response: zeroclaw_api::channel::ChannelApprovalResponse::Deny,
             requests: Arc::clone(&approval_requests),
         });
-        handle.write().insert("acp".to_string(), channel);
+        agent.channel_handles().register_channel("acp", channel);
 
         let result = agent
             .execute_tool_call(&ParsedToolCall {
@@ -3713,13 +3779,14 @@ mod tests {
             .build()
             .expect("agent builder should succeed with valid config");
 
-        let handle: tools::ChannelMapHandle = Arc::new(parking_lot::RwLock::new(HashMap::new()));
+        let handle: tools::PerToolChannelHandle =
+            Arc::new(parking_lot::RwLock::new(HashMap::new()));
         agent.channel_handles.ask_user = Some(Arc::clone(&handle));
         let channel: Arc<dyn zeroclaw_api::channel::Channel> = Arc::new(ApprovalChannel {
             response: zeroclaw_api::channel::ChannelApprovalResponse::Deny,
             requests: Arc::clone(&approval_requests),
         });
-        handle.write().insert("acp".to_string(), channel);
+        agent.channel_handles().register_channel("acp", channel);
 
         let result = agent
             .execute_tool_call(&ParsedToolCall {
@@ -3775,13 +3842,14 @@ mod tests {
             .build()
             .expect("agent builder should succeed with valid config");
 
-        let handle: tools::ChannelMapHandle = Arc::new(parking_lot::RwLock::new(HashMap::new()));
+        let handle: tools::PerToolChannelHandle =
+            Arc::new(parking_lot::RwLock::new(HashMap::new()));
         agent.channel_handles.ask_user = Some(Arc::clone(&handle));
         let channel: Arc<dyn zeroclaw_api::channel::Channel> = Arc::new(ApprovalChannel {
             response: zeroclaw_api::channel::ChannelApprovalResponse::Approve,
             requests: Arc::clone(&approval_requests),
         });
-        handle.write().insert("acp".to_string(), channel);
+        agent.channel_handles().register_channel("acp", channel);
 
         let result = agent
             .execute_tool_call(&ParsedToolCall {
@@ -3842,13 +3910,14 @@ mod tests {
             .build()
             .expect("agent builder should succeed with valid config");
 
-        let handle: tools::ChannelMapHandle = Arc::new(parking_lot::RwLock::new(HashMap::new()));
+        let handle: tools::PerToolChannelHandle =
+            Arc::new(parking_lot::RwLock::new(HashMap::new()));
         agent.channel_handles.ask_user = Some(Arc::clone(&handle));
         let channel: Arc<dyn zeroclaw_api::channel::Channel> = Arc::new(ApprovalChannel {
             response: zeroclaw_api::channel::ChannelApprovalResponse::AlwaysApprove,
             requests: Arc::clone(&approval_requests),
         });
-        handle.write().insert("acp".to_string(), channel);
+        agent.channel_handles().register_channel("acp", channel);
 
         let first_result = agent
             .execute_tool_call(&ParsedToolCall {
@@ -4814,7 +4883,6 @@ mod tests {
              starts then all results; got {seq:?}"
         );
     }
-
 
     struct PreExecutedToolModelProvider;
 
@@ -6236,6 +6304,8 @@ mod tests {
                     kind: "shell".to_string(),
                     command: format!("echo {t}"),
                     args: std::collections::HashMap::new(),
+                    target: None,
+                    locked_args: std::collections::HashMap::new(),
                 })
                 .collect(),
             prompts: vec![],
@@ -6267,6 +6337,82 @@ mod tests {
         // Should still be just 1 tool — the duplicate was skipped.
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name(), "my_skill__run");
+    }
+
+    #[test]
+    fn from_config_policy_filter_blocks_raw_target_but_keeps_scoped_wrapper() {
+        // Path-level boundary for the from_config (ws.rs / daemon) path. The
+        // SecurityPolicy allow/deny gate now runs over the built-in registry
+        // before skill tools are registered (parity with agent::run), so an
+        // agent allowlisted to `file_read` does NOT keep raw `shell`, while the
+        // skill's scoped wrapper — distinct prefixed name — remains the only
+        // callable path to that capability. This exercises the exact
+        // apply_policy_tool_filter + register_skill_tools_with_context sequence
+        // from_config performs.
+        use crate::skills::{Skill, SkillTool};
+
+        let shell: Arc<dyn Tool> = Arc::new(NamedMockTool::new("shell"));
+        let file_read: Arc<dyn Tool> = Arc::new(NamedMockTool::new("file_read"));
+        // The resolution registry retains the raw tool so the wrapper can
+        // delegate to it even after the policy filter removes it below.
+        let resolution: Vec<Arc<dyn Tool>> = vec![Arc::clone(&shell), Arc::clone(&file_read)];
+
+        let mut tools: Vec<Box<dyn Tool>> = vec![
+            Box::new(crate::tools::ArcToolRef(Arc::clone(&shell))),
+            Box::new(crate::tools::ArcToolRef(Arc::clone(&file_read))),
+        ];
+
+        // Allowlist the agent to `file_read` only — the gate from_config now
+        // applies to built-ins before skills register. (Pre-fix, from_config
+        // honored only the denylist, so raw `shell` leaked through.)
+        let policy = crate::security::SecurityPolicy {
+            allowed_tools: Some(vec!["file_read".to_string()]),
+            workspace_dir: std::env::temp_dir(),
+            ..crate::security::SecurityPolicy::default()
+        };
+        crate::agent::loop_::apply_policy_tool_filter(&mut tools, Some(&policy), None);
+        assert!(
+            !tools.iter().any(|t| t.name() == "shell"),
+            "raw shell must be removed by the allowlist on the from_config path"
+        );
+        assert!(
+            tools.iter().any(|t| t.name() == "file_read"),
+            "allowlisted file_read must survive the filter"
+        );
+
+        let skill = Skill {
+            name: "ops".to_string(),
+            description: "d".to_string(),
+            version: "1".to_string(),
+            author: None,
+            tags: vec![],
+            tools: vec![SkillTool {
+                name: "use_shell".to_string(),
+                description: "scoped shell".to_string(),
+                kind: "builtin".to_string(),
+                command: String::new(),
+                args: std::collections::HashMap::new(),
+                target: Some("shell".to_string()),
+                locked_args: std::collections::HashMap::new(),
+            }],
+            prompts: vec![],
+            location: None,
+        };
+        tools::register_skill_tools_with_context(
+            &mut tools,
+            &[skill],
+            Arc::new(crate::security::SecurityPolicy::default()),
+            &resolution,
+        );
+
+        assert!(
+            !tools.iter().any(|t| t.name() == "shell"),
+            "raw shell must STILL be unavailable after skill registration"
+        );
+        assert!(
+            tools.iter().any(|t| t.name() == "ops__use_shell"),
+            "the scoped elevation wrapper must remain the only callable path to shell"
+        );
     }
 
     #[test]

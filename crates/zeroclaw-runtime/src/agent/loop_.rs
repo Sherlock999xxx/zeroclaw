@@ -29,6 +29,68 @@ static PERIPHERAL_TOOLS_FN: std::sync::OnceLock<PeripheralToolsFn> = std::sync::
 pub fn register_peripheral_tools_fn(f: PeripheralToolsFn) {
     let _ = PERIPHERAL_TOOLS_FN.set(f);
 }
+
+/// Channel map factory type — builds `channel_key → Arc<dyn Channel>` map.
+/// Injected by the binary so `zeroclaw-runtime` doesn't depend on
+/// `zeroclaw-channels`.
+type ChannelMapFn = Box<
+    dyn Fn()
+            -> std::collections::HashMap<String, std::sync::Arc<dyn zeroclaw_api::channel::Channel>>
+        + Send
+        + Sync,
+>;
+
+/// Channel map factory, injected by the binary.
+static CHANNEL_MAP_FN: std::sync::OnceLock<ChannelMapFn> = std::sync::OnceLock::new();
+
+/// Register the channel map factory. Called once at startup by the binary.
+pub fn register_channel_map_fn(f: ChannelMapFn) {
+    let _ = CHANNEL_MAP_FN.set(f);
+}
+
+/// Populate all channel-driven tool handles from the registered factory.
+/// Returns the number of channels seeded.
+///
+/// Parameter order matches the return tuple of `all_tools_with_runtime`:
+/// Seed all channel-driven tool handles from the registered channel map factory.
+/// Returns the number of channels seeded. Parameters match the return order of
+/// `all_tools_with_runtime`:
+///   ask_user_handle = `Option<PerToolChannelHandle>`
+///   reaction_handle = `PerToolChannelHandle` (NOT Option)
+///   poll_handle = `Option<PerToolChannelHandle>`
+///   escalate_handle = `Option<PerToolChannelHandle>`
+pub(crate) fn seed_channel_handles(
+    ask_user_handle: &Option<tools::PerToolChannelHandle>,
+    reaction_handle: &tools::PerToolChannelHandle,
+    poll_handle: &Option<tools::PerToolChannelHandle>,
+    escalate_handle: &Option<tools::PerToolChannelHandle>,
+) -> usize {
+    let Some(factory) = CHANNEL_MAP_FN.get() else {
+        return 0;
+    };
+    let map = factory();
+    if map.is_empty() {
+        return 0;
+    }
+
+    let handles = [
+        ask_user_handle.as_ref(),
+        Some(reaction_handle),
+        poll_handle.as_ref(),
+        escalate_handle.as_ref(),
+    ];
+
+    let mut count = 0;
+    for (name, ch) in &map {
+        for handle in handles.iter().flatten() {
+            handle
+                .write()
+                .insert(name.clone(), std::sync::Arc::clone(ch));
+        }
+        count += 1;
+    }
+    count
+}
 use crate::cost::types::BudgetCheck;
 use crate::observability::{self, Observer, ObserverEvent};
 use crate::platform;
@@ -3149,14 +3211,7 @@ pub async fn run(
         } else {
             (None, None)
         };
-        let (
-            mut tools_registry,
-            delegate_handle,
-            _reaction_handle,
-            _channel_map_handle,
-            _ask_user_handle,
-            _escalate_handle,
-        ) = tools::all_tools_with_runtime(
+        let all_tools_result = tools::all_tools_with_runtime(
             Arc::new(config.clone()),
             &security,
             &risk_profile,
@@ -3176,6 +3231,29 @@ pub async fn run(
             is_subagent_caller,
             None,
         );
+        let mut tools_registry = all_tools_result.tools;
+        let delegate_handle = all_tools_result.delegate_handle;
+        let unfiltered_tool_arcs = all_tools_result.unfiltered_tool_arcs;
+        let ask_user_handle = all_tools_result.ask_user_handle;
+        let reaction_handle = all_tools_result.reaction_handle;
+        let poll_handle = all_tools_result.poll_handle;
+        let escalate_handle = all_tools_result.escalate_handle;
+
+        // Populate all channel-driven tool handles from the registered factory.
+        let count = seed_channel_handles(
+            &ask_user_handle,
+            &reaction_handle,
+            &poll_handle,
+            &escalate_handle,
+        );
+        if count > 0 {
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"count": count})),
+                &format!("Registered {} channel(s) for CLI agent", count),
+            );
+        }
 
         let peripheral_tools: Vec<Box<dyn Tool>> = if let Some(f) = PERIPHERAL_TOOLS_FN.get() {
             f(config.peripherals.clone()).await.unwrap_or_default()
@@ -3233,6 +3311,8 @@ pub async fn run(
         let mut activated_handle: Option<
             std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>,
         > = None;
+        // Resolution-only MCP wrappers for skill MCP elevation (kind = "mcp").
+        let mut mcp_elevation_arcs: Vec<std::sync::Arc<dyn Tool>> = Vec::new();
         if config.mcp.enabled && !config.mcp.servers.is_empty() {
             ::zeroclaw_log::record!(
                 INFO,
@@ -3245,6 +3325,7 @@ pub async fn run(
             match crate::tools::McpRegistry::connect_all(&config.mcp.servers).await {
                 Ok(registry) => {
                     let registry = std::sync::Arc::new(registry);
+                    mcp_elevation_arcs = crate::tools::collect_mcp_elevation_arcs(&registry).await;
                     if config.mcp.deferred_loading {
                         // Deferred path: build stubs and register tool_search
                         let deferred_set = crate::tools::DeferredMcpToolSet::from_registry(
@@ -3443,7 +3524,19 @@ pub async fn run(
 
         // Register skill-defined tools as callable tool specs in the tool registry
         // so the LLM can invoke them via native function calling, not just XML prompts.
-        tools::register_skill_tools(&mut tools_registry, &skills, security.clone());
+        // Resolution registry = built-in arcs + resolution-only MCP wrappers, so
+        // skill elevation (kind = "builtin" / "mcp") can resolve either target.
+        let skill_resolution_registry: Vec<std::sync::Arc<dyn Tool>> = unfiltered_tool_arcs
+            .iter()
+            .cloned()
+            .chain(mcp_elevation_arcs.iter().cloned())
+            .collect();
+        tools::register_skill_tools_with_context(
+            &mut tools_registry,
+            &skills,
+            security.clone(),
+            &skill_resolution_registry,
+        );
 
         let mut tool_descs: Vec<(&str, &str)> = vec![
             (
@@ -4525,14 +4618,7 @@ pub async fn process_message(
         } else {
             (None, None)
         };
-        let (
-            mut tools_registry,
-            delegate_handle_pm,
-            _reaction_handle_pm,
-            _channel_map_handle_pm,
-            _ask_user_handle_pm,
-            _escalate_handle_pm,
-        ) = tools::all_tools_with_runtime(
+        let all_tools_result_pm = tools::all_tools_with_runtime(
             Arc::new(config.clone()),
             &security,
             &risk_profile,
@@ -4554,6 +4640,29 @@ pub async fn process_message(
             false,
             None,
         );
+        let mut tools_registry = all_tools_result_pm.tools;
+        let delegate_handle_pm = all_tools_result_pm.delegate_handle;
+        let unfiltered_tool_arcs_pm = all_tools_result_pm.unfiltered_tool_arcs;
+        let ask_user_handle_pm = all_tools_result_pm.ask_user_handle;
+        let reaction_handle_pm = all_tools_result_pm.reaction_handle;
+        let poll_handle_pm = all_tools_result_pm.poll_handle;
+        let escalate_handle_pm = all_tools_result_pm.escalate_handle;
+
+        // Populate all channel-driven tool handles from the registered factory.
+        let count = seed_channel_handles(
+            &ask_user_handle_pm,
+            &reaction_handle_pm,
+            &poll_handle_pm,
+            &escalate_handle_pm,
+        );
+        if count > 0 {
+            ::zeroclaw_log::record!(
+                INFO,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_attrs(::serde_json::json!({"count": count})),
+                &format!("Registered {} channel(s) for process_message agent", count),
+            );
+        }
         let peripheral_tools: Vec<Box<dyn Tool>> = if let Some(f) = PERIPHERAL_TOOLS_FN.get() {
             f(config.peripherals.clone()).await.unwrap_or_default()
         } else {
@@ -4577,6 +4686,8 @@ pub async fn process_message(
         let mut activated_handle_pm: Option<
             std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>,
         > = None;
+        // Resolution-only MCP wrappers for skill MCP elevation (kind = "mcp").
+        let mut mcp_elevation_arcs: Vec<std::sync::Arc<dyn Tool>> = Vec::new();
         if config.mcp.enabled && !config.mcp.servers.is_empty() {
             ::zeroclaw_log::record!(
                 INFO,
@@ -4589,6 +4700,7 @@ pub async fn process_message(
             match crate::tools::McpRegistry::connect_all(&config.mcp.servers).await {
                 Ok(registry) => {
                     let registry = std::sync::Arc::new(registry);
+                    mcp_elevation_arcs = crate::tools::collect_mcp_elevation_arcs(&registry).await;
                     if config.mcp.deferred_loading {
                         let deferred_set = crate::tools::DeferredMcpToolSet::from_registry(
                             std::sync::Arc::clone(&registry),
@@ -4728,7 +4840,18 @@ pub async fn process_message(
         let skills = crate::skills::load_skills_for_agent(&config.data_dir, &config, agent_alias);
 
         // Register skill-defined tools as callable tool specs (process_message path).
-        tools::register_skill_tools(&mut tools_registry, &skills, security.clone());
+        // Resolution registry = built-in arcs + resolution-only MCP wrappers.
+        let skill_resolution_registry: Vec<std::sync::Arc<dyn Tool>> = unfiltered_tool_arcs_pm
+            .iter()
+            .cloned()
+            .chain(mcp_elevation_arcs.iter().cloned())
+            .collect();
+        tools::register_skill_tools_with_context(
+            &mut tools_registry,
+            &skills,
+            security.clone(),
+            &skill_resolution_registry,
+        );
 
         let mut tool_descs: Vec<(&str, &str)> = vec![
             ("shell", "Execute terminal commands."),
@@ -4787,23 +4910,39 @@ pub async fn process_message(
         ));
         }
 
-        // Filter out tools excluded for non-CLI channels (gateway counts as non-CLI).
-        // Skip when the active risk profile's autonomy is `Full` — full-autonomy
-        // agents keep all tools.
+        // ── Compute final effective tool set BEFORE prompt construction ──
+        // This ensures the system prompt, tool instructions, and channel target
+        // injection all reflect the same policy-filtered tool set that will be
+        // used at execution time. Without this, the prompt could advertise
+        // tools (and their target identifiers) that the execution denylist
+        // would block — a control boundary violation.
+        //
+        // Note: compute_excluded_mcp_tools uses the raw message here (before
+        // thinking directive stripping). This is safe — dynamic tool filter
+        // keyword matching works the same, and risk-profile excluded_tools
+        // are message-independent.
+        let mut excluded_tools = compute_excluded_mcp_tools(
+            &tools_registry,
+            &agent.resolved.tool_filter_groups,
+            message,
+        );
         {
             let active_profile = &risk_profile;
             if active_profile.level != AutonomyLevel::Full {
-                let excluded = &active_profile.excluded_tools;
-                if !excluded.is_empty() {
-                    tool_descs.retain(|(name, _)| !excluded.iter().any(|ex| ex == name));
-                }
+                excluded_tools.extend(active_profile.excluded_tools.iter().cloned());
             }
         }
-        // The risk-profile excluded_tools filter ran above on tool_descs
-        // already; here we only need the set of actually-registered tool
-        // names so we can drop description entries the registry can't fire.
-        let effective_tool_names: HashSet<&str> =
-            tools_registry.iter().map(|tool| tool.name()).collect();
+
+        // Filter tool descriptions to match the effective set.
+        tool_descs.retain(|(name, _)| !excluded_tools.iter().any(|ex| ex == name));
+
+        // Derive effective tool names from the filtered set so prompt builders
+        // and channel target guards see the correct state.
+        let effective_tool_names: HashSet<&str> = tools_registry
+            .iter()
+            .map(|tool| tool.name())
+            .filter(|name| !excluded_tools.iter().any(|ex| ex == *name))
+            .collect();
         tool_descs.retain(|(name, _)| effective_tool_names.contains(name));
 
         let bootstrap_max_chars = if eff_compact_context {
@@ -10027,7 +10166,7 @@ This is an example, not an invocation."#;
                 None,
                 false,
                 false, // parallel_tools
-                None, // channel
+                None,  // channel
             )
             .await
             .expect("wrapper path should execute activated tools");
@@ -10093,7 +10232,7 @@ This is an example, not an invocation."#;
                 None,
                 true,
                 false, // parallel_tools
-                None, // channel
+                None,  // channel
             )
             .await
             .expect("strict wrapper path should preserve fallback-looking text");
@@ -11976,7 +12115,7 @@ Let me check the result."#;
         let mem: Arc<dyn zeroclaw_memory::Memory> =
             Arc::new(zeroclaw_memory::NoneMemory::new("test"));
 
-        let (mut registry, ..) = crate::tools::all_tools(
+        let mut registry = crate::tools::all_tools(
             Arc::new(config.clone()),
             &security,
             &risk,
@@ -11994,7 +12133,8 @@ Let me check the result."#;
             None,
             false,
             None,
-        );
+        )
+        .tools;
 
         // Sanity: the unrestricted channel registry exposes the dangerous
         // eager built-ins a restrictive policy is expected to remove.
@@ -12035,7 +12175,7 @@ Let me check the result."#;
         );
 
         // Denylist variant: an exclusion drops only the named tool.
-        let (mut registry2, ..) = crate::tools::all_tools(
+        let mut registry2 = crate::tools::all_tools(
             Arc::new(config.clone()),
             &security,
             &risk,
@@ -12053,7 +12193,8 @@ Let me check the result."#;
             None,
             false,
             None,
-        );
+        )
+        .tools;
         let deny = TestPolicy {
             excluded_tools: Some(vec!["shell".into()]),
             ..TestPolicy::default()

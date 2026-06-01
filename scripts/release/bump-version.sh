@@ -130,9 +130,7 @@ bump "marketplace/easypanel/meta.yaml" \
 # ── Workflow description examples ──────────────────────────────────
 echo "Workflow descriptions..."
 for wf in \
-  .github/workflows/sync-marketplace-templates.yml \
-  .github/workflows/discord-release.yml \
-  marketplace/sync-marketplace-templates.yml; do
+  .github/workflows/discord-release.yml; do
   bump "$wf" \
     '\(e\.g\. v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]*)?\)' \
     "(e.g. v${VERSION})"

@@ -30,6 +30,7 @@ import type {
   CostSummary,
   Session,
   ChannelDetail,
+  ChannelReadinessState,
   SessionMessageRow,
   ProcessStats,
   TuiEntry,
@@ -283,6 +284,38 @@ function healthBg(status: string): string {
       return "rgba(255, 68, 102, 0.05)";
   }
 }
+
+function readinessColor(state: ChannelReadinessState): string {
+  switch (state) {
+    case 'ready':
+      return 'var(--color-status-success)';
+    case 'missing':
+      return 'var(--color-status-error)';
+    case 'unknown':
+      return 'var(--pc-text-muted)';
+  }
+}
+
+function readinessLabel(state: ChannelReadinessState): string {
+  switch (state) {
+    case 'ready':
+      return 'ready';
+    case 'missing':
+      return 'missing';
+    case 'unknown':
+      return 'not checked';
+  }
+}
+
+const CHANNEL_READINESS_ROWS: Array<[
+  string,
+  'enabled' | 'bound_to_agent' | 'authenticated' | 'listening',
+]> = [
+  ['Enabled', 'enabled'],
+  ['Agent', 'bound_to_agent'],
+  ['Authenticated', 'authenticated'],
+  ['Listening', 'listening'],
+];
 
 // Genuinely process-global tiles only. Provider/Model and Memory Backend
 // were single-agent leftovers from pre-v0.8.0 and are gone: each agent now
@@ -1462,13 +1495,7 @@ function ChannelsTab() {
             <EntityEnabledToggle
               prefix={`channels.${channel.type}.${channel.alias}`}
               enabled={channel.enabled}
-              onChange={(next) =>
-                setChannels((prev) =>
-                  prev.map((c) =>
-                    c.name === channel.name ? { ...c, enabled: next } : c,
-                  ),
-                )
-              }
+              onChange={() => loadChannels()}
             />
           </div>
 
@@ -1480,6 +1507,21 @@ function ChannelsTab() {
             className="pt-3 border-t space-y-2"
             style={{ borderColor: "var(--pc-border)" }}
           >
+            {channel.readiness ? (
+              <>
+                {CHANNEL_READINESS_ROWS.map(([label, key]) => {
+                  const value = channel.readiness?.[key];
+                  return value ? (
+                    <div key={key} className="flex justify-between gap-3 text-xs">
+                      <span style={{ color: "var(--pc-text-muted)" }}>{label}</span>
+                      <span style={{ color: readinessColor(value) }}>
+                        {readinessLabel(value)}
+                      </span>
+                    </div>
+                  ) : null;
+                })}
+              </>
+            ) : null}
             <div className="flex justify-between text-xs">
               <span style={{ color: "var(--pc-text-muted)" }}>
                 {t("dashboard.health")}
@@ -1488,6 +1530,32 @@ function ChannelsTab() {
                 {channel.health}
               </span>
             </div>
+            {channel.readiness?.requirements?.length ? (
+              <div className="pt-2 space-y-1">
+                {channel.readiness.requirements.map((requirement) => (
+                  <p
+                    key={requirement}
+                    className="text-xs leading-snug"
+                    style={{ color: "var(--color-status-warning)" }}
+                  >
+                    {requirement}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+            {channel.readiness?.notes?.length ? (
+              <div className="pt-2 space-y-1">
+                {channel.readiness.notes.map((note) => (
+                  <p
+                    key={note}
+                    className="text-xs leading-snug"
+                    style={{ color: "var(--pc-text-muted)" }}
+                  >
+                    {note}
+                  </p>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       ))}
