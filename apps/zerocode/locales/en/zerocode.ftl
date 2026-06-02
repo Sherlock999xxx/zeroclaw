@@ -54,7 +54,7 @@ zc-zerocode-help-mouse-label = Mouse
 zc-zerocode-help-mouse-desc = Click pane / row, scroll, click section tab
 
 zc-input-no-pending-attachments = No pending attachments.
-zc-input-no-clipboard-image = No image in clipboard.
+zc-input-no-clipboard-image = Clipboard is empty.
 zc-input-placeholder-chat = Type to chat
 
 zc-input-help-completions-navigate = Navigate completions
@@ -64,7 +64,7 @@ zc-input-help-completions-dismiss = Dismiss
 zc-input-help-send = Send
 zc-input-help-newline = Insert newline
 zc-input-help-file-browser = File browser
-zc-input-help-paste-image = Paste image
+zc-input-help-paste = Paste
 zc-input-help-attach-cmd = Attach file by path
 
 zc-input-attached = Attached: { $label }

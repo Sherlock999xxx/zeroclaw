@@ -1054,6 +1054,25 @@ impl InputBarState {
                     }
                 }
             }
+            None => self.paste_clipboard_text(),
+        }
+    }
+
+    /// Fallback paste path: insert clipboard text directly. Used when Ctrl+V
+    /// finds no image, and as the only paste route on terminals that don't
+    /// emit bracketed paste (`Event::Paste`) — e.g. the legacy Windows
+    /// console. Routes through `handle_paste` so a pasted file path is still
+    /// auto-attached, matching bracketed-paste behaviour.
+    fn paste_clipboard_text(&mut self) -> InputBarAction {
+        match clipboard::read_clipboard_text() {
+            Some(text) => {
+                // Get-Clipboard -Raw and some tools append a trailing newline.
+                // Strip one trailing CRLF/LF so a one-line paste stays one
+                // line; interior newlines (genuine multi-line paste) are kept.
+                let text = text.strip_suffix('\n').unwrap_or(&text);
+                let text = text.strip_suffix('\r').unwrap_or(text);
+                self.handle_paste(text)
+            }
             None => InputBarAction::StatusMessage(crate::i18n::t("zc-input-no-clipboard-image")),
         }
     }
@@ -1345,7 +1364,7 @@ impl crate::widgets::HelpContext for InputBarState {
             E::key("Enter", crate::i18n::t("zc-input-help-send")),
             E::key("Shift+Enter", crate::i18n::t("zc-input-help-newline")),
             E::key("Ctrl+A", crate::i18n::t("zc-input-help-file-browser")),
-            E::key("Ctrl+V", crate::i18n::t("zc-input-help-paste-image")),
+            E::key("Ctrl+V", crate::i18n::t("zc-input-help-paste")),
             E::key("/attach", crate::i18n::t("zc-input-help-attach-cmd")),
         ])
     }

@@ -21,6 +21,22 @@ pub(crate) fn read_clipboard_image() -> Option<(Vec<u8>, String)> {
     Some((output, tool.mime_type().to_string()))
 }
 
+/// Try to read UTF-8 text from the system clipboard.
+///
+/// This is the fallback path for terminals that do not deliver bracketed
+/// paste (`Event::Paste`) — notably the legacy Windows console — where a
+/// Ctrl+V press is the only paste signal the TUI receives. Returns `None`
+/// when no text tool is available or the clipboard holds no text.
+pub(crate) fn read_clipboard_text() -> Option<String> {
+    let tool = which_text_tool()?;
+    let output = run_text_tool(&tool)?;
+    let text = String::from_utf8_lossy(&output).into_owned();
+    if text.is_empty() {
+        return None;
+    }
+    Some(text)
+}
+
 /// Check if text looks like a filesystem path that could be auto-attached.
 pub(crate) fn looks_like_file_path(text: &str) -> bool {
     let trimmed = text.trim();
@@ -45,6 +61,8 @@ enum ClipboardTool {
     WlPaste,
     /// pngpaste (macOS, homebrew)
     PngPaste,
+    /// PowerShell Get-Clipboard -Format Image (Windows)
+    PowerShellImage,
 }
 
 impl ClipboardTool {
@@ -53,9 +71,25 @@ impl ClipboardTool {
     }
 }
 
+/// Clipboard text reader, selected per platform.
+#[derive(Debug, Clone)]
+enum TextTool {
+    /// xclip (X11)
+    Xclip,
+    /// wl-paste (Wayland)
+    WlPaste,
+    /// pbpaste (macOS)
+    PbPaste,
+    /// PowerShell Get-Clipboard (Windows)
+    PowerShell,
+}
+
 fn which_clipboard_tool() -> Option<ClipboardTool> {
-    // Check Wayland first (more modern), then X11, then macOS.
-    if which_exists("wl-paste") {
+    // Windows first: the legacy console doesn't deliver bracketed paste, so
+    // the clipboard tool is the only image path. Then Wayland, X11, macOS.
+    if cfg!(windows) {
+        Some(ClipboardTool::PowerShellImage)
+    } else if which_exists("wl-paste") {
         Some(ClipboardTool::WlPaste)
     } else if which_exists("xclip") {
         Some(ClipboardTool::Xclip)
@@ -66,8 +100,25 @@ fn which_clipboard_tool() -> Option<ClipboardTool> {
     }
 }
 
+fn which_text_tool() -> Option<TextTool> {
+    if cfg!(windows) {
+        Some(TextTool::PowerShell)
+    } else if which_exists("wl-paste") {
+        Some(TextTool::WlPaste)
+    } else if which_exists("xclip") {
+        Some(TextTool::Xclip)
+    } else if which_exists("pbpaste") {
+        Some(TextTool::PbPaste)
+    } else {
+        None
+    }
+}
+
 fn which_exists(name: &str) -> bool {
-    Command::new("which")
+    // `which` is absent on Windows; `where` is the equivalent. Both take the
+    // tool name as a positional arg and exit non-zero when it's not found.
+    let locator = if cfg!(windows) { "where" } else { "which" };
+    Command::new(locator)
         .arg(name)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -95,12 +146,62 @@ fn run_clipboard_tool(tool: &ClipboardTool) -> Option<Vec<u8>> {
             c.arg("-");
             c
         }
+        ClipboardTool::PowerShellImage => {
+            // Read the clipboard image and emit raw PNG bytes to stdout.
+            // System.Windows.Forms.Clipboard requires STA; -Sta provides it.
+            let mut c = Command::new("powershell");
+            c.args([
+                "-NoProfile",
+                "-Sta",
+                "-Command",
+                "Add-Type -AssemblyName System.Windows.Forms; \
+                 $img = [System.Windows.Forms.Clipboard]::GetImage(); \
+                 if ($img) { \
+                   $ms = New-Object System.IO.MemoryStream; \
+                   $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); \
+                   $out = [System.Console]::OpenStandardOutput(); \
+                   $bytes = $ms.ToArray(); \
+                   $out.Write($bytes, 0, $bytes.Length); \
+                   $out.Flush() \
+                 }",
+            ]);
+            c
+        }
     };
 
     cmd.stderr(std::process::Stdio::null());
 
     let output = cmd.output().ok()?;
     if !output.status.success() || output.stdout.is_empty() {
+        return None;
+    }
+    Some(output.stdout)
+}
+
+fn run_text_tool(tool: &TextTool) -> Option<Vec<u8>> {
+    let mut cmd = match tool {
+        TextTool::Xclip => {
+            let mut c = Command::new("xclip");
+            c.args(["-selection", "clipboard", "-o"]);
+            c
+        }
+        TextTool::WlPaste => {
+            let mut c = Command::new("wl-paste");
+            c.arg("--no-newline");
+            c
+        }
+        TextTool::PbPaste => Command::new("pbpaste"),
+        TextTool::PowerShell => {
+            let mut c = Command::new("powershell");
+            c.args(["-NoProfile", "-Command", "Get-Clipboard -Raw"]);
+            c
+        }
+    };
+
+    cmd.stderr(std::process::Stdio::null());
+
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
         return None;
     }
     Some(output.stdout)
@@ -137,14 +238,24 @@ mod tests {
     }
 
     #[test]
-    fn which_exists_finds_sh() {
-        // `sh` should exist on any Unix system.
-        assert!(which_exists("sh"));
+    fn which_exists_finds_known_tool() {
+        // A tool present on the host: `cmd` on Windows, `sh` on Unix.
+        let known = if cfg!(windows) { "cmd" } else { "sh" };
+        assert!(which_exists(known));
     }
 
     #[test]
     fn which_exists_rejects_nonsense() {
         assert!(!which_exists("this_tool_definitely_does_not_exist_12345"));
+    }
+
+    #[test]
+    fn text_tool_resolves_on_windows() {
+        // Windows always resolves to the PowerShell reader without probing
+        // PATH, so clipboard text paste has a route even on a bare console.
+        if cfg!(windows) {
+            assert!(matches!(which_text_tool(), Some(TextTool::PowerShell)));
+        }
     }
 
     #[test]
