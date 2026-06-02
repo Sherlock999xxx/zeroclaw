@@ -158,9 +158,9 @@ Nearly all of the above landed after beta-1. The items that are specifically new
 
 This is a beta. The following are known and will be addressed before the full v0.8.0 release:
 
-- **Daemon memory growth from zerocode Code sessions.** Over many hours with multiple open Code (ACP) sessions, daemon RAM grows unbounded — in practice topping out around ~200 MB. Restarting the daemon reclaims it. A fix is planned before the full release.
+- **Daemon resident memory does not fully return to baseline.** Each open zerocode Code (ACP) or Chat session holds its agent and conversation history in RAM; concurrently held sessions are additive, in practice topping out around ~200 MB. glibc arena fragmentation means resident memory does not fully return to the pre-session baseline even after sessions close. Restarting the daemon reclaims it fully.
 - **Daemon restart / reconnect hangs.** Disconnecting the daemon and reconnecting TUIs across a daemon restart can leave a TUI hung. If this happens, quit and relaunch zerocode.
-- **`onboard` is removed for now.** The legacy onboarding command is gone for this beta — use `zeroclaw quickstart` for setup in the meantime.
+- **`onboard` is deprecated.** The legacy onboarding command no longer configures anything — invoking it prints a notice pointing at `zeroclaw quickstart`, and any legacy flags error. Use `zeroclaw quickstart` for setup.
 - **Shell commands can "poison" a single tool call's TTY.** Certain shell invocations can corrupt the pseudo-terminal for *that one tool call* — garbage character output, an unresponsive command — of the kind `stty sane` would normally clear. It's scoped to the affected tool call only: cancelling and issuing another shell tool call runs clean. Not fixed for the beta period (any shell would fail on such commands).
 - **Model-provider fallback is being rewired.** All legacy cross-provider fallback behaviors were intentionally removed for the beta. Today, a failing call retries the **same** model and provider three times before it counts as a complete failure; broader routing/fallback is planned before the full release.
 
