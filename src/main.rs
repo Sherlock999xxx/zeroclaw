@@ -1095,6 +1095,11 @@ async fn run_quickstart_cli(
         // selector still shows `[ ]`.
         channels_visited: bool,
         peer_groups: Vec<zeroclaw_config::presets::QuickstartPeerGroup>,
+        // Mirrors `channels_visited`: peer groups are optional, so an
+        // empty `peer_groups` Vec only counts as satisfied once the
+        // user has actually opened the selector and left it. Until
+        // then the row stays `[ ]` rather than a pre-checked default.
+        peer_groups_visited: bool,
         agent: Option<AgentChoice>,
     }
     enum ProviderChoice {
@@ -1149,6 +1154,9 @@ async fn run_quickstart_cli(
         }
         fn channels_done(&self) -> bool {
             self.channels_visited
+        }
+        fn peer_groups_done(&self) -> bool {
+            self.peer_groups_visited
         }
         fn agent_done(&self) -> bool {
             self.agent
@@ -1328,7 +1336,10 @@ async fn run_quickstart_cli(
                 "{} Channels (0..N)    — {channels_summary}",
                 glyph(form.channels_done())
             ),
-            format!("{} Peer groups        — {peer_groups_summary}", glyph(true)),
+            format!(
+                "{} Peer groups        — {peer_groups_summary}",
+                glyph(form.peer_groups_done())
+            ),
             format!(
                 "{} Agent identity     — {agent_summary}",
                 glyph(form.agent_done())
@@ -1850,6 +1861,7 @@ async fn run_quickstart_cli(
                         continue;
                     }
                     // Done.
+                    form.peer_groups_visited = true;
                     break;
                 }
             }
