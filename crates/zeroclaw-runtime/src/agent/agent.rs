@@ -768,19 +768,18 @@ impl Agent {
 
     fn synthesize_cancelled_tool_results(
         &mut self,
-        tool_calls: &[zeroclaw_providers::ToolCall],
+        completed: Vec<ToolResultMessage>,
+        remaining: &[zeroclaw_providers::ToolCall],
         new_msgs: &mut Vec<ConversationMessage>,
     ) {
-        if tool_calls.is_empty() {
+        let mut results = completed;
+        results.extend(remaining.iter().map(|call| ToolResultMessage {
+            tool_call_id: call.id.clone(),
+            content: "[interrupted by user before this tool produced a result]".to_string(),
+        }));
+        if results.is_empty() {
             return;
         }
-        let results = tool_calls
-            .iter()
-            .map(|call| ToolResultMessage {
-                tool_call_id: call.id.clone(),
-                content: "[interrupted by user before this tool produced a result]".to_string(),
-            })
-            .collect();
         let msg = ConversationMessage::ToolResults(results);
         new_msgs.push(msg.clone());
         self.history.push(msg);
@@ -2745,7 +2744,9 @@ impl Agent {
                 reasoning_content: response.reasoning_content.clone(),
             };
             new_msgs.push(tool_call_msg.clone());
-            self.history.push(tool_call_msg);
+            // History push is deferred: tool_call_msg is pushed atomically with
+            // ToolResults in every exit path below to prevent an orphaned
+            // AssistantToolCalls entry that would cause a 400 from the Responses API.
 
             // When parallel execution is disabled, the turn must look and behave
             // serially end to end: emit a tool-call start event, run that one
@@ -2764,7 +2765,12 @@ impl Agent {
                     if let Some(ref token) = cancel_token
                         && token.is_cancelled()
                     {
-                        self.synthesize_cancelled_tool_results(&response.tool_calls, &mut new_msgs);
+                        self.history.push(tool_call_msg.clone());
+                        self.synthesize_cancelled_tool_results(
+                            vec![],
+                            &response.tool_calls,
+                            &mut new_msgs,
+                        );
                         self.append_streamed_assistant_message_to_history(
                             "[interrupted by user]".to_string(),
                             &mut new_msgs,
@@ -2794,7 +2800,16 @@ impl Agent {
                         tokio::select! {
                             biased;
                             () = token.cancelled() => {
+                                let completed: Vec<ToolResultMessage> = serial_results
+                                    .iter()
+                                    .map(|r| ToolResultMessage {
+                                        tool_call_id: r.tool_call_id.clone().unwrap_or_default(),
+                                        content: r.output.clone(),
+                                    })
+                                    .collect();
+                                self.history.push(tool_call_msg.clone());
                                 self.synthesize_cancelled_tool_results(
+                                    completed,
                                     &response.tool_calls[idx..],
                                     &mut new_msgs,
                                 );
@@ -2852,7 +2867,12 @@ impl Agent {
                     tokio::select! {
                         biased;
                         () = token.cancelled() => {
-                            self.synthesize_cancelled_tool_results(&response.tool_calls, &mut new_msgs);
+                            self.history.push(tool_call_msg.clone());
+                            self.synthesize_cancelled_tool_results(
+                                vec![],
+                                &response.tool_calls,
+                                &mut new_msgs,
+                            );
                             self.append_streamed_assistant_message_to_history(
                                 "[interrupted by user]".to_string(),
                                 &mut new_msgs,
@@ -2889,6 +2909,7 @@ impl Agent {
 
             let formatted = self.tool_dispatcher.format_results(&results);
             new_msgs.push(formatted.clone());
+            self.history.push(tool_call_msg);
             self.history.push(formatted);
             self.trim_history();
         }
@@ -5481,7 +5502,7 @@ mod tests {
         });
 
         let mut new_msgs = Vec::new();
-        agent.synthesize_cancelled_tool_results(&tool_calls, &mut new_msgs);
+        agent.synthesize_cancelled_tool_results(vec![], &tool_calls, &mut new_msgs);
 
         // The synthesized ToolResults must answer every pending call by id, in
         // both the canonical history and the new_messages persistence vec.

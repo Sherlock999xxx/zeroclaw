@@ -205,7 +205,18 @@ pub async fn run(
             if show_help {
                 let mut node = HelpNode::entries(vec![
                     HelpEntry::new(
-                        vec!["Ctrl+←", "Ctrl+→"],
+                        vec![
+                            Box::leak(
+                                crate::keymap::GlobalAction::PaneNavLeft.default_chords()[0]
+                                    .display()
+                                    .into_boxed_str(),
+                            ),
+                            Box::leak(
+                                crate::keymap::GlobalAction::PaneNavRight.default_chords()[0]
+                                    .display()
+                                    .into_boxed_str(),
+                            ),
+                        ],
                         crate::i18n::t("zc-app-help-cycle-mode"),
                     ),
                     HelpEntry::key("Ctrl+R", crate::i18n::t("zc-app-help-reload")),
