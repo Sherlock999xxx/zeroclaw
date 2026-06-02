@@ -450,27 +450,34 @@ interactive_feature_picker() {
   parse_cargo_toml "$toml"
   discover_apps
 
-  # Build three ordered groups: apps, channel-* features, and other
-  # optional features. Each picker row is one entry; section headers are
-  # printed but not numbered.
+  # Split features into channels (channel-*) and everything else. Exclude
+  # only aggregate/meta features and deprecated aliases — they are internal
+  # groupings, not individual toggles:
+  #   default, default-channels, channels-full, ci-all : aggregates
+  #   fantoccini, landlock, metrics                     : deprecated aliases
+  #   embedded-web                                      : build-internal
+  # Every other feature is shown; features in $DEFAULT_FEATURES are
+  # pre-checked so the operator sees the real starting state.
   channel_features=""
   other_features=""
   for feat in $ALL_FEATURES; do
     case "$feat" in
-    default | ci-all | fantoccini | landlock | metrics) continue ;;
+    default | default-channels | channels-full | ci-all | fantoccini | landlock | metrics | embedded-web)
+      continue
+      ;;
     channel-*)
       channel_features="${channel_features:+$channel_features }$feat"
       ;;
-    observability-* | hardware | peripheral-* | sandbox-* | browser-* | probe | rag-pdf | webauthn)
+    *)
       other_features="${other_features:+$other_features }$feat"
       ;;
     esac
   done
 
-  # Apps are pre-checked on by default (currently just the TUI). Features
-  # are off by default.
+  # Apps default-on set (zerocode); features pre-checked from the crate's
+  # `default = [...]` list so defaults render as ✓.
   selected_apps="$DEFAULT_APPS"
-  selected_features=""
+  selected_features=$(printf '%s' "$DEFAULT_FEATURES" | tr ',' ' ')
 
   # Flat entry list, in display order: apps, then features, then channels.
   # Each entry is tagged "app:" or "feat:" so toggling routes to the right
@@ -484,7 +491,7 @@ interactive_feature_picker() {
   echo >&2
   printf "  %s\n" "$(bold "Select apps and optional features:")" >&2
   printf "  %s\n" "Type the numbers to toggle, blank line to confirm." >&2
-  printf "  %s\n" "Default features (agent runtime, gateway, …) are always on." >&2
+  printf "  %s\n" "Checked (✓) items are on by default — uncheck to drop them." >&2
   echo >&2
 
   while :; do
@@ -896,10 +903,14 @@ See all available features:
     [ -z "$WITH_GATEWAY" ]; then
     discover_apps
     interactive_feature_picker "Cargo.toml"
-    if [ -n "$PICKED_FEATURES" ]; then
-      USER_FEATURES="$PICKED_FEATURES"
-      info "Picked features: $USER_FEATURES"
-    fi
+    # The picker pre-checks the crate defaults and lets the operator add or
+    # remove any of them, so its result is the authoritative, complete
+    # feature set — build with --no-default-features and exactly what was
+    # checked. This makes unchecking a default (e.g. gateway) actually drop
+    # it instead of silently leaving the default applied.
+    CARGO_FLAGS="--no-default-features"
+    USER_FEATURES="$PICKED_FEATURES"
+    info "Picked features: ${USER_FEATURES:-<none>}"
     # Picker always resolves the app set explicitly (selected or none).
     USER_APPS="${PICKED_APPS:-none}"
     info "Picked apps: $USER_APPS"
