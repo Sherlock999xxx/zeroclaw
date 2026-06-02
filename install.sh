@@ -26,6 +26,12 @@ bold() { printf "${BOLD}%s${RESET}" "$*"; }
 
 TUI_BIN_NAME="zerocode"
 
+# Apps installed by default (the rest are discovered and listed but off
+# until selected via --apps or the interactive picker). Intentionally a
+# fixed list: zeroclaw-desktop needs the Tauri toolchain + webview deps,
+# so it ships off-by-default.
+DEFAULT_APPS="zerocode"
+
 # ── Parse Cargo.toml (source of truth) ────────────────────────────
 
 parse_cargo_toml() {
@@ -39,6 +45,45 @@ parse_cargo_toml() {
   DEFAULT_FEATURES=$(awk '/^default *= *\[/,/\]/{s=$0; while(match(s,/"[^"]+"/)){print substr(s,RSTART+1,RLENGTH-2); s=substr(s,RSTART+RLENGTH)}}' "$toml" | paste -sd, -)
 
   ALL_FEATURES=$(awk '/^\[features\]/{p=1;next} /^\[/{p=0} p && /^[a-z][a-z0-9_-]* *=/{sub(/ *=.*/,"");print}' "$toml")
+}
+
+# ── App registry ──────────────────────────────────────────────────
+#
+# Apps are standalone binaries under `apps/<dir>` installed via
+# `cargo install --path apps/<dir>` — they are NOT cargo features of the
+# main binary. The installable set is discovered from `apps/*/Cargo.toml`
+# so adding an app surfaces here without editing this script. `zerocode`
+# (the TUI) is the default app. Tauri-based apps (e.g. zeroclaw-desktop)
+# need the Tauri toolchain + system webview deps and are excluded from the
+# simple `cargo install` path.
+discover_apps() {
+  APPS=""
+  for dir in apps/*/; do
+    [ -f "${dir}Cargo.toml" ] || continue
+    name=$(awk -F'"' '/^name *=/{print $2; exit}' "${dir}Cargo.toml")
+    [ -n "$name" ] || continue
+    APPS="${APPS:+$APPS }$name"
+  done
+}
+
+# Resolve the app directory for a given app/bin name.
+app_dir_for() {
+  for dir in apps/*/; do
+    [ -f "${dir}Cargo.toml" ] || continue
+    name=$(awk -F'"' '/^name *=/{print $2; exit}' "${dir}Cargo.toml")
+    if [ "$name" = "$1" ]; then
+      printf '%s' "${dir%/}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+validate_app() {
+  case " $APPS " in
+  *" $1 "*) return 0 ;;
+  *) die "Unknown app '$1'. Installable apps: $APPS" ;;
+  esac
 }
 
 # ── Feature validation ────────────────────────────────────────────
@@ -285,9 +330,10 @@ Options:
                        'full' (default features). Source builds only.
   --minimal            Alias for --preset minimal
   --features X,Y       Select specific features — source only (comma-separated)
+  --apps X,Y           Select apps to install (e.g. zerocode); "none" to skip all
   --with-gateway       Force the gateway feature on (overrides preset/feature default)
   --without-gateway    Force the gateway feature off (overrides preset/feature default)
-  --without-tui        Skip building the TUI ($TUI_BIN_NAME)
+  --without-tui        Skip building the TUI ($TUI_BIN_NAME) [alias for --apps without it]
   --list-features      Print all available features and exit
   --prefix PATH        Install everything under PATH (default: \$HOME)
                        Sets CARGO_HOME, RUSTUP_HOME, source checkout, config
@@ -402,38 +448,68 @@ onboarding_needed() {
 interactive_feature_picker() {
   toml="$1"
   parse_cargo_toml "$toml"
+  discover_apps
 
-  picker_features=""
+  # Build three ordered groups: apps, channel-* features, and other
+  # optional features. Each picker row is one entry; section headers are
+  # printed but not numbered.
+  channel_features=""
+  other_features=""
   for feat in $ALL_FEATURES; do
     case "$feat" in
     default | ci-all | fantoccini | landlock | metrics) continue ;;
-    channel-* | observability-* | hardware | peripheral-* | sandbox-* | browser-* | probe | rag-pdf | webauthn)
-      picker_features="${picker_features:+$picker_features }$feat"
+    channel-*)
+      channel_features="${channel_features:+$channel_features }$feat"
+      ;;
+    observability-* | hardware | peripheral-* | sandbox-* | browser-* | probe | rag-pdf | webauthn)
+      other_features="${other_features:+$other_features }$feat"
       ;;
     esac
   done
-  # TUI is a separate binary, not a cargo feature — append as pseudo-entry
-  picker_features="${picker_features:+$picker_features }$TUI_BIN_NAME"
 
-  # TUI is pre-checked (on by default)
-  selected="$TUI_BIN_NAME"
-  # Prompt-side output goes to stderr so the picker's stdout — captured
-  # by the caller's `PICKED=$(interactive_feature_picker …)` — only
-  # carries the final selection. Without this redirect every prompt
-  # silently disappears into the variable and the user sees a frozen
-  # terminal.
+  # Apps are pre-checked on by default (currently just the TUI). Features
+  # are off by default.
+  selected_apps="$DEFAULT_APPS"
+  selected_features=""
+
+  # Flat entry list, in display order: apps, then features, then channels.
+  # Each entry is tagged "app:" or "feat:" so toggling routes to the right
+  # selection set.
+  entries=""
+  for a in $APPS; do entries="${entries:+$entries }app:$a"; done
+  for f in $other_features; do entries="${entries:+$entries }feat:$f"; done
+  for c in $channel_features; do entries="${entries:+$entries }feat:$c"; done
+
+  # Prompt-side output goes to stderr; the result is returned via globals.
   echo >&2
-  printf "  %s\n" "$(bold "Optional features (off by default):")" >&2
+  printf "  %s\n" "$(bold "Select apps and optional features:")" >&2
   printf "  %s\n" "Type the numbers to toggle, blank line to confirm." >&2
   printf "  %s\n" "Default features (agent runtime, gateway, …) are always on." >&2
   echo >&2
 
   while :; do
     i=1
-    for feat in $picker_features; do
+    last_section=""
+    for entry in $entries; do
+      kind=${entry%%:*}
+      name=${entry#*:}
+      # Section header when the group changes.
+      section=""
+      case "$kind" in
+      app) section="Apps (--apps)" ;;
+      feat) case "$name" in channel-*) section="Channels (--features)" ;; *) section="Features (--features)" ;; esac ;;
+      esac
+      if [ "$section" != "$last_section" ]; then
+        [ -n "$last_section" ] && echo >&2
+        printf "  %s\n" "$(bold "$section:")" >&2
+        last_section="$section"
+      fi
       mark=" "
-      case " $selected " in *" $feat "*) mark="✓" ;; esac
-      printf "    [%2d] %s %s\n" "$i" "$mark" "$feat" >&2
+      case "$kind" in
+      app) case " $selected_apps " in *" $name "*) mark="✓" ;; esac ;;
+      feat) case " $selected_features " in *" $name "*) mark="✓" ;; esac ;;
+      esac
+      printf "    [%2d] %s %s\n" "$i" "$mark" "$name" >&2
       i=$((i + 1))
     done
     echo >&2
@@ -445,12 +521,21 @@ interactive_feature_picker() {
       '' | *[!0-9]*) continue ;;
       esac
       idx=1
-      for feat in $picker_features; do
+      for entry in $entries; do
         if [ "$idx" -eq "$n" ]; then
-          case " $selected " in
-          *" $feat "*) selected=$(printf '%s' "$selected" | tr ' ' '\n' | grep -vx "$feat" | paste -sd' ' -) ;;
-          *) selected="${selected:+$selected }$feat" ;;
-          esac
+          kind=${entry%%:*}
+          name=${entry#*:}
+          if [ "$kind" = app ]; then
+            case " $selected_apps " in
+            *" $name "*) selected_apps=$(printf '%s' "$selected_apps" | tr ' ' '\n' | grep -vx "$name" | paste -sd' ' -) ;;
+            *) selected_apps="${selected_apps:+$selected_apps }$name" ;;
+            esac
+          else
+            case " $selected_features " in
+            *" $name "*) selected_features=$(printf '%s' "$selected_features" | tr ' ' '\n' | grep -vx "$name" | paste -sd' ' -) ;;
+            *) selected_features="${selected_features:+$selected_features }$name" ;;
+            esac
+          fi
           break
         fi
         idx=$((idx + 1))
@@ -458,7 +543,8 @@ interactive_feature_picker() {
     done
   done
 
-  printf '%s' "$selected" | tr ' ' ','
+  PICKED_FEATURES=$(printf '%s' "$selected_features" | tr ' ' ',')
+  PICKED_APPS=$(printf '%s' "$selected_apps" | tr ' ' ',')
 }
 
 # ── Web dashboard build for source installs ──────────────────────
@@ -531,6 +617,7 @@ INSTALL_MODE="" # ""=ask, "prebuilt"=force prebuilt, "source"=force source
 PRESET=""       # ""=unset, "minimal"=alias for --minimal, "full"=default-features
 WITH_GATEWAY="" # ""=unset (preset/feature default applies), "true"/"false"=explicit toggle
 WITHOUT_TUI=""  # ""=unset (default: install TUI), "true"=skip TUI
+USER_APPS=""    # ""=unset (default apps), "none"=skip all, or comma list (e.g. "zerocode")
 
 # Support legacy env var
 if [ -n "${ZEROCLAW_CARGO_FEATURES:-}" ]; then
@@ -560,6 +647,13 @@ while [ $# -gt 0 ]; do
     fi
     shift
     USER_FEATURES="${USER_FEATURES:+$USER_FEATURES,}$1"
+    ;;
+  --apps)
+    if [ $# -lt 2 ]; then
+      die "Missing value for --apps. Expected: --apps zerocode[,...] or --apps none"
+    fi
+    shift
+    USER_APPS="${USER_APPS:+$USER_APPS,}$1"
     ;;
   --with-gateway) WITH_GATEWAY="true" ;;
   --without-gateway) WITH_GATEWAY="false" ;;
@@ -621,10 +715,11 @@ fi
 
 # ── Decide: pre-built or source ───────────────────────────────────
 
-# --minimal, --features, --without-gateway, or --preset full imply source.
-# Prebuilt binaries always ship with default features, so any flag that
-# changes the feature set must force a source build.
-if [ "$MINIMAL" = true ] || [ -n "$USER_FEATURES" ] ||
+# --minimal, --features, --apps, --without-gateway, or --preset full imply
+# source. Prebuilt binaries always ship with default features and no apps,
+# so any flag that changes the feature set or selects apps must force a
+# source build.
+if [ "$MINIMAL" = true ] || [ -n "$USER_FEATURES" ] || [ -n "$USER_APPS" ] ||
   [ "$WITH_GATEWAY" = "false" ] || [ "$PRESET" = "full" ]; then
   INSTALL_MODE="source"
 fi
@@ -789,26 +884,25 @@ See all available features:
     esac
   fi
 
-  # Interactive feature picker — only when the operator did not pin
-  # features via the CLI and is running under a TTY. Skipped on
-  # `--minimal`, `--preset`, `--features`, `--with-gateway` /
+  # Interactive picker — only when the operator did not pin features or
+  # apps via the CLI and is running under a TTY. Skipped on `--minimal`,
+  # `--preset`, `--features`, `--apps`, `--with-gateway` /
   # `--without-gateway`, and any non-interactive run (curl | bash).
   if [ -t 0 ] &&
     [ "$MINIMAL" != true ] &&
     [ -z "$USER_FEATURES" ] &&
+    [ -z "$USER_APPS" ] &&
     [ -z "$PRESET" ] &&
     [ -z "$WITH_GATEWAY" ]; then
-    PICKED=$(interactive_feature_picker "Cargo.toml")
-    # Extract TUI preference (pseudo-entry, not a cargo feature)
-    case ",$PICKED," in
-    *,"$TUI_BIN_NAME",*) ;;
-    *) WITHOUT_TUI=true ;;
-    esac
-    PICKED=$(printf '%s' "$PICKED" | tr ',' '\n' | grep -vx "$TUI_BIN_NAME" | paste -sd, -)
-    if [ -n "$PICKED" ]; then
-      USER_FEATURES="$PICKED"
+    discover_apps
+    interactive_feature_picker "Cargo.toml"
+    if [ -n "$PICKED_FEATURES" ]; then
+      USER_FEATURES="$PICKED_FEATURES"
       info "Picked features: $USER_FEATURES"
     fi
+    # Picker always resolves the app set explicitly (selected or none).
+    USER_APPS="${PICKED_APPS:-none}"
+    info "Picked apps: $USER_APPS"
   fi
 
   if [ -n "$USER_FEATURES" ]; then
@@ -902,36 +996,48 @@ See all available features:
     fi
   fi
 
-  # ── TUI (requires agent-runtime for daemon RPC) ──────────────────
-  # The TUI connects to zeroclaw-runtime's RPC server. Without agent-runtime,
-  # there's no daemon to connect to — skip the TUI build.
+  # ── Apps (standalone binaries under apps/<dir>) ──────────────────
+  # Apps connect to zeroclaw-runtime's RPC server, so they need the
+  # agent-runtime feature. Without it there's no daemon — skip apps.
+  discover_apps
 
-  WANT_TUI=true
-  if [ "$WITHOUT_TUI" = true ]; then
-    WANT_TUI=false
+  # Resolve the app set: explicit --apps list, "none" to skip, or the
+  # full installable set by default. --without-tui is back-compat for
+  # dropping the TUI app from the default set.
+  if [ "$USER_APPS" = "none" ]; then
+    WANT_APPS=""
+  elif [ -n "$USER_APPS" ]; then
+    WANT_APPS=$(printf '%s' "$USER_APPS" | tr ',[:space:]' '\n' | grep -v '^$' | sort -u | paste -sd' ' -)
+    for app in $WANT_APPS; do validate_app "$app"; done
   else
-    # agent-runtime is a default feature. If defaults are stripped
-    # (--minimal, --without-gateway), check whether it was re-added.
-    case "$CARGO_FLAGS" in
-    *--no-default-features*)
-      case ",$USER_FEATURES," in
-      *,agent-runtime,*) ;;
-      *) WANT_TUI=false ;;
-      esac
-      ;;
-    esac
-  fi
-
-  if [ "$WANT_TUI" = true ]; then
-    if [ "$DRY_RUN" = true ]; then
-      info "[dry-run] Would run: cargo install --path apps/$TUI_BIN_NAME --locked --force"
-    else
-      echo
-      printf "%s\n" "$(bold "Building $TUI_BIN_NAME")"
-      echo
-      cargo install --path apps/$TUI_BIN_NAME --locked --force
+    WANT_APPS="$DEFAULT_APPS"
+    if [ "$WITHOUT_TUI" = true ]; then
+      WANT_APPS=$(printf '%s' "$WANT_APPS" | tr ' ' '\n' | grep -vx "$TUI_BIN_NAME" | paste -sd' ' -)
     fi
   fi
+
+  # agent-runtime is a default feature; if defaults are stripped and it
+  # wasn't re-added, no daemon exists to back the apps.
+  case "$CARGO_FLAGS" in
+  *--no-default-features*)
+    case ",$USER_FEATURES," in
+    *,agent-runtime,*) ;;
+    *) WANT_APPS="" ;;
+    esac
+    ;;
+  esac
+
+  for app in $WANT_APPS; do
+    app_path=$(app_dir_for "$app") || continue
+    if [ "$DRY_RUN" = true ]; then
+      info "[dry-run] Would run: cargo install --path $app_path --locked --force"
+    else
+      echo
+      printf "%s\n" "$(bold "Building $app")"
+      echo
+      cargo install --path "$app_path" --locked --force
+    fi
+  done
 
   # ── Summary ───────────────────────────────────────────────────────
 
