@@ -412,18 +412,40 @@ impl ZerocodePane {
 
     fn draw_connection(&self, frame: &mut Frame, area: Rect) {
         if let Some(edit) = &self.conn_edit {
+            use ratatui::layout::{Constraint, Direction, Layout};
             let title = format!(" {} ", crate::i18n::t(edit.field.fluent_key()));
             let hint = match edit.field {
                 ConnField::SkipVerify => crate::i18n::t("zc-zerocode-conn-edit-bool"),
                 ConnField::SkipVerifyRoutes => crate::i18n::t("zc-zerocode-conn-edit-routes"),
                 ConnField::Uri => crate::i18n::t("zc-zerocode-conn-edit-text"),
             };
-            let body = format!("{}\n\n{}", edit.buf, hint);
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(1)])
+                .split(area);
+
+            let buf_lines: Vec<&str> = edit.buf.split('\n').collect();
+            let lines: Vec<Line> = buf_lines
+                .iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    let text = if i + 1 == buf_lines.len() {
+                        format!("{l}█")
+                    } else {
+                        (*l).to_string()
+                    };
+                    Line::from(Span::styled(text, theme::input_style()))
+                })
+                .collect();
             frame.render_widget(
-                Paragraph::new(body)
+                Paragraph::new(lines)
                     .block(theme::panel_block(&title))
                     .wrap(Wrap { trim: false }),
-                area,
+                rows[0],
+            );
+            frame.render_widget(
+                Paragraph::new(Span::styled(hint, theme::dim_style())),
+                rows[1],
             );
             return;
         }
