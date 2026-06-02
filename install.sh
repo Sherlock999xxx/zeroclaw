@@ -42,9 +42,48 @@ parse_cargo_toml() {
   MSRV=$(awk '/^\[workspace\.package\]/{p=1;next} /^\[/{p=0} p && /^rust-version *=/{split($0,a,"\"");print a[2]}' "$toml")
   EDITION=$(awk '/^\[workspace\.package\]/{p=1;next} /^\[/{p=0} p && /^edition *=/{split($0,a,"\"");print a[2]}' "$toml")
 
-  DEFAULT_FEATURES=$(awk '/^default *= *\[/,/\]/{s=$0; while(match(s,/"[^"]+"/)){print substr(s,RSTART+1,RLENGTH-2); s=substr(s,RSTART+RLENGTH)}}' "$toml" | paste -sd, -)
+  DEFAULT_FEATURES=$(feature_members "$toml" default | paste -sd, -)
 
   ALL_FEATURES=$(awk '/^\[features\]/{p=1;next} /^\[/{p=0} p && /^[a-z][a-z0-9_-]* *=/{sub(/ *=.*/,"");print}' "$toml")
+}
+
+# Print the members of one feature from `[features]`, one per line. Spans
+# multi-line array literals. The single source of truth for reading the
+# feature graph out of Cargo.toml.
+feature_members() {
+  awk -v key="$2" '
+    $0 ~ "^" key " *= *\\[" {p=1}
+    p {while (match($0,/"[^"]+"/)) {print substr($0,RSTART+1,RLENGTH-2); $0=substr($0,RSTART+RLENGTH)}}
+    p && /\]/ {exit}
+  ' "$1"
+}
+
+# Aggregate/meta features and deprecated aliases: internal groupings, not
+# individual picker rows. The single source of truth for what to skip when
+# rendering rows and what to expand when resolving `default`.
+NON_ROW_FEATURES="default default-channels channels-full ci-all fantoccini landlock metrics embedded-web"
+
+is_aggregate() {
+  case " $NON_ROW_FEATURES " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
+# Expand `default` to the picker rows it implies: walk aggregates
+# (default-channels, etc.) until only real feature names remain. Reads the
+# graph from Cargo.toml — no hardcoded channel list.
+expand_default_features() {
+  local toml="$1" queue leaf=" " f members
+  queue=$(printf '%s' "$DEFAULT_FEATURES" | tr ',' ' ')
+  while [ -n "$queue" ]; do
+    f=${queue%% *}; queue=${queue#"$f"}; queue=${queue# }
+    case "$f" in dep:* | */*) continue ;; esac
+    if is_aggregate "$f"; then
+      members=$(feature_members "$toml" "$f" | tr '\n' ' ')
+      queue="$queue $members"
+    else
+      case "$leaf" in *" $f "*) ;; *) leaf="$leaf$f " ;; esac
+    fi
+  done
+  printf '%s' "$leaf"
 }
 
 # ── App registry ──────────────────────────────────────────────────
@@ -450,21 +489,14 @@ interactive_feature_picker() {
   parse_cargo_toml "$toml"
   discover_apps
 
-  # Split features into channels (channel-*) and everything else. Exclude
-  # only aggregate/meta features and deprecated aliases — they are internal
-  # groupings, not individual toggles:
-  #   default, default-channels, channels-full, ci-all : aggregates
-  #   fantoccini, landlock, metrics                     : deprecated aliases
-  #   embedded-web                                      : build-internal
-  # Every other feature is shown; features in $DEFAULT_FEATURES are
-  # pre-checked so the operator sees the real starting state.
+  # Split features into channels (channel-*) and everything else. Skip
+  # aggregate/meta features (see $NON_ROW_FEATURES) — they are internal
+  # groupings, not individual toggles. Defaults are pre-checked below.
   channel_features=""
   other_features=""
   for feat in $ALL_FEATURES; do
+    if is_aggregate "$feat"; then continue; fi
     case "$feat" in
-    default | default-channels | channels-full | ci-all | fantoccini | landlock | metrics | embedded-web)
-      continue
-      ;;
     channel-*)
       channel_features="${channel_features:+$channel_features }$feat"
       ;;
@@ -475,9 +507,10 @@ interactive_feature_picker() {
   done
 
   # Apps default-on set (zerocode); features pre-checked from the crate's
-  # `default = [...]` list so defaults render as ✓.
+  # `default = [...]` list, expanded transitively so aggregate defaults like
+  # `default-channels` pre-check their leaf channel-* rows.
   selected_apps="$DEFAULT_APPS"
-  selected_features=$(printf '%s' "$DEFAULT_FEATURES" | tr ',' ' ')
+  selected_features=$(expand_default_features "$toml")
 
   # Flat entry list, in display order: apps, then features, then channels.
   # Each entry is tagged "app:" or "feat:" so toggling routes to the right
