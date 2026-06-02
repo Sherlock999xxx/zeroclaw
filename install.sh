@@ -1114,16 +1114,16 @@ if [ "$SKIP_ONBOARD" = false ] && [ "$DRY_RUN" != true ] && [ -f "$BIN" ]; then
   # Skip the prompt entirely when the operator already has a configured
   # ZeroClaw — re-installs should not re-prompt.
   if ! onboarding_needed; then
-    info "Existing ZeroClaw config detected at $PREFIX/.zeroclaw/config.toml — skipping onboard prompt."
-    info "Run 'zeroclaw onboard' to reconfigure."
+    info "Existing ZeroClaw config detected at $PREFIX/.zeroclaw/config.toml — skipping setup prompt."
+    info "Run 'zeroclaw quickstart' to reconfigure."
   elif [ -t 0 ]; then
-    # 3-way onboarding choice. Bare Enter accepts the [1] CLI default;
+    # 3-way setup choice. Bare Enter accepts the [1] CLI quickstart default;
     # option [2] foregrounds the daemon so the operator can finish in the
     # browser and Ctrl+C to return; [3] skips and prints a follow-up hint.
     # Non-TTY runs fall through to the silent skip in the else branch.
     echo
-    printf "%s\n" "$(bold "ZeroClaw installed. How would you like to complete onboarding?")"
-    printf "  [1] CLI/TUI  (zeroclaw onboard)\n"
+    printf "%s\n" "$(bold "ZeroClaw installed. How would you like to complete setup?")"
+    printf "  [1] CLI quickstart  (zeroclaw quickstart)\n"
     printf "  [2] Open gateway in browser (zeroclaw daemon + dashboard)\n"
     printf "  [3] Skip for now\n"
     printf "  Choice [1-3, default 1]: "
@@ -1131,27 +1131,37 @@ if [ "$SKIP_ONBOARD" = false ] && [ "$DRY_RUN" != true ] && [ -f "$BIN" ]; then
     case "${onboard_choice:-1}" in
     1 | "")
       echo
-      "$BIN" onboard || warn "Onboard wizard exited with an error — run 'zeroclaw onboard' manually"
+      "$BIN" quickstart || warn "Quickstart exited with an error — run 'zeroclaw quickstart' manually"
       ;;
     2)
       echo
-      info "Starting gateway daemon for browser-based onboarding..."
+      info "Starting gateway daemon for browser-based setup..."
       info "Open the dashboard in your browser; pair with the code shown in logs."
       info "Stop the daemon with Ctrl+C when done; then run 'zeroclaw service install' for always-on."
       "$BIN" daemon || warn "Daemon exited with an error — run 'zeroclaw daemon' manually"
       ;;
     3)
-      info "Skipped onboarding. Run 'zeroclaw onboard' (CLI) or 'zeroclaw daemon' (browser) when ready."
+      info "Skipped setup. Run 'zeroclaw quickstart' (CLI) or 'zeroclaw daemon' (browser) when ready."
       ;;
     *)
-      warn "Unknown choice '$onboard_choice' — skipping. Run 'zeroclaw onboard' to configure."
+      warn "Unknown choice '$onboard_choice' — skipping. Run 'zeroclaw quickstart' to configure."
       ;;
     esac
   else
-    info "Non-interactive — skipping onboard prompt. Run 'zeroclaw onboard' to configure."
+    info "Non-interactive — skipping setup prompt. Run 'zeroclaw quickstart' to configure."
   fi
 fi
 
 echo
-info "Done. Run $(bold "zeroclaw agent") to start chatting."
+# Next-step hint, smartest-first: if zerocode (the TUI) was installed, that's
+# the best place to start; otherwise point at the daemon + web dashboard, then
+# fall back to a one-off CLI agent run.
+if [ -f "$CARGO_HOME/bin/$TUI_BIN_NAME" ]; then
+  info "Done. Run $(bold "$TUI_BIN_NAME") to launch the terminal UI and start working."
+elif [ -f "$CARGO_HOME/bin/zeroclaw" ] && "$CARGO_HOME/bin/zeroclaw" --help 2>/dev/null | grep -q '\bdaemon\b'; then
+  info "Done. Run $(bold "zeroclaw daemon") for the always-on daemon + web dashboard,"
+  info "or $(bold "zeroclaw agent") for a one-off CLI chat."
+else
+  info "Done. Run $(bold "zeroclaw agent") to start chatting."
+fi
 echo
