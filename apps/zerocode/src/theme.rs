@@ -133,9 +133,10 @@ const TERMINAL: Theme = Theme {
     background: Color::Reset,
 };
 
-pub(crate) const DEFAULT_THEME_NAME: &str = "icy_blue";
+pub(crate) const DEFAULT_THEME_NAME: &str = "terminal";
 
 pub(crate) const THEMES: &[(&str, Theme)] = &[
+    ("terminal", TERMINAL),
     ("icy_blue", ICY_BLUE),
     ("solarized_dark", SOLARIZED_DARK),
     ("solarized_light", SOLARIZED_LIGHT),
@@ -144,7 +145,6 @@ pub(crate) const THEMES: &[(&str, Theme)] = &[
     ("gruvbox_dark", GRUVBOX_DARK),
     ("dracula", DRACULA),
     ("nord", NORD),
-    ("terminal", TERMINAL),
 ];
 
 pub(crate) fn theme_by_name(name: &str) -> Option<Theme> {
@@ -155,7 +155,7 @@ pub(crate) fn theme_names() -> impl Iterator<Item = &'static str> {
     THEMES.iter().map(|(n, _)| *n)
 }
 
-static ACTIVE: RwLock<Theme> = RwLock::new(ICY_BLUE);
+static ACTIVE: RwLock<Theme> = RwLock::new(TERMINAL);
 
 pub(crate) fn set_active(theme: Theme) {
     if let Ok(mut guard) = ACTIVE.write() {
@@ -164,11 +164,11 @@ pub(crate) fn set_active(theme: Theme) {
 }
 
 pub(crate) fn active() -> Theme {
-    ACTIVE.read().map(|g| *g).unwrap_or(ICY_BLUE)
+    ACTIVE.read().map(|g| *g).unwrap_or(TERMINAL)
 }
 
 pub(crate) fn default_theme() -> Theme {
-    ICY_BLUE
+    TERMINAL
 }
 
 pub(crate) fn fg_primary() -> Color {
