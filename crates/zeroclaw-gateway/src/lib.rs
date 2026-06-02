@@ -629,7 +629,9 @@ pub async fn run_gateway(
                         ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
                             .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
                             .with_attrs(::serde_json::json!({"display_addr": display_addr})),
-                        "Gateway booting without a configured model. Visit http:///quickstart to complete browser quickstart. Chat endpoints will return 503 needs_quickstart until at least one [providers.models.<type>.<alias>] model = \"...\" is set."
+                        &format!(
+                            "Gateway booting without a configured model. Visit http://{display_addr}/quickstart to complete browser quickstart. Chat endpoints will return 503 needs_quickstart until at least one [providers.models.<type>.<alias>] model = \"...\" is set."
+                        )
                     );
                     String::new()
                 }
@@ -809,7 +811,9 @@ pub async fn run_gateway(
                 INFO,
                 ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
                     .with_attrs(::serde_json::json!({"display_addr": display_addr})),
-                "Gateway: no [agents.<alias>] configured — booting with empty tools registry. Visit http:///quickstart to add an agent."
+                &format!(
+                    "Gateway: no [agents.<alias>] configured — booting with empty tools registry. Visit http://{display_addr}/quickstart to add an agent."
+                )
             );
             (Vec::new(), None)
         }

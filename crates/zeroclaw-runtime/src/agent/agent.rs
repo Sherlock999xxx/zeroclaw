@@ -1658,7 +1658,7 @@ impl Agent {
             if let ApprovalResponse::ReplaceWith(replacement) = &decision {
                 return ToolExecutionResult {
                     name: tool_name,
-                    output: replacement.clone(),
+                    output: crate::approval::sanitize_tool_replacement(replacement),
                     success: true,
                     tool_call_id: call.tool_call_id.clone(),
                 };

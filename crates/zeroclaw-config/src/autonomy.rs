@@ -43,7 +43,9 @@ impl crate::config::HasPropKind for DelegationMode {
 ///
 /// Wire format: `{ mode = "forbidden" }` or `{ mode = "allow" }`. The struct
 /// shape lets the prop layer expose `mode` as an editable enum leaf.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, zeroclaw_macros::Configurable)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, zeroclaw_macros::Configurable,
+)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct DelegationPolicy {
     #[serde(default)]
@@ -133,7 +135,10 @@ mod enum_variant_tests {
             .find(|f| f.name.ends_with("delegation_policy.mode"))
             .expect("mode leaf missing");
         let variants = mode.enum_variants.map(|f| f()).unwrap_or_default();
-        assert!(!variants.is_empty(), "enum_variants empty — UI would render as text");
+        assert!(
+            !variants.is_empty(),
+            "enum_variants empty — UI would render as text"
+        );
         assert!(variants.iter().any(|v| v == "forbidden"));
         assert!(variants.iter().any(|v| v == "allow"));
     }

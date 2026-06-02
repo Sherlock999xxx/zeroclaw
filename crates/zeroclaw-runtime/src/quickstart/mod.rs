@@ -246,7 +246,16 @@ pub async fn apply_with_surface(
         );
         return Err(errors);
     }
-    let applied = applied.expect("apply_into yields Some when errors is empty");
+    let applied = match applied {
+        Some(applied) => applied,
+        None => {
+            return Err(vec![QuickstartError::new(
+                QuickstartStep::Agent,
+                "apply",
+                "internal error: apply_into returned no result despite no validation errors",
+            )]);
+        }
+    };
 
     config
         .set_prop_persistent("onboard_state.quickstart_completed", "true")

@@ -2149,11 +2149,7 @@ mod tests {
 
     #[test]
     fn schema_lists_agent_names() {
-        let tool = DelegateTool::new(
-            sample_agents(),
-            None,
-            security_allowing(),
-        );
+        let tool = DelegateTool::new(sample_agents(), None, security_allowing());
         let schema = tool.parameters_schema();
         let desc = schema["properties"]["agent"]["description"]
             .as_str()
@@ -2175,7 +2171,8 @@ mod tests {
         assert!(desc.contains("coder"));
 
         // When delegation is forbidden, the roster is empty.
-        let forbidden = DelegateTool::new(sample_agents(), None, Arc::new(SecurityPolicy::default()));
+        let forbidden =
+            DelegateTool::new(sample_agents(), None, Arc::new(SecurityPolicy::default()));
         let forbidden_schema = forbidden.parameters_schema();
         let forbidden_desc = forbidden_schema["properties"]["agent"]["description"]
             .as_str()
@@ -2238,12 +2235,8 @@ mod tests {
     fn schema_excludes_caller_alias_from_roster() {
         // An agent must never be offered itself as a delegation target,
         // even when the delegation_policy would otherwise permit it.
-        let tool = DelegateTool::new(
-            sample_agents(),
-            None,
-            security_allowing(),
-        )
-        .with_caller_alias("researcher");
+        let tool = DelegateTool::new(sample_agents(), None, security_allowing())
+            .with_caller_alias("researcher");
         let schema = tool.parameters_schema();
         let desc = schema["properties"]["agent"]["description"]
             .as_str()

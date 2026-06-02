@@ -409,11 +409,11 @@ enum Commands {
         section: Option<zeroclaw_config::sections::Section>,
 
         /// Skip interactive prompts; read from --api-key/--model-provider/--model/--memory.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         quick: bool,
 
         /// Force the dialoguer CLI backend instead of the default ratatui TUI.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         cli: bool,
 
         /// Deprecated: TUI is now the default. Accepted as a no-op for one release.
@@ -421,28 +421,28 @@ enum Commands {
         tui: bool,
 
         /// Don't ask "keep stored secret?" — always re-prompt.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         force: bool,
 
         /// Back up existing config and start from defaults.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         reinit: bool,
 
         /// API key for model_provider configuration.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         api_key: Option<String>,
 
         /// ModelProvider name. Used as the type key for the synthesized
         /// `[model_providers.<type>.default]` entry.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         model_provider: Option<String>,
 
         /// Model ID override.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         model: Option<String>,
 
         /// Memory backend (sqlite, lucid, markdown, none).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         memory: Option<String>,
 
         // Deprecated legacy flags — parsed for one release, each maps to a

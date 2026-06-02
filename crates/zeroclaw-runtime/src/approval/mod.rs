@@ -35,6 +35,32 @@ pub enum ApprovalResponse {
     ReplaceWith(String),
 }
 
+/// Maximum length of an operator-supplied `DenyWithEdit` / `ReplaceWith`
+/// replacement, in bytes. The replacement is operator-authored but still
+/// untrusted input that becomes a tool result fed back to the model — cap it
+/// so a runaway paste can't blow up the context window.
+pub const MAX_REPLACEMENT_LEN: usize = 64 * 1024;
+
+/// Sanitize an operator-supplied tool-result replacement before it is fed back
+/// to the model: drop control characters (except `\n`, `\r`, `\t`) that could
+/// corrupt rendering or smuggle terminal escapes, and truncate to
+/// [`MAX_REPLACEMENT_LEN`] on a char boundary.
+#[must_use]
+pub fn sanitize_tool_replacement(replacement: &str) -> String {
+    let cleaned: String = replacement
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
+        .collect();
+    if cleaned.len() <= MAX_REPLACEMENT_LEN {
+        return cleaned;
+    }
+    let mut end = MAX_REPLACEMENT_LEN;
+    while end > 0 && !cleaned.is_char_boundary(end) {
+        end -= 1;
+    }
+    cleaned[..end].to_string()
+}
+
 /// A single audit log entry for an approval decision.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalLogEntry {
@@ -359,6 +385,22 @@ fn truncate_for_summary(input: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use zeroclaw_config::schema::RiskProfileConfig;
+
+    #[test]
+    fn sanitize_replacement_strips_control_chars_keeps_whitespace() {
+        let dirty = "ok\u{0007}line\nnext\ttab\u{001b}[31m";
+        let clean = sanitize_tool_replacement(dirty);
+        assert_eq!(clean, "okline\nnext\ttab[31m");
+    }
+
+    #[test]
+    fn sanitize_replacement_truncates_on_char_boundary() {
+        let big = "é".repeat(MAX_REPLACEMENT_LEN); // 2 bytes each
+        let clean = sanitize_tool_replacement(&big);
+        assert!(clean.len() <= MAX_REPLACEMENT_LEN);
+        // Truncation must land on a char boundary (no panic, valid UTF-8).
+        assert!(clean.chars().all(|c| c == 'é'));
+    }
 
     fn supervised_config() -> RiskProfileConfig {
         RiskProfileConfig {

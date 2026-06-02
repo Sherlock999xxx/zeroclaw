@@ -2451,7 +2451,7 @@ pub async fn run_tool_call_loop(
                         tool_name.clone(),
                         call.tool_call_id.clone(),
                         ToolExecutionOutcome {
-                            output: replacement.clone(),
+                            output: crate::approval::sanitize_tool_replacement(replacement),
                             success: true,
                             error_reason: None,
                             duration: Duration::ZERO,

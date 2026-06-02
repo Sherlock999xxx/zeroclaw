@@ -136,6 +136,29 @@ fn force_restore_terminal() {
     }
 }
 
+/// Gate an insecure WSS connection (`--tls-skip-verify`) behind an explicit
+/// y/n prompt. zerocode takes over the terminal immediately after connecting,
+/// so a logged warning would be wiped before the user sees it — this prompt
+/// runs while stdin/stdout are still normal. Interim beta guard: a runtime
+/// warning surfaced inside the TUI should replace it before v1.0.
+fn confirm_insecure_tls_or_abort(url: &str) -> anyhow::Result<()> {
+    use std::io::Write as _;
+    eprintln!(
+        "\nWARNING: --tls-skip-verify DISABLES TLS certificate verification for\n\
+         {url}\nThis connection is UNSAFE on untrusted networks (susceptible to\n\
+         man-in-the-middle). Only continue on a trusted network against a\n\
+         self-signed cert you control."
+    );
+    eprint!("Continue with verification disabled? [y/N] ");
+    std::io::stderr().flush().ok();
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => Ok(()),
+        _ => anyhow::bail!("aborted: insecure TLS connection not confirmed"),
+    }
+}
+
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -204,6 +227,9 @@ async fn run() -> anyhow::Result<()> {
             }
         }
         ConnectTarget::Wss { url, skip_verify } => {
+            if *skip_verify {
+                confirm_insecure_tls_or_abort(url)?;
+            }
             client::RpcClient::connect_wss(url, None, None, *skip_verify).await?
         }
     };
