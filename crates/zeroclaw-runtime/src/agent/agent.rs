@@ -6007,7 +6007,7 @@ mod tests {
             .expect("agent builder should succeed with valid config");
 
         let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
-        let handle = tokio::spawn(async move {
+        let handle = zeroclaw_spawn::spawn!(async move {
             agent
                 .turn_streamed_with_steering_state("first", event_tx, None, None)
                 .await
@@ -6142,7 +6142,7 @@ mod tests {
         let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
         let cancel_token = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel_token.clone();
-        let handle = tokio::spawn(async move {
+        let handle = zeroclaw_spawn::spawn!(async move {
             agent
                 .turn_streamed_with_steering_state("first", event_tx, Some(cancel_for_task), None)
                 .await

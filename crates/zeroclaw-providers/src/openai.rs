@@ -1,7 +1,6 @@
 use crate::openai_codex::{
-    ResponsesStreamApiError, ResponsesStreamState, ResponsesToolSpec,
-    append_utf8_stream_chunk, build_responses_input, convert_tools,
-    first_nonempty, process_sse_chunk,
+    ResponsesStreamApiError, ResponsesStreamState, ResponsesToolSpec, append_utf8_stream_chunk,
+    build_responses_input, convert_tools, first_nonempty, process_sse_chunk,
 };
 use crate::stream_guard::AbortOnDrop;
 use crate::traits::{
@@ -688,10 +687,11 @@ fn extract_responses_api_text(body: &ResponsesApiBody) -> Option<String> {
         }
         if let Some(parts) = item.get("content").and_then(serde_json::Value::as_array) {
             for part in parts {
-                if part.get("type").and_then(serde_json::Value::as_str) == Some("output_text") {
-                    if let Some(text) = first_nonempty(part.get("text").and_then(serde_json::Value::as_str)) {
-                        return Some(text);
-                    }
+                if part.get("type").and_then(serde_json::Value::as_str) == Some("output_text")
+                    && let Some(text) =
+                        first_nonempty(part.get("text").and_then(serde_json::Value::as_str))
+                {
+                    return Some(text);
                 }
             }
         }
@@ -702,15 +702,31 @@ fn extract_responses_api_text(body: &ResponsesApiBody) -> Option<String> {
 fn extract_responses_api_tool_calls(body: &ResponsesApiBody) -> Vec<ProviderToolCall> {
     body.output
         .iter()
-        .filter(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("function_call"))
+        .filter(|item| {
+            item.get("type").and_then(serde_json::Value::as_str) == Some("function_call")
+        })
         .filter_map(|item| {
-            let name = item.get("name").and_then(serde_json::Value::as_str)?.to_string();
-            let arguments = item.get("arguments").and_then(serde_json::Value::as_str).unwrap_or("{}").to_string();
-            let id = item.get("call_id").and_then(serde_json::Value::as_str)
+            let name = item
+                .get("name")
+                .and_then(serde_json::Value::as_str)?
+                .to_string();
+            let arguments = item
+                .get("arguments")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("{}")
+                .to_string();
+            let id = item
+                .get("call_id")
+                .and_then(serde_json::Value::as_str)
                 .or_else(|| item.get("id").and_then(serde_json::Value::as_str))
                 .map(ToString::to_string)
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-            Some(ProviderToolCall { id, name, arguments, extra_content: None })
+            Some(ProviderToolCall {
+                id,
+                name,
+                arguments,
+                extra_content: None,
+            })
         })
         .collect()
 }
@@ -727,7 +743,9 @@ pub(crate) async fn run_responses_sse(
     let http_response = match request_builder.send().await {
         Ok(r) => r,
         Err(err) => {
-            let _ = tx.send(Err(StreamError::ModelProvider(err.to_string()))).await;
+            let _ = tx
+                .send(Err(StreamError::ModelProvider(err.to_string())))
+                .await;
             return;
         }
     };
@@ -755,12 +773,16 @@ pub(crate) async fn run_responses_sse(
                 if let Err(err) =
                     append_utf8_stream_chunk(&mut chunk_buf, &mut pending_utf8, &bytes)
                 {
-                    let _ = tx.send(Err(StreamError::ModelProvider(err.to_string()))).await;
+                    let _ = tx
+                        .send(Err(StreamError::ModelProvider(err.to_string())))
+                        .await;
                     return;
                 }
             }
             Some(Err(err)) => {
-                let _ = tx.send(Err(StreamError::ModelProvider(err.to_string()))).await;
+                let _ = tx
+                    .send(Err(StreamError::ModelProvider(err.to_string())))
+                    .await;
                 return;
             }
             None => break,
@@ -791,7 +813,9 @@ pub(crate) async fn run_responses_sse(
                 }
                 Err(err) => {
                     if err.downcast_ref::<ResponsesStreamApiError>().is_some() {
-                        let _ = tx.send(Err(StreamError::ModelProvider(err.to_string()))).await;
+                        let _ = tx
+                            .send(Err(StreamError::ModelProvider(err.to_string())))
+                            .await;
                         return;
                     }
                 }
@@ -799,23 +823,23 @@ pub(crate) async fn run_responses_sse(
         }
     }
 
-    if !chunk_buf.trim().is_empty() {
-        if let Ok(events) = process_sse_chunk(&chunk_buf, &mut state) {
-            for event in events {
-                let _ = tx.send(Ok(event)).await;
-            }
+    if !chunk_buf.trim().is_empty()
+        && let Ok(events) = process_sse_chunk(&chunk_buf, &mut state)
+    {
+        for event in events {
+            let _ = tx.send(Ok(event)).await;
         }
     }
 
-    if !state.saw_text_delta {
-        if let Some(text) = state.fallback_text.filter(|t| !t.is_empty()) {
-            let chunk = if count_tokens {
-                StreamChunk::delta(text).with_token_estimate()
-            } else {
-                StreamChunk::delta(text)
-            };
-            let _ = tx.send(Ok(StreamEvent::TextDelta(chunk))).await;
-        }
+    if !state.saw_text_delta
+        && let Some(text) = state.fallback_text.filter(|t| !t.is_empty())
+    {
+        let chunk = if count_tokens {
+            StreamChunk::delta(text).with_token_estimate()
+        } else {
+            StreamChunk::delta(text)
+        };
+        let _ = tx.send(Ok(StreamEvent::TextDelta(chunk))).await;
     }
 
     let _ = tx.send(Ok(StreamEvent::Final)).await;
@@ -860,11 +884,22 @@ impl OpenAiResponsesModelProvider {
         self
     }
 
-    fn build_request(&self, instructions: Option<String>, input: Vec<serde_json::Value>, tools: Option<Vec<ResponsesToolSpec>>, model: &str, temperature: Option<f64>, stream: bool) -> ResponsesApiRequest {
+    fn build_request(
+        &self,
+        instructions: Option<String>,
+        input: Vec<serde_json::Value>,
+        tools: Option<Vec<ResponsesToolSpec>>,
+        model: &str,
+        temperature: Option<f64>,
+        stream: bool,
+    ) -> ResponsesApiRequest {
         let has_tools = tools.is_some();
-        let reasoning = self.reasoning_effort.as_deref().map(|effort| ResponsesApiReasoning {
-            effort: effort.to_string(),
-        });
+        let reasoning = self
+            .reasoning_effort
+            .as_deref()
+            .map(|effort| ResponsesApiReasoning {
+                effort: effort.to_string(),
+            });
         ResponsesApiRequest {
             model: model.to_string(),
             input,
@@ -934,7 +969,11 @@ impl ModelProvider for OpenAiResponsesModelProvider {
         }
         messages.push(ChatMessage::user(message));
         let (instructions, input) = build_responses_input(&messages);
-        let instructions = if instructions.is_empty() { None } else { Some(instructions) };
+        let instructions = if instructions.is_empty() {
+            None
+        } else {
+            Some(instructions)
+        };
         let req = self.build_request(instructions, input, None, model, temperature, false);
         let response = Client::new()
             .post(&self.responses_url)
@@ -960,7 +999,11 @@ impl ModelProvider for OpenAiResponsesModelProvider {
             anyhow::Error::msg("OpenAI API key not set. Set OPENAI_API_KEY or edit config.toml.")
         })?;
         let (instructions, input) = build_responses_input(request.messages);
-        let instructions = if instructions.is_empty() { None } else { Some(instructions) };
+        let instructions = if instructions.is_empty() {
+            None
+        } else {
+            Some(instructions)
+        };
         let tools = convert_tools(request.tools);
         let req = self.build_request(instructions, input, tools, model, temperature, false);
         let response = Client::new()
@@ -1012,12 +1055,18 @@ impl ModelProvider for OpenAiResponsesModelProvider {
         let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamEvent>>(100);
         let handle = ::zeroclaw_spawn::spawn!(async move {
             let (instructions, input) = build_responses_input(&messages_owned);
-            let instructions = if instructions.is_empty() { None } else { Some(instructions) };
+            let instructions = if instructions.is_empty() {
+                None
+            } else {
+                Some(instructions)
+            };
             let tools = convert_tools(tools_owned.as_deref());
             let has_tools = tools.is_some();
-            let reasoning = reasoning_effort.as_deref().map(|effort| ResponsesApiReasoning {
-                effort: effort.to_string(),
-            });
+            let reasoning = reasoning_effort
+                .as_deref()
+                .map(|effort| ResponsesApiReasoning {
+                    effort: effort.to_string(),
+                });
             let req = ResponsesApiRequest {
                 model,
                 input,

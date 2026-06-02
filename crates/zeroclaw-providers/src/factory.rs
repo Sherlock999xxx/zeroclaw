@@ -716,8 +716,7 @@ impl FamilyProviderFactory for OpenAIModelProviderConfig {
         }
         // Responses wire protocol with standard API key — full streaming tool calls.
         if self.base.wire_api == Some(zeroclaw_config::schema::WireApi::Responses) {
-            let mut p =
-                crate::openai::OpenAiResponsesModelProvider::new(alias, api_url, key);
+            let mut p = crate::openai::OpenAiResponsesModelProvider::new(alias, api_url, key);
             if let Some(mt) = opts.provider_max_tokens {
                 p = p.with_max_tokens(Some(mt));
             }

@@ -550,8 +550,9 @@ mod tests {
         .unwrap_err();
 
         let msg = err.to_string();
-        assert!(msg.contains("append-only backend 'markdown'"));
-        assert!(msg.contains("switch to a deletable backend"));
+        // The backend name is interpolated verbatim into the (localized) error,
+        // so assert on the locale-stable name rather than the translated prose.
+        assert!(msg.contains("'markdown'"), "got: {msg}");
     }
 
     #[tokio::test]
@@ -573,8 +574,7 @@ mod tests {
         .unwrap_err();
 
         let msg = err.to_string();
-        assert!(msg.contains("append-only backend 'qdrant'"));
-        assert!(!msg.contains("or qdrant"));
+        assert!(msg.contains("'qdrant'"), "got: {msg}");
     }
 
     #[tokio::test]
@@ -596,7 +596,6 @@ mod tests {
         .unwrap_err();
 
         let msg = err.to_string();
-        assert!(msg.contains("append-only backend 'qdrant'"));
-        assert!(!msg.contains("or qdrant"));
+        assert!(msg.contains("'qdrant'"), "got: {msg}");
     }
 }

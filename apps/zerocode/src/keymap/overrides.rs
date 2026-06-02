@@ -59,9 +59,15 @@ fn reset() {
 mod tests {
     use super::*;
     use crossterm::event::KeyCode;
+    use std::sync::Mutex;
+
+    // Both tests mutate the process-wide `ACTIVE` table; serialize them so
+    // parallel execution can't clobber one test's state from another.
+    static TEST_GUARD: Mutex<()> = Mutex::new(());
 
     #[test]
     fn set_and_lookup_round_trips() {
+        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let mut table = OverrideTable::new();
         let mut dash = HashMap::new();
         dash.insert("refresh".to_string(), vec![Chord::key(KeyCode::F(5))]);
@@ -80,6 +86,7 @@ mod tests {
 
     #[test]
     fn set_row_creates_on_demand() {
+        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         reset();
         set_row("logs", "toggle_follow", vec![Chord::char('F')]);
         let got = lookup("logs").expect("tag created");
