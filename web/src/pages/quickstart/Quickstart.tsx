@@ -157,9 +157,9 @@ export default function Quickstart() {
                 channel_type: c.channel_type,
                 alias: c.alias,
                 token:
-                  c.extras["bot-token"] ??
+                  c.extras["bot_token"] ??
                   c.extras["token"] ??
-                  c.extras["access-token"] ??
+                  c.extras["access_token"] ??
                   null,
               },
             },

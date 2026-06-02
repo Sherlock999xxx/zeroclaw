@@ -277,18 +277,18 @@ export default function Config() {
     if (typeParam && isOneTierAliasSection) {
       const fieldsPrefix = `${activeSection.key}.${typeParam}`;
       const isAgent = activeSection.key === "agents";
-      const isSkillBundle = activeSection.key === "skill-bundles";
+      const isSkillBundle = activeSection.key === "skill_bundles";
 
       // Composite tabs that sit alongside the wire-driven field tabs.
       const extraTabs: SectionTabSpec[] = [];
       if (isAgent) {
         extraTabs.push(
           {
-            key: "peer-groups",
+            key: "peer_groups",
             label: "Peer Groups",
             render: () => (
               <AgentPeerGroupsTab
-                key={`${reloadKey}-${typeParam}-peer-groups`}
+                key={`${reloadKey}-${typeParam}-peer_groups`}
                 agentAlias={typeParam}
                 onSaved={fetchDrift}
               />
@@ -988,9 +988,9 @@ function WireTabForm({
 }
 
 /**
- * Peer Groups tab on the agent edit page. Walks `peer-groups.*` for
+ * Peer Groups tab on the agent edit page. Walks `peer_groups.*` for
  * groups containing the bound agent, then embeds the SAME FieldForm
- * used at `/config/peer-groups/<alias>` — no duplicated authoring
+ * used at `/config/peer_groups/<alias>` — no duplicated authoring
  * surface. Plus an "Add to group" picker that appends this agent to a
  * group's `agents` array via patchConfig.
  */
@@ -1012,13 +1012,13 @@ function AgentPeerGroupsTab({
     setLoading(true);
     setError(null);
     try {
-      const { keys } = await getMapKeys("peer-groups");
+      const { keys } = await getMapKeys("peer_groups");
       const memberships: string[] = [];
       const others: string[] = [];
       for (const pg of keys) {
-        const { entries } = await listProps(`peer-groups.${pg}`);
+        const { entries } = await listProps(`peer_groups.${pg}`);
         const agentsEntry = entries.find(
-          (e) => e.path === `peer-groups.${pg}.agents`,
+          (e) => e.path === `peer_groups.${pg}.agents`,
         );
         const list = parseAgentsList(agentsEntry?.value);
         if (list.includes(agentAlias)) memberships.push(pg);
@@ -1043,9 +1043,9 @@ function AgentPeerGroupsTab({
     setAdding(true);
     setError(null);
     try {
-      const { entries } = await listProps(`peer-groups.${pickerValue}`);
+      const { entries } = await listProps(`peer_groups.${pickerValue}`);
       const agentsEntry = entries.find(
-        (e) => e.path === `peer-groups.${pickerValue}.agents`,
+        (e) => e.path === `peer_groups.${pickerValue}.agents`,
       );
       const list = parseAgentsList(agentsEntry?.value);
       if (!list.includes(agentAlias)) {
@@ -1053,7 +1053,7 @@ function AgentPeerGroupsTab({
         await patchConfig([
           {
             op: "replace",
-            path: `peer-groups.${pickerValue}.agents`,
+            path: `peer_groups.${pickerValue}.agents`,
             value: next,
           },
         ]);
@@ -1071,15 +1071,15 @@ function AgentPeerGroupsTab({
   const removeFromGroup = async (pg: string) => {
     setError(null);
     try {
-      const { entries } = await listProps(`peer-groups.${pg}`);
+      const { entries } = await listProps(`peer_groups.${pg}`);
       const agentsEntry = entries.find(
-        (e) => e.path === `peer-groups.${pg}.agents`,
+        (e) => e.path === `peer_groups.${pg}.agents`,
       );
       const list = parseAgentsList(agentsEntry?.value).filter(
         (a) => a !== agentAlias,
       );
       await patchConfig([
-        { op: "replace", path: `peer-groups.${pg}.agents`, value: list },
+        { op: "replace", path: `peer_groups.${pg}.agents`, value: list },
       ]);
       await reload();
       onSaved();
@@ -1142,7 +1142,7 @@ function AgentPeerGroupsTab({
           {adding ? "Adding…" : "Add"}
         </button>
         <Link
-          to="/config/peer-groups"
+          to="/config/peer_groups"
           className="text-xs ml-auto hover:underline"
           style={{ color: "var(--pc-text-muted)" }}
         >
@@ -1172,26 +1172,26 @@ function AgentPeerGroupsTab({
               style={{ borderColor: "var(--pc-border)" }}
             >
               <Link
-                to={`/config/peer-groups/${encodeURIComponent(pg)}`}
+                to={`/config/peer_groups/${encodeURIComponent(pg)}`}
                 className="text-sm font-mono hover:underline"
                 style={{ color: "var(--pc-text-primary)" }}
               >
-                peer-groups.{pg}
+                peer_groups.{pg}
               </Link>
               <button
                 type="button"
                 onClick={() => removeFromGroup(pg)}
                 className="text-xs hover:underline"
                 style={{ color: "var(--color-status-error)" }}
-                title={`Remove ${agentAlias} from peer-groups.${pg}`}
+                title={`Remove ${agentAlias} from peer_groups.${pg}`}
               >
                 Remove from group
               </button>
             </div>
             <div className="p-4">
               <FieldForm
-                key={`peer-groups-embed-${pg}`}
-                prefix={`peer-groups.${pg}`}
+                key={`peer_groups-embed-${pg}`}
+                prefix={`peer_groups.${pg}`}
                 onSaved={onSaved}
                 showDelete={false}
               />

@@ -184,34 +184,34 @@ function fieldShortLabel(entry: ListResponseEntry): string {
 function setupFieldPriority(entry: ListResponseEntry): number {
   const leaf = entry.path.split(".").pop() ?? "";
   if (/^providers\.models\.[^.]+\.[^.]+\./.test(entry.path)) {
-    const order = ["model", "api-key", "requires-openai-auth", "uri"];
+    const order = ["model", "api_key", "requires_openai_auth", "uri"];
     const idx = order.indexOf(leaf);
     if (idx >= 0) return idx;
   }
   if (/^agents\.[^.]+\./.test(entry.path)) {
     const order = [
       "enabled",
-      "model-provider",
-      "risk-profile",
-      "runtime-profile",
+      "model_provider",
+      "risk_profile",
+      "runtime_profile",
       "channels",
     ];
     const idx = order.indexOf(leaf);
     if (idx >= 0) return idx;
   }
   if (entry.path === "memory.backend") return 0;
-  if (/^risk-profiles\.[^.]+\./.test(entry.path)) {
-    const idx = ["approval-mode", "allowed-commands", "sandbox-mode"].indexOf(
+  if (/^risk_profiles\.[^.]+\./.test(entry.path)) {
+    const idx = ["approval_mode", "allowed_commands", "sandbox_mode"].indexOf(
       leaf,
     );
     if (idx >= 0) return idx;
   }
-  if (/^runtime-profiles\.[^.]+\./.test(entry.path)) {
+  if (/^runtime_profiles\.[^.]+\./.test(entry.path)) {
     const idx = [
       "agentic",
-      "max-iterations",
-      "timeout-secs",
-      "max-cost-usd",
+      "max_iterations",
+      "timeout_secs",
+      "max_cost_usd",
     ].indexOf(leaf);
     if (idx >= 0) return idx;
   }
@@ -225,12 +225,12 @@ function setupRequirement(
   if (/^providers\.models\.[^.]+\.[^.]+\./.test(entry.path)) {
     const localProvider = isLocalModelProviderPath(entry.path);
     if (leaf === "model") return { label: "Required", tone: "required" };
-    if (leaf === "api-key") {
+    if (leaf === "api_key") {
       return localProvider
         ? { label: "Optional for remote auth", tone: "optional" }
         : { label: "Required for API-key auth", tone: "required" };
     }
-    if (leaf === "requires-openai-auth")
+    if (leaf === "requires_openai_auth")
       return { label: "Auth option", tone: "choice" };
     if (leaf === "uri") return { label: "Endpoint option", tone: "choice" };
     return { label: "Optional", tone: "optional" };
@@ -239,7 +239,7 @@ function setupRequirement(
     entry.path.match(/^agents\.[^.]+\.([^.]+)$/)?.[1] ?? null;
   if (topLevelAgentField) {
     if (
-      ["enabled", "model-provider", "risk-profile", "runtime-profile"].includes(
+      ["enabled", "model_provider", "risk_profile", "runtime_profile"].includes(
         topLevelAgentField,
       )
     ) {
@@ -248,8 +248,8 @@ function setupRequirement(
     return { label: "Optional", tone: "optional" };
   }
   if (
-    /^risk-profiles\.[^.]+\./.test(entry.path) ||
-    /^runtime-profiles\.[^.]+\./.test(entry.path)
+    /^risk_profiles\.[^.]+\./.test(entry.path) ||
+    /^runtime_profiles\.[^.]+\./.test(entry.path)
   ) {
     return { label: "Advanced", tone: "optional" };
   }
@@ -395,25 +395,25 @@ export function clearFieldFormCatalogCaches() {
 // at the backend on save — the frontend just submits whatever the user
 // picks (including empty) and surfaces structured errors inline.
 //
-// Keys are kebab-case to match `prop_fields()` emission (the macro at
-// crates/zeroclaw-macros/src/lib.rs:1056 converts every snake_case Rust
-// field name to kebab-case for the schema path).
+// Keys are snake_case to match `prop_fields()` emission (the macro at
+// crates/zeroclaw-macros/src/lib.rs:1056 passes through snake_case Rust
+// field name unchanged for the schema path).
 const AGENT_SINGLE_ALIAS_FIELDS: Record<string, keyof AgentOptionsResponse> = {
-  "model-provider": "model_providers",
-  "risk-profile": "risk_profiles",
-  "runtime-profile": "runtime_profiles",
-  "memory-namespace": "memory_namespaces",
+  "model_provider": "model_providers",
+  "risk_profile": "risk_profiles",
+  "runtime_profile": "runtime_profiles",
+  "memory_namespace": "memory_namespaces",
 };
 
 // Multi-select alias-ref fields on an agent: render as the chip editor with
 // a `<datalist>` of the available aliases (no free text expected — the
-// suggestions list is the canonical input source). Same kebab-case
+// suggestions list is the canonical input source). Same snake_case
 // convention as AGENT_SINGLE_ALIAS_FIELDS above.
 const AGENT_MULTI_ALIAS_FIELDS: Record<string, keyof AgentOptionsResponse> = {
   channels: "channels",
-  "skill-bundles": "skill_bundles",
-  "knowledge-bundles": "knowledge_bundles",
-  "mcp-bundles": "mcp_bundles",
+  "skill_bundles": "skill_bundles",
+  "knowledge_bundles": "knowledge_bundles",
+  "mcp_bundles": "mcp_bundles",
 };
 
 // Peer-groups carry the same alias-ref shape as agents do: a single
@@ -439,7 +439,7 @@ function agentFieldKey(path: string): string | null {
 }
 
 function peerGroupFieldKey(path: string): string | null {
-  const m = path.match(/^peer-groups\.[^.]+\.(.+)$/);
+  const m = path.match(/^peer_groups\.[^.]+\.(.+)$/);
   return m && m[1] ? m[1] : null;
 }
 
@@ -450,13 +450,13 @@ const AGENT_ALIAS_SOURCE_PATH: Record<keyof AgentOptionsResponse, string> = {
   channels: "/config/channels",
   channel_types: "/config/channels",
   model_providers: "/config/providers",
-  risk_profiles: "/config/risk-profiles",
-  runtime_profiles: "/config/runtime-profiles",
-  skill_bundles: "/config/skill-bundles",
-  knowledge_bundles: "/config/knowledge-bundles",
-  mcp_bundles: "/config/mcp-bundles",
+  risk_profiles: "/config/risk_profiles",
+  runtime_profiles: "/config/runtime_profiles",
+  skill_bundles: "/config/skill_bundles",
+  knowledge_bundles: "/config/knowledge_bundles",
+  mcp_bundles: "/config/mcp_bundles",
   agents: "/config/agents",
-  memory_namespaces: "/config/memory-namespaces",
+  memory_namespaces: "/config/memory_namespaces",
 };
 
 function AgentEmptyAliasFallback({
