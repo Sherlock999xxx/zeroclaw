@@ -63,7 +63,7 @@ subreddit = "rust"                        # optional: filter to a single subredd
 ```
 
 - **Auth:** OAuth 2.0 with a refresh token. Generate one with a script-type Reddit app and the `password` or `code` flow, then save the refresh token here for persistent access.
-- **Inbound:** new posts and comments in the configured subreddit (or all subreddis the bot has access to when `subreddit` is unset), plus replies to the agent's own posts.
+- **Inbound:** new posts and comments in the configured subreddit (or all subreddits the bot has access to when `subreddit` is unset), plus replies to the agent's own posts.
 - **Outbound:** posts, comments, private messages.
 
 ---
