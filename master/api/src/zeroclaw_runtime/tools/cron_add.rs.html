@@ -1012,103 +1012,131 @@ data-theme="ayu"></script><meta name="rustdoc-vars" data-root-path="../../../" d
 <a href=#1010 id=1010 data-nosnippet>1010</a>        <span class="macro">assert!</span>(jobs[<span class="number">0</span>].delivery.best_effort);
 <a href=#1011 id=1011 data-nosnippet>1011</a>    }
 <a href=#1012 id=1012 data-nosnippet>1012</a>
-<a href=#1013 id=1013 data-nosnippet>1013</a>    <span class="attr">#[test]
-<a href=#1014 id=1014 data-nosnippet>1014</a>    </span><span class="kw">fn </span>schedule_schema_is_oneof_with_cron_at_every_variants() {
-<a href=#1015 id=1015 data-nosnippet>1015</a>        <span class="kw">let </span>tmp = tempfile::TempDir::new().unwrap();
-<a href=#1016 id=1016 data-nosnippet>1016</a>        <span class="kw">let </span>cfg = Arc::new(Config {
-<a href=#1017 id=1017 data-nosnippet>1017</a>            data_dir: tmp.path().join(<span class="string">"data"</span>),
-<a href=#1018 id=1018 data-nosnippet>1018</a>            config_path: tmp.path().join(<span class="string">"config.toml"</span>),
-<a href=#1019 id=1019 data-nosnippet>1019</a>            ..Config::default()
-<a href=#1020 id=1020 data-nosnippet>1020</a>        });
-<a href=#1021 id=1021 data-nosnippet>1021</a>        <span class="kw">let </span>security = Arc::new(SecurityPolicy::from_risk_profile(
-<a href=#1022 id=1022 data-nosnippet>1022</a>            <span class="kw-2">&amp;</span>zeroclaw_config::schema::RiskProfileConfig::default(),
-<a href=#1023 id=1023 data-nosnippet>1023</a>            <span class="kw-2">&amp;</span>cfg.data_dir,
-<a href=#1024 id=1024 data-nosnippet>1024</a>        ));
-<a href=#1025 id=1025 data-nosnippet>1025</a>        <span class="kw">let </span>tool = CronAddTool::new(cfg, security, TEST_AGENT);
-<a href=#1026 id=1026 data-nosnippet>1026</a>        <span class="kw">let </span>schema = tool.parameters_schema();
+<a href=#1013 id=1013 data-nosnippet>1013</a>    <span class="attr">#[tokio::test]
+<a href=#1014 id=1014 data-nosnippet>1014</a>    </span><span class="kw">async fn </span>past_at_schedule_error_includes_clock_diagnostics() {
+<a href=#1015 id=1015 data-nosnippet>1015</a>        <span class="kw">let </span>tmp = TempDir::new().unwrap();
+<a href=#1016 id=1016 data-nosnippet>1016</a>        <span class="kw">let </span>cfg = test_config(<span class="kw-2">&amp;</span>tmp).<span class="kw">await</span>;
+<a href=#1017 id=1017 data-nosnippet>1017</a>        <span class="kw">let </span>tool = CronAddTool::new(cfg.clone(), test_security(<span class="kw-2">&amp;</span>cfg), TEST_AGENT);
+<a href=#1018 id=1018 data-nosnippet>1018</a>
+<a href=#1019 id=1019 data-nosnippet>1019</a>        <span class="kw">let </span>result = tool
+<a href=#1020 id=1020 data-nosnippet>1020</a>            .execute(<span class="macro">json!</span>({
+<a href=#1021 id=1021 data-nosnippet>1021</a>                <span class="string">"schedule"</span>: { <span class="string">"kind"</span>: <span class="string">"at"</span>, <span class="string">"at"</span>: <span class="string">"2020-01-01T00:00:00Z" </span>},
+<a href=#1022 id=1022 data-nosnippet>1022</a>                <span class="string">"job_type"</span>: <span class="string">"shell"</span>,
+<a href=#1023 id=1023 data-nosnippet>1023</a>                <span class="string">"command"</span>: <span class="string">"echo at"
+<a href=#1024 id=1024 data-nosnippet>1024</a>            </span>}))
+<a href=#1025 id=1025 data-nosnippet>1025</a>            .<span class="kw">await
+<a href=#1026 id=1026 data-nosnippet>1026</a>            </span>.unwrap();
 <a href=#1027 id=1027 data-nosnippet>1027</a>
-<a href=#1028 id=1028 data-nosnippet>1028</a>        <span class="comment">// Top-level: schedule is required
-<a href=#1029 id=1029 data-nosnippet>1029</a>        </span><span class="kw">let </span>top_required = schema[<span class="string">"required"</span>].as_array().expect(<span class="string">"top-level required"</span>);
-<a href=#1030 id=1030 data-nosnippet>1030</a>        <span class="macro">assert!</span>(top_required.iter().any(|v| v == <span class="string">"schedule"</span>));
-<a href=#1031 id=1031 data-nosnippet>1031</a>
-<a href=#1032 id=1032 data-nosnippet>1032</a>        <span class="comment">// schedule is a oneOf with exactly 3 variants: cron, at, every
-<a href=#1033 id=1033 data-nosnippet>1033</a>        </span><span class="kw">let </span>one_of = schema[<span class="string">"properties"</span>][<span class="string">"schedule"</span>][<span class="string">"oneOf"</span>]
-<a href=#1034 id=1034 data-nosnippet>1034</a>            .as_array()
-<a href=#1035 id=1035 data-nosnippet>1035</a>            .expect(<span class="string">"schedule.oneOf must be an array"</span>);
-<a href=#1036 id=1036 data-nosnippet>1036</a>        <span class="macro">assert_eq!</span>(one_of.len(), <span class="number">3</span>, <span class="string">"expected cron, at, and every variants"</span>);
-<a href=#1037 id=1037 data-nosnippet>1037</a>
-<a href=#1038 id=1038 data-nosnippet>1038</a>        <span class="kw">let </span>kinds: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = one_of
-<a href=#1039 id=1039 data-nosnippet>1039</a>            .iter()
-<a href=#1040 id=1040 data-nosnippet>1040</a>            .filter_map(|v| v[<span class="string">"properties"</span>][<span class="string">"kind"</span>][<span class="string">"enum"</span>][<span class="number">0</span>].as_str())
-<a href=#1041 id=1041 data-nosnippet>1041</a>            .collect();
-<a href=#1042 id=1042 data-nosnippet>1042</a>        <span class="macro">assert!</span>(kinds.contains(<span class="kw-2">&amp;</span><span class="string">"cron"</span>), <span class="string">"missing cron variant"</span>);
-<a href=#1043 id=1043 data-nosnippet>1043</a>        <span class="macro">assert!</span>(kinds.contains(<span class="kw-2">&amp;</span><span class="string">"at"</span>), <span class="string">"missing at variant"</span>);
-<a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="macro">assert!</span>(kinds.contains(<span class="kw-2">&amp;</span><span class="string">"every"</span>), <span class="string">"missing every variant"</span>);
-<a href=#1045 id=1045 data-nosnippet>1045</a>
-<a href=#1046 id=1046 data-nosnippet>1046</a>        <span class="comment">// Each variant declares its required fields and every_ms is typed integer
-<a href=#1047 id=1047 data-nosnippet>1047</a>        </span><span class="kw">for </span>variant <span class="kw">in </span>one_of {
-<a href=#1048 id=1048 data-nosnippet>1048</a>            <span class="kw">let </span>kind = variant[<span class="string">"properties"</span>][<span class="string">"kind"</span>][<span class="string">"enum"</span>][<span class="number">0</span>]
-<a href=#1049 id=1049 data-nosnippet>1049</a>                .as_str()
-<a href=#1050 id=1050 data-nosnippet>1050</a>                .expect(<span class="string">"variant kind"</span>);
-<a href=#1051 id=1051 data-nosnippet>1051</a>            <span class="kw">let </span>req: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = variant[<span class="string">"required"</span>]
-<a href=#1052 id=1052 data-nosnippet>1052</a>                .as_array()
-<a href=#1053 id=1053 data-nosnippet>1053</a>                .unwrap_or_else(|| <span class="macro">panic!</span>(<span class="string">"{kind} variant must have required"</span>))
-<a href=#1054 id=1054 data-nosnippet>1054</a>                .iter()
-<a href=#1055 id=1055 data-nosnippet>1055</a>                .filter_map(|v| v.as_str())
-<a href=#1056 id=1056 data-nosnippet>1056</a>                .collect();
-<a href=#1057 id=1057 data-nosnippet>1057</a>            <span class="macro">assert!</span>(
-<a href=#1058 id=1058 data-nosnippet>1058</a>                req.contains(<span class="kw-2">&amp;</span><span class="string">"kind"</span>),
-<a href=#1059 id=1059 data-nosnippet>1059</a>                <span class="string">"{kind} variant missing 'kind' in required"
-<a href=#1060 id=1060 data-nosnippet>1060</a>            </span>);
-<a href=#1061 id=1061 data-nosnippet>1061</a>            <span class="kw">match </span>kind {
-<a href=#1062 id=1062 data-nosnippet>1062</a>                <span class="string">"cron" </span>=&gt; <span class="macro">assert!</span>(req.contains(<span class="kw-2">&amp;</span><span class="string">"expr"</span>), <span class="string">"cron variant missing 'expr'"</span>),
-<a href=#1063 id=1063 data-nosnippet>1063</a>                <span class="string">"at" </span>=&gt; <span class="macro">assert!</span>(req.contains(<span class="kw-2">&amp;</span><span class="string">"at"</span>), <span class="string">"at variant missing 'at'"</span>),
-<a href=#1064 id=1064 data-nosnippet>1064</a>                <span class="string">"every" </span>=&gt; {
-<a href=#1065 id=1065 data-nosnippet>1065</a>                    <span class="macro">assert!</span>(
-<a href=#1066 id=1066 data-nosnippet>1066</a>                        req.contains(<span class="kw-2">&amp;</span><span class="string">"every_ms"</span>),
-<a href=#1067 id=1067 data-nosnippet>1067</a>                        <span class="string">"every variant missing 'every_ms'"
-<a href=#1068 id=1068 data-nosnippet>1068</a>                    </span>);
-<a href=#1069 id=1069 data-nosnippet>1069</a>                    <span class="macro">assert_eq!</span>(
-<a href=#1070 id=1070 data-nosnippet>1070</a>                        variant[<span class="string">"properties"</span>][<span class="string">"every_ms"</span>][<span class="string">"type"</span>].as_str(),
-<a href=#1071 id=1071 data-nosnippet>1071</a>                        <span class="prelude-val">Some</span>(<span class="string">"integer"</span>),
-<a href=#1072 id=1072 data-nosnippet>1072</a>                        <span class="string">"every_ms must be typed as integer"
-<a href=#1073 id=1073 data-nosnippet>1073</a>                    </span>);
-<a href=#1074 id=1074 data-nosnippet>1074</a>                }
-<a href=#1075 id=1075 data-nosnippet>1075</a>                <span class="kw">_ </span>=&gt; <span class="macro">panic!</span>(<span class="string">"unexpected kind: {kind}"</span>),
-<a href=#1076 id=1076 data-nosnippet>1076</a>            }
-<a href=#1077 id=1077 data-nosnippet>1077</a>        }
-<a href=#1078 id=1078 data-nosnippet>1078</a>
-<a href=#1079 id=1079 data-nosnippet>1079</a>        <span class="kw">let </span>cron_variant = one_of
-<a href=#1080 id=1080 data-nosnippet>1080</a>            .iter()
-<a href=#1081 id=1081 data-nosnippet>1081</a>            .find(|variant| variant[<span class="string">"properties"</span>][<span class="string">"kind"</span>][<span class="string">"enum"</span>][<span class="number">0</span>] == <span class="string">"cron"</span>)
-<a href=#1082 id=1082 data-nosnippet>1082</a>            .expect(<span class="string">"cron variant"</span>);
-<a href=#1083 id=1083 data-nosnippet>1083</a>        <span class="kw">let </span>cron_tz_description = cron_variant[<span class="string">"properties"</span>][<span class="string">"tz"</span>][<span class="string">"description"</span>]
-<a href=#1084 id=1084 data-nosnippet>1084</a>            .as_str()
-<a href=#1085 id=1085 data-nosnippet>1085</a>            .expect(<span class="string">"cron tz description"</span>);
-<a href=#1086 id=1086 data-nosnippet>1086</a>        <span class="macro">assert!</span>(
-<a href=#1087 id=1087 data-nosnippet>1087</a>            cron_tz_description.contains(<span class="string">"runtime local timezone"</span>),
-<a href=#1088 id=1088 data-nosnippet>1088</a>            <span class="string">"cron tz description must match scheduler fallback: {cron_tz_description}"
-<a href=#1089 id=1089 data-nosnippet>1089</a>        </span>);
-<a href=#1090 id=1090 data-nosnippet>1090</a>        <span class="macro">assert!</span>(
-<a href=#1091 id=1091 data-nosnippet>1091</a>            cron_tz_description.contains(<span class="string">"explicit IANA timezone"</span>),
-<a href=#1092 id=1092 data-nosnippet>1092</a>            <span class="string">"cron tz description should recommend explicit IANA timezones: {cron_tz_description}"
-<a href=#1093 id=1093 data-nosnippet>1093</a>        </span>);
-<a href=#1094 id=1094 data-nosnippet>1094</a>        <span class="macro">assert!</span>(
-<a href=#1095 id=1095 data-nosnippet>1095</a>            !cron_tz_description.contains(<span class="string">"Defaults to UTC"</span>),
-<a href=#1096 id=1096 data-nosnippet>1096</a>            <span class="string">"cron tz description must not claim a UTC default"
-<a href=#1097 id=1097 data-nosnippet>1097</a>        </span>);
-<a href=#1098 id=1098 data-nosnippet>1098</a>
-<a href=#1099 id=1099 data-nosnippet>1099</a>        <span class="kw">let </span>at_variant = one_of
-<a href=#1100 id=1100 data-nosnippet>1100</a>            .iter()
-<a href=#1101 id=1101 data-nosnippet>1101</a>            .find(|variant| variant[<span class="string">"properties"</span>][<span class="string">"kind"</span>][<span class="string">"enum"</span>][<span class="number">0</span>] == <span class="string">"at"</span>)
-<a href=#1102 id=1102 data-nosnippet>1102</a>            .expect(<span class="string">"at variant"</span>);
-<a href=#1103 id=1103 data-nosnippet>1103</a>        <span class="kw">let </span>at_description = at_variant[<span class="string">"properties"</span>][<span class="string">"at"</span>][<span class="string">"description"</span>]
-<a href=#1104 id=1104 data-nosnippet>1104</a>            .as_str()
-<a href=#1105 id=1105 data-nosnippet>1105</a>            .expect(<span class="string">"at description"</span>);
-<a href=#1106 id=1106 data-nosnippet>1106</a>        <span class="macro">assert!</span>(
-<a href=#1107 id=1107 data-nosnippet>1107</a>            at_description.contains(<span class="string">"RFC3339 timestamp with explicit Z or offset"</span>),
-<a href=#1108 id=1108 data-nosnippet>1108</a>            <span class="string">"at description should require explicit Z or offset: {at_description}"
-<a href=#1109 id=1109 data-nosnippet>1109</a>        </span>);
-<a href=#1110 id=1110 data-nosnippet>1110</a>    }
-<a href=#1111 id=1111 data-nosnippet>1111</a>}
+<a href=#1028 id=1028 data-nosnippet>1028</a>        <span class="macro">assert!</span>(!result.success);
+<a href=#1029 id=1029 data-nosnippet>1029</a>        <span class="kw">let </span>error = result.error.unwrap_or_default();
+<a href=#1030 id=1030 data-nosnippet>1030</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"'at' must be in the future"</span>));
+<a href=#1031 id=1031 data-nosnippet>1031</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"now_utc="</span>), <span class="string">"{error}"</span>);
+<a href=#1032 id=1032 data-nosnippet>1032</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"now_local="</span>), <span class="string">"{error}"</span>);
+<a href=#1033 id=1033 data-nosnippet>1033</a>        <span class="macro">assert!</span>(
+<a href=#1034 id=1034 data-nosnippet>1034</a>            error.contains(<span class="string">"at_utc=2020-01-01T00:00:00+00:00"</span>),
+<a href=#1035 id=1035 data-nosnippet>1035</a>            <span class="string">"{error}"
+<a href=#1036 id=1036 data-nosnippet>1036</a>        </span>);
+<a href=#1037 id=1037 data-nosnippet>1037</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"at_local="</span>), <span class="string">"{error}"</span>);
+<a href=#1038 id=1038 data-nosnippet>1038</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"delta_seconds="</span>), <span class="string">"{error}"</span>);
+<a href=#1039 id=1039 data-nosnippet>1039</a>    }
+<a href=#1040 id=1040 data-nosnippet>1040</a>
+<a href=#1041 id=1041 data-nosnippet>1041</a>    <span class="attr">#[test]
+<a href=#1042 id=1042 data-nosnippet>1042</a>    </span><span class="kw">fn </span>schedule_schema_is_oneof_with_cron_at_every_variants() {
+<a href=#1043 id=1043 data-nosnippet>1043</a>        <span class="kw">let </span>tmp = tempfile::TempDir::new().unwrap();
+<a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="kw">let </span>cfg = Arc::new(Config {
+<a href=#1045 id=1045 data-nosnippet>1045</a>            data_dir: tmp.path().join(<span class="string">"data"</span>),
+<a href=#1046 id=1046 data-nosnippet>1046</a>            config_path: tmp.path().join(<span class="string">"config.toml"</span>),
+<a href=#1047 id=1047 data-nosnippet>1047</a>            ..Config::default()
+<a href=#1048 id=1048 data-nosnippet>1048</a>        });
+<a href=#1049 id=1049 data-nosnippet>1049</a>        <span class="kw">let </span>security = Arc::new(SecurityPolicy::from_risk_profile(
+<a href=#1050 id=1050 data-nosnippet>1050</a>            <span class="kw-2">&amp;</span>zeroclaw_config::schema::RiskProfileConfig::default(),
+<a href=#1051 id=1051 data-nosnippet>1051</a>            <span class="kw-2">&amp;</span>cfg.data_dir,
+<a href=#1052 id=1052 data-nosnippet>1052</a>        ));
+<a href=#1053 id=1053 data-nosnippet>1053</a>        <span class="kw">let </span>tool = CronAddTool::new(cfg, security, TEST_AGENT);
+<a href=#1054 id=1054 data-nosnippet>1054</a>        <span class="kw">let </span>schema = tool.parameters_schema();
+<a href=#1055 id=1055 data-nosnippet>1055</a>
+<a href=#1056 id=1056 data-nosnippet>1056</a>        <span class="comment">// Top-level: schedule is required
+<a href=#1057 id=1057 data-nosnippet>1057</a>        </span><span class="kw">let </span>top_required = schema[<span class="string">"required"</span>].as_array().expect(<span class="string">"top-level required"</span>);
+<a href=#1058 id=1058 data-nosnippet>1058</a>        <span class="macro">assert!</span>(top_required.iter().any(|v| v == <span class="string">"schedule"</span>));
+<a href=#1059 id=1059 data-nosnippet>1059</a>
+<a href=#1060 id=1060 data-nosnippet>1060</a>        <span class="comment">// schedule is a oneOf with exactly 3 variants: cron, at, every
+<a href=#1061 id=1061 data-nosnippet>1061</a>        </span><span class="kw">let </span>one_of = schema[<span class="string">"properties"</span>][<span class="string">"schedule"</span>][<span class="string">"oneOf"</span>]
+<a href=#1062 id=1062 data-nosnippet>1062</a>            .as_array()
+<a href=#1063 id=1063 data-nosnippet>1063</a>            .expect(<span class="string">"schedule.oneOf must be an array"</span>);
+<a href=#1064 id=1064 data-nosnippet>1064</a>        <span class="macro">assert_eq!</span>(one_of.len(), <span class="number">3</span>, <span class="string">"expected cron, at, and every variants"</span>);
+<a href=#1065 id=1065 data-nosnippet>1065</a>
+<a href=#1066 id=1066 data-nosnippet>1066</a>        <span class="kw">let </span>kinds: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = one_of
+<a href=#1067 id=1067 data-nosnippet>1067</a>            .iter()
+<a href=#1068 id=1068 data-nosnippet>1068</a>            .filter_map(|v| v[<span class="string">"properties"</span>][<span class="string">"kind"</span>][<span class="string">"enum"</span>][<span class="number">0</span>].as_str())
+<a href=#1069 id=1069 data-nosnippet>1069</a>            .collect();
+<a href=#1070 id=1070 data-nosnippet>1070</a>        <span class="macro">assert!</span>(kinds.contains(<span class="kw-2">&amp;</span><span class="string">"cron"</span>), <span class="string">"missing cron variant"</span>);
+<a href=#1071 id=1071 data-nosnippet>1071</a>        <span class="macro">assert!</span>(kinds.contains(<span class="kw-2">&amp;</span><span class="string">"at"</span>), <span class="string">"missing at variant"</span>);
+<a href=#1072 id=1072 data-nosnippet>1072</a>        <span class="macro">assert!</span>(kinds.contains(<span class="kw-2">&amp;</span><span class="string">"every"</span>), <span class="string">"missing every variant"</span>);
+<a href=#1073 id=1073 data-nosnippet>1073</a>
+<a href=#1074 id=1074 data-nosnippet>1074</a>        <span class="comment">// Each variant declares its required fields and every_ms is typed integer
+<a href=#1075 id=1075 data-nosnippet>1075</a>        </span><span class="kw">for </span>variant <span class="kw">in </span>one_of {
+<a href=#1076 id=1076 data-nosnippet>1076</a>            <span class="kw">let </span>kind = variant[<span class="string">"properties"</span>][<span class="string">"kind"</span>][<span class="string">"enum"</span>][<span class="number">0</span>]
+<a href=#1077 id=1077 data-nosnippet>1077</a>                .as_str()
+<a href=#1078 id=1078 data-nosnippet>1078</a>                .expect(<span class="string">"variant kind"</span>);
+<a href=#1079 id=1079 data-nosnippet>1079</a>            <span class="kw">let </span>req: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = variant[<span class="string">"required"</span>]
+<a href=#1080 id=1080 data-nosnippet>1080</a>                .as_array()
+<a href=#1081 id=1081 data-nosnippet>1081</a>                .unwrap_or_else(|| <span class="macro">panic!</span>(<span class="string">"{kind} variant must have required"</span>))
+<a href=#1082 id=1082 data-nosnippet>1082</a>                .iter()
+<a href=#1083 id=1083 data-nosnippet>1083</a>                .filter_map(|v| v.as_str())
+<a href=#1084 id=1084 data-nosnippet>1084</a>                .collect();
+<a href=#1085 id=1085 data-nosnippet>1085</a>            <span class="macro">assert!</span>(
+<a href=#1086 id=1086 data-nosnippet>1086</a>                req.contains(<span class="kw-2">&amp;</span><span class="string">"kind"</span>),
+<a href=#1087 id=1087 data-nosnippet>1087</a>                <span class="string">"{kind} variant missing 'kind' in required"
+<a href=#1088 id=1088 data-nosnippet>1088</a>            </span>);
+<a href=#1089 id=1089 data-nosnippet>1089</a>            <span class="kw">match </span>kind {
+<a href=#1090 id=1090 data-nosnippet>1090</a>                <span class="string">"cron" </span>=&gt; <span class="macro">assert!</span>(req.contains(<span class="kw-2">&amp;</span><span class="string">"expr"</span>), <span class="string">"cron variant missing 'expr'"</span>),
+<a href=#1091 id=1091 data-nosnippet>1091</a>                <span class="string">"at" </span>=&gt; <span class="macro">assert!</span>(req.contains(<span class="kw-2">&amp;</span><span class="string">"at"</span>), <span class="string">"at variant missing 'at'"</span>),
+<a href=#1092 id=1092 data-nosnippet>1092</a>                <span class="string">"every" </span>=&gt; {
+<a href=#1093 id=1093 data-nosnippet>1093</a>                    <span class="macro">assert!</span>(
+<a href=#1094 id=1094 data-nosnippet>1094</a>                        req.contains(<span class="kw-2">&amp;</span><span class="string">"every_ms"</span>),
+<a href=#1095 id=1095 data-nosnippet>1095</a>                        <span class="string">"every variant missing 'every_ms'"
+<a href=#1096 id=1096 data-nosnippet>1096</a>                    </span>);
+<a href=#1097 id=1097 data-nosnippet>1097</a>                    <span class="macro">assert_eq!</span>(
+<a href=#1098 id=1098 data-nosnippet>1098</a>                        variant[<span class="string">"properties"</span>][<span class="string">"every_ms"</span>][<span class="string">"type"</span>].as_str(),
+<a href=#1099 id=1099 data-nosnippet>1099</a>                        <span class="prelude-val">Some</span>(<span class="string">"integer"</span>),
+<a href=#1100 id=1100 data-nosnippet>1100</a>                        <span class="string">"every_ms must be typed as integer"
+<a href=#1101 id=1101 data-nosnippet>1101</a>                    </span>);
+<a href=#1102 id=1102 data-nosnippet>1102</a>                }
+<a href=#1103 id=1103 data-nosnippet>1103</a>                <span class="kw">_ </span>=&gt; <span class="macro">panic!</span>(<span class="string">"unexpected kind: {kind}"</span>),
+<a href=#1104 id=1104 data-nosnippet>1104</a>            }
+<a href=#1105 id=1105 data-nosnippet>1105</a>        }
+<a href=#1106 id=1106 data-nosnippet>1106</a>
+<a href=#1107 id=1107 data-nosnippet>1107</a>        <span class="kw">let </span>cron_variant = one_of
+<a href=#1108 id=1108 data-nosnippet>1108</a>            .iter()
+<a href=#1109 id=1109 data-nosnippet>1109</a>            .find(|variant| variant[<span class="string">"properties"</span>][<span class="string">"kind"</span>][<span class="string">"enum"</span>][<span class="number">0</span>] == <span class="string">"cron"</span>)
+<a href=#1110 id=1110 data-nosnippet>1110</a>            .expect(<span class="string">"cron variant"</span>);
+<a href=#1111 id=1111 data-nosnippet>1111</a>        <span class="kw">let </span>cron_tz_description = cron_variant[<span class="string">"properties"</span>][<span class="string">"tz"</span>][<span class="string">"description"</span>]
+<a href=#1112 id=1112 data-nosnippet>1112</a>            .as_str()
+<a href=#1113 id=1113 data-nosnippet>1113</a>            .expect(<span class="string">"cron tz description"</span>);
+<a href=#1114 id=1114 data-nosnippet>1114</a>        <span class="macro">assert!</span>(
+<a href=#1115 id=1115 data-nosnippet>1115</a>            cron_tz_description.contains(<span class="string">"runtime local timezone"</span>),
+<a href=#1116 id=1116 data-nosnippet>1116</a>            <span class="string">"cron tz description must match scheduler fallback: {cron_tz_description}"
+<a href=#1117 id=1117 data-nosnippet>1117</a>        </span>);
+<a href=#1118 id=1118 data-nosnippet>1118</a>        <span class="macro">assert!</span>(
+<a href=#1119 id=1119 data-nosnippet>1119</a>            cron_tz_description.contains(<span class="string">"explicit IANA timezone"</span>),
+<a href=#1120 id=1120 data-nosnippet>1120</a>            <span class="string">"cron tz description should recommend explicit IANA timezones: {cron_tz_description}"
+<a href=#1121 id=1121 data-nosnippet>1121</a>        </span>);
+<a href=#1122 id=1122 data-nosnippet>1122</a>        <span class="macro">assert!</span>(
+<a href=#1123 id=1123 data-nosnippet>1123</a>            !cron_tz_description.contains(<span class="string">"Defaults to UTC"</span>),
+<a href=#1124 id=1124 data-nosnippet>1124</a>            <span class="string">"cron tz description must not claim a UTC default"
+<a href=#1125 id=1125 data-nosnippet>1125</a>        </span>);
+<a href=#1126 id=1126 data-nosnippet>1126</a>
+<a href=#1127 id=1127 data-nosnippet>1127</a>        <span class="kw">let </span>at_variant = one_of
+<a href=#1128 id=1128 data-nosnippet>1128</a>            .iter()
+<a href=#1129 id=1129 data-nosnippet>1129</a>            .find(|variant| variant[<span class="string">"properties"</span>][<span class="string">"kind"</span>][<span class="string">"enum"</span>][<span class="number">0</span>] == <span class="string">"at"</span>)
+<a href=#1130 id=1130 data-nosnippet>1130</a>            .expect(<span class="string">"at variant"</span>);
+<a href=#1131 id=1131 data-nosnippet>1131</a>        <span class="kw">let </span>at_description = at_variant[<span class="string">"properties"</span>][<span class="string">"at"</span>][<span class="string">"description"</span>]
+<a href=#1132 id=1132 data-nosnippet>1132</a>            .as_str()
+<a href=#1133 id=1133 data-nosnippet>1133</a>            .expect(<span class="string">"at description"</span>);
+<a href=#1134 id=1134 data-nosnippet>1134</a>        <span class="macro">assert!</span>(
+<a href=#1135 id=1135 data-nosnippet>1135</a>            at_description.contains(<span class="string">"RFC3339 timestamp with explicit Z or offset"</span>),
+<a href=#1136 id=1136 data-nosnippet>1136</a>            <span class="string">"at description should require explicit Z or offset: {at_description}"
+<a href=#1137 id=1137 data-nosnippet>1137</a>        </span>);
+<a href=#1138 id=1138 data-nosnippet>1138</a>    }
+<a href=#1139 id=1139 data-nosnippet>1139</a>}
 </code></pre></div></section></main></body></html>
