@@ -37,7 +37,7 @@
             const path_to_root = "../";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "../searchindex-d3b7afed.js";
+            window.path_to_searchindex_js = "../searchindex-6b508386.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-a9acbc87.js"></script>
@@ -288,7 +288,7 @@ reasoning_effort = "none"
 <p>If a provider returns the entire response in one shot (older OpenAI-compat endpoints, legacy Gemini), the runtime synthesises a single <code>TextDelta</code> containing the full reply followed by <code>Final</code>. Channel adapters still work — they just don’t see partials.</p>
 <h2 id="code-references"><a class="header" href="#code-references">Code references</a></h2>
 <ul>
-<li><code>crates/zeroclaw-api/src/provider.rs</code> — <code>Provider</code> trait, <code>StreamEvent</code> enum</li>
+<li><code>crates/zeroclaw-api/src/model_provider.rs</code> — <code>ModelProvider</code> trait, <code>StreamEvent</code> enum</li>
 <li><code>crates/zeroclaw-providers/src/compatible.rs</code> — OpenAI-compat SSE parser</li>
 <li><code>crates/zeroclaw-providers/src/anthropic.rs</code> — Anthropic streaming</li>
 <li><code>crates/zeroclaw-providers/src/ollama.rs</code> — Ollama streaming</li>
