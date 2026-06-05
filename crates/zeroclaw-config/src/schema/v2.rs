@@ -620,6 +620,10 @@ fn normalize_provider_type(
         "friendli" | "friendliai" => Some("friendli"),
         // Lepton: was lepton|lepton-ai
         "lepton" | "lepton-ai" => Some("lepton"),
+        // Lambda AI: lambda_ai|lambda-ai
+        "lambda_ai" | "lambda-ai" => Some("lambda_ai"),
+        // GitHub Models: github_models|github-models
+        "github_models" | "github-models" => Some("github_models"),
         // Stepfun: was stepfun|step (stepfun-intl handled below as variant)
         "stepfun" | "step" => Some("stepfun"),
         // KiloCli: was kilocli|kilo

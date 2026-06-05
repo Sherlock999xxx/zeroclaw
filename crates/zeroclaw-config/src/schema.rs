@@ -2522,6 +2522,183 @@ pub struct LeptonModelProviderConfig {
     pub base: ModelProviderConfig,
 }
 
+// ── Morph ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum MorphEndpoint {
+    #[default]
+    Default,
+}
+impl ModelEndpoint for MorphEndpoint {
+    fn uri(&self) -> &'static str {
+        match self {
+            Self::Default => "https://api.morphllm.com/v1",
+        }
+    }
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "providers.models.morph"]
+pub struct MorphModelProviderConfig {
+    #[nested]
+    #[serde(flatten)]
+    pub base: ModelProviderConfig,
+}
+
+// ── GitHub Models ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum GithubModelsEndpoint {
+    #[default]
+    Default,
+}
+impl ModelEndpoint for GithubModelsEndpoint {
+    fn uri(&self) -> &'static str {
+        match self {
+            Self::Default => "https://models.github.ai/inference",
+        }
+    }
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "providers.models.github_models"]
+pub struct GithubModelsModelProviderConfig {
+    #[nested]
+    #[serde(flatten)]
+    pub base: ModelProviderConfig,
+}
+
+// ── Upstage ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UpstageEndpoint {
+    #[default]
+    Default,
+}
+impl ModelEndpoint for UpstageEndpoint {
+    fn uri(&self) -> &'static str {
+        match self {
+            Self::Default => "https://api.upstage.ai/v1",
+        }
+    }
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "providers.models.upstage"]
+pub struct UpstageModelProviderConfig {
+    #[nested]
+    #[serde(flatten)]
+    pub base: ModelProviderConfig,
+}
+
+// ── Featherless ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum FeatherlessEndpoint {
+    #[default]
+    Default,
+}
+impl ModelEndpoint for FeatherlessEndpoint {
+    fn uri(&self) -> &'static str {
+        match self {
+            Self::Default => "https://api.featherless.ai/v1",
+        }
+    }
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "providers.models.featherless"]
+pub struct FeatherlessModelProviderConfig {
+    #[nested]
+    #[serde(flatten)]
+    pub base: ModelProviderConfig,
+}
+
+// ── Arcee ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ArceeEndpoint {
+    #[default]
+    Default,
+}
+impl ModelEndpoint for ArceeEndpoint {
+    fn uri(&self) -> &'static str {
+        match self {
+            // Arcee publishes its OpenAI-compatible API at the `/api/v1` path
+            // (not the conventional `/v1` root). Confirmed against Arcee docs.
+            Self::Default => "https://api.arcee.ai/api/v1",
+        }
+    }
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "providers.models.arcee"]
+pub struct ArceeModelProviderConfig {
+    #[nested]
+    #[serde(flatten)]
+    pub base: ModelProviderConfig,
+}
+
+// ── Lambda AI ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum LambdaAiEndpoint {
+    #[default]
+    Default,
+}
+impl ModelEndpoint for LambdaAiEndpoint {
+    fn uri(&self) -> &'static str {
+        match self {
+            Self::Default => "https://api.lambda.ai/v1",
+        }
+    }
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "providers.models.lambda_ai"]
+pub struct LambdaAiModelProviderConfig {
+    #[nested]
+    #[serde(flatten)]
+    pub base: ModelProviderConfig,
+}
+
+// ── Inception ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum InceptionEndpoint {
+    #[default]
+    Default,
+}
+impl ModelEndpoint for InceptionEndpoint {
+    fn uri(&self) -> &'static str {
+        match self {
+            Self::Default => "https://api.inceptionlabs.ai/v1",
+        }
+    }
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "providers.models.inception"]
+pub struct InceptionModelProviderConfig {
+    #[nested]
+    #[serde(flatten)]
+    pub base: ModelProviderConfig,
+}
+
 // ── Synthetic ──
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -2736,6 +2913,13 @@ impl_default_family_endpoint! {
     OsaurusModelProviderConfig,
     LitellmModelProviderConfig,
     LeptonModelProviderConfig,
+    MorphModelProviderConfig,
+    GithubModelsModelProviderConfig,
+    UpstageModelProviderConfig,
+    FeatherlessModelProviderConfig,
+    ArceeModelProviderConfig,
+    LambdaAiModelProviderConfig,
+    InceptionModelProviderConfig,
     SyntheticModelProviderConfig,
     OpencodeModelProviderConfig,
     KiloCliModelProviderConfig,
@@ -16454,6 +16638,13 @@ impl_enum_prop_kind!(
     OsaurusEndpoint,
     LitellmEndpoint,
     LeptonEndpoint,
+    MorphEndpoint,
+    GithubModelsEndpoint,
+    UpstageEndpoint,
+    FeatherlessEndpoint,
+    ArceeEndpoint,
+    LambdaAiEndpoint,
+    InceptionEndpoint,
     SyntheticEndpoint,
     OpencodeEndpoint,
     KiloCliEndpoint,

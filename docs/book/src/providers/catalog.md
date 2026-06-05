@@ -140,6 +140,13 @@ Every OpenAI-compatible vendor has its own canonical slot. There is no generic `
 | `astrai`, `avian`, `deepmyst`, `venice`, `novita`, `nvidia` | per vendor | |
 | `vercel`, `cloudflare`, `ovh` | per vendor gateway | |
 | `lepton`, `synthetic`, `opencode` | per vendor | |
+| `morph` | `https://api.morphllm.com/v1` | Fast apply-edits models |
+| `github_models` | `https://models.github.ai/inference` | OpenAI/Meta/Microsoft models via a GitHub PAT (alias `github-models`) |
+| `upstage` | `https://api.upstage.ai/v1` | Solar Pro / Solar Mini |
+| `featherless` | `https://api.featherless.ai/v1` | Serverless open-weight models |
+| `arcee` | `https://api.arcee.ai/api/v1` | Trinity / Conductor / Maestro — note the non-standard `/api/v1` path |
+| `lambda_ai` | `https://api.lambda.ai/v1` | Lambda hosted inference (alias `lambda-ai`) |
+| `inception` | `https://api.inceptionlabs.ai/v1` | Mercury diffusion LLM |
 | `lmstudio`, `llamacpp`, `sglang`, `vllm`, `osaurus`, `litellm` | `http://localhost:<port>/v1` | Local-server slots with sensible defaults |
 
 Worked example (Groq):
