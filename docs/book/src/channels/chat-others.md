@@ -166,6 +166,42 @@ nickserv_password = "..."          # optional
 
 Classic IRC. Supports SASL, NickServ auth, and multiple channels.
 
+## Twitch chat
+
+```toml
+[channels.twitch.default]
+enabled = true
+bot_username = "mybot"                        # Twitch login of the bot account (lowercased before send)
+oauth_token = "..."                           # SECRET — `oauth:` prefix added automatically if missing
+channels = ["#mychannel", "anotherchannel"]   # `#` prefix added if missing; entries are lowercased
+mention_only = false                          # respond only when @-mentioned
+```
+
+Twitch chat is a thin adapter over the IRC channel — the `channel-twitch`
+feature depends on `channel-irc`, and all connect/reconnect, message
+splitting, and nick handling is shared with the plain IRC channel. The
+implementation ships in #7275.
+
+- **Slot:** alias-keyed `[channels.twitch.<alias>]`.
+- **Auth model:** Twitch chat is IRC-compatible. The OAuth token is sent as
+  `PASS oauth:{token}` against `irc.chat.twitch.tv:6697` (TLS). Mint the token
+  at <https://twitchapps.com/tmi/> for one-click setup, or via the Twitch CLI
+  Device Code Flow if you need scope control. The `oauth:` prefix is added
+  automatically if you omit it.
+- **Channel names:** case-insensitive Twitch logins; the adapter auto-prefixes
+  `#` and lowercases each entry, and drops empty entries (e.g. trailing commas).
+- **Inbound:** every message in a joined channel arrives with `channel =
+  "twitch"` so routing/auditing distinguishes it from plain IRC.
+- **Allowlisting:** like IRC, sender allowlisting is configured through
+  `[peer_groups]` bound to `twitch.<alias>` (resolved at message time), not a
+  static config field. Matching is case-insensitive; `"*"` allows anyone.
+- **Outbound:** plain `PRIVMSG #channel :body`; long messages are split by the
+  IRC channel's existing chunker.
+- **Out of scope (v1):** IRCv3 message tags (badges, color, sub status),
+  whispers (modern whispers use the Helix API), Twitch moderation commands
+  (`/timeout`, `/ban`, `/announce`, `/raid`), and subscription/bits/
+  channel-points events.
+
 ## Mochat
 
 ```toml
