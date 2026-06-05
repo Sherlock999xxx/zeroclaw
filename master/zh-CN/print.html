@@ -38,10 +38,10 @@
             const path_to_root = "";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "searchindex-4feec8b6.js";
+            window.path_to_searchindex_js = "searchindex-e5d44592.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-92e0b634.js"></script>
+        <script src="toc-2b885720.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -272,6 +272,16 @@
 <li><strong><a href="https://github.com/zeroclaw-labs/zeroclaw/issues/5579">#5579</a></strong> — 工程基础设施：CI 流水线、发布自动化。</li>
 <li><strong><a href="https://github.com/zeroclaw-labs/zeroclaw/issues/5615">#5615</a></strong> — 贡献文化：人类/AI 共同署名规范。</li>
 <li><strong><a href="https://github.com/zeroclaw-labs/zeroclaw/issues/5653">#5653</a></strong> — 零妥协：错误处理、死代码策略、发布就绪状态。</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="入门指南"><a class="header" href="#入门指南">入门指南</a></h1>
+<p>如果你是第一次安装 ZeroClaw，或想选择最简单的路径来启动一个可用的智能体，请从这里开始。</p>
+<ul>
+<li><a href="#快速入门">快速入门</a> 涵盖安装、引导和第一次聊天。</li>
+<li><a href="#yolo-模式">YOLO 模式</a> 记录最快但不安全的本地开发预设。</li>
+<li><a href="#多模型配置">多模型设置</a> 说明提供商和路由基础。</li>
+<li><a href="#zerocode">zerocode</a> 介绍终端 UI。</li>
+<li><a href="#语言和翻译">语言和翻译</a> 涵盖语言区域选择。</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="快速入门"><a class="header" href="#快速入门">快速入门</a></h1>
@@ -856,9 +866,19 @@ zeroclaw locales fetch ja --catalog cli,zerocode   # CLI + TUI
 <li><strong>某个特定字符串显示为英文，而其余内容已翻译。</strong> 该字符串尚无对应译文，会按设计回退至英文。</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="安装-1"><a class="header" href="#安装-1">安装</a></h1>
+<p>为你的操作系统或部署目标选择安装路径。</p>
+<ul>
+<li><a href="#linux">Linux</a></li>
+<li><a href="#macos">macOS</a></li>
+<li><a href="#windows">Windows</a></li>
+<li><a href="#docker-与容器">Docker 和容器</a></li>
+<li><a href="#服务管理">服务管理</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="linux"><a class="header" href="#linux">Linux</a></h1>
 <p>安装、更新、作为服务运行以及卸载——适用于所有 Linux 发行版。</p>
-<h2 id="安装-1"><a class="header" href="#安装-1">安装</a></h2>
+<h2 id="安装-2"><a class="header" href="#安装-2">安装</a></h2>
 <p><code>install.sh</code> 是每个 Linux 发行版推荐的路径。可以通过 <code>curl</code> 管道传输，或克隆后在本地运行——两者效果相同。</p>
 <h3 id="选项-1--通过-curl-安装-installsh最快"><a class="header" href="#选项-1--通过-curl-安装-installsh最快">选项 1 — 通过 curl 安装 <code>install.sh</code>（最快）</a></h3>
 <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash
@@ -963,7 +983,7 @@ brew uninstall zeroclaw
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="macos"><a class="header" href="#macos">macOS</a></h1>
 <p>在 macOS（Intel 或 Apple Silicon）上安装、更新、作为 LaunchAgent 运行以及卸载。</p>
-<h2 id="安装-2"><a class="header" href="#安装-2">安装</a></h2>
+<h2 id="安装-3"><a class="header" href="#安装-3">安装</a></h2>
 <p>推荐使用 <code>install.sh</code>；如果你希望集成 <code>brew services</code>，Homebrew 是一个不错的选择。</p>
 <h3 id="选项-1--通过-curl-安装-installsh最快-1"><a class="header" href="#选项-1--通过-curl-安装-installsh最快-1">选项 1 — 通过 curl 安装 <code>install.sh</code>（最快）</a></h3>
 <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash
@@ -1078,7 +1098,7 @@ rm -rf ~/Library/Logs/ZeroClaw
 <h1 id="windows"><a class="header" href="#windows">Windows</a></h1>
 <p>在 Windows 10 / 11 上安装、更新、作为计划任务 / Windows 服务运行以及卸载。</p>
 <p><code>setup.bat</code> 是 <code>install.sh</code> 的 Windows 对应版本——功能相同，只是使用的 Shell 不同。如果您正在运行 WSL2，可以改用 <a href="#linux">Linux 安装指南</a>；<code>install.sh</code> 在 WSL 下可直接运行。</p>
-<h2 id="安装-3"><a class="header" href="#安装-3">安装</a></h2>
+<h2 id="安装-4"><a class="header" href="#安装-4">安装</a></h2>
 <h3 id="选项-1--来自发布的-setupbat"><a class="header" href="#选项-1--来自发布的-setupbat">选项 1 — 来自发布的 <code>setup.bat</code></a></h3>
 <p>下载最新的 ZeroClaw 版本，解压并运行：</p>
 <pre><code class="language-cmd">setup.bat
@@ -2198,6 +2218,17 @@ zeroclaw daemon
 </table>
 </div>
 <p><code>RpcTransport</code> trait 的设计使得额外的传输方式（vsock、自定义 IPC）能够无缝接入，而无需改动分发或会话逻辑。<code>local.rs</code> 模块使用 <code>tokio::io::split</code> 将 Unix 和 Windows 原语封装在单个 <code>LocalTransport</code> struct 之后，因此读写循环可在两个平台间共享。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="参考"><a class="header" href="#参考">参考</a></h1>
+<p>面向需要精确命令、配置、环境和 API 细节的运维人员与集成者的参考资料。</p>
+<ul>
+<li><a href="#zeroclaw-的命令行帮助">命令行界面</a></li>
+<li><a href="#配置参考-1">配置</a></li>
+<li><a href="#环境变量">环境变量</a></li>
+<li><a href="#api-参考">API rustdoc</a></li>
+<li><a href="#网关-http-api">网关 HTTP API</a></li>
+<li><a href="#web-仪表盘gatewayweb_dist_dir">Web 仪表盘</a></li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="zeroclaw-的命令行帮助"><a class="header" href="#zeroclaw-的命令行帮助"><code>zeroclaw</code> 的命令行帮助</a></h1>
 <p>本文档包含 <code>zeroclaw</code> 命令行程序的帮助内容。</p>
@@ -8520,7 +8551,7 @@ echo Web 浏览器：http://localhost:$NOVNC_PORT/vnc.html
 <pre><code class="language-bash">DISPLAY=:99 google-chrome --no-sandbox https://example.com &amp;
 </code></pre>
 <h2 id="chrome-远程桌面"><a class="header" href="#chrome-远程桌面">Chrome 远程桌面</a></h2>
-<h3 id="安装-4"><a class="header" href="#安装-4">安装</a></h3>
+<h3 id="安装-5"><a class="header" href="#安装-5">安装</a></h3>
 <pre><code class="language-bash"># 下载和安装
 wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
 apt-get install -y ./chrome-remote-desktop_current_amd64.deb
@@ -9970,7 +10001,7 @@ provider = "tailscale"       # 或 "cloudflare", "ngrok"
 <li>网络连接（WiFi 或以太网）</li>
 <li>可选：用于硬件集成的 USB 外围设备</li>
 </ul>
-<h3 id="安装-5"><a class="header" href="#安装-5">安装</a></h3>
+<h3 id="安装-6"><a class="header" href="#安装-6">安装</a></h3>
 <p>对于运行 Raspberry Pi OS 的 Pi：</p>
 <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --prebuilt
 </code></pre>
@@ -11649,6 +11680,15 @@ zeroclaw sop show &lt;name&gt;
 <li>当 <code>[observability] backend = "prometheus"</code> 时，<code>/metrics</code> 会暴露观测指标。</li>
 <li>当前导出的名称为 <code>zeroclaw_*</code> 系列（通用运行时指标）。</li>
 <li>通过 <code>sop_status</code> 并设置 <code>include_metrics: true</code> 可以获取特定 SOP 的聚合数据。</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="扩展与插件"><a class="header" href="#扩展与插件">扩展与插件</a></h1>
+<p>在扩展 ZeroClaw 或处理项目工具时，请使用这些页面。</p>
+<ul>
+<li><a href="#插件协议">插件协议</a></li>
+<li><a href="#扩展示例">扩展示例</a></li>
+<li><a href="#在本地构建文档">本地构建文档</a></li>
+<li><a href="#构建-web-仪表板">构建 Web 仪表盘</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <hr>
@@ -16130,6 +16170,20 @@ let _span = span!(
 <p>你最有能力让这些标准落地——不是通过自上而下的强制推行，而是通过在代码中践行这些标准，并在代码审查中明确提及它们。在开源项目中，最有效的教学发生在 PR 讨论和代码注释中，而不是在文档里。本文档提供了相应的术语。在日常审查中一致地使用这些术语，才能将其从纸面上的文字转化为团队共享的实践。</p>
 <p>当你在操作错误路径上看到 <code>.unwrap()</code> 时，应将其命名为操作错误。当看到没有文档的公共函数时，应提出这样的问题：未来的实现者在这里需要了解什么？当看到在合理重构时会失败的测试时，应解释这为何重要。这些不是修正——它们是持续性的指导，而文化 RFC 指出，这是更有经验的贡献者能够提供的最重要的事情之一。</p>
 <hr><div style="break-before: page; page-break-before: always;"></div>
+<h1 id="贡献"><a class="header" href="#贡献">贡献</a></h1>
+<p>在打开 issue、提出架构变更或提交拉取请求之前，请从这里开始。</p>
+<ul>
+<li><a href="#如何贡献">如何贡献</a></li>
+<li><a href="#架构与贡献图">架构与贡献地图</a></li>
+<li><a href="#rfc-流程">RFC 流程</a></li>
+<li><a href="#通信">通信</a></li>
+<li><a href="#隐私与个人身份信息pii纪律">隐私与 PII 纪律</a></li>
+<li><a href="#测试-2">测试</a></li>
+<li><a href="#pr-审查协议">PR 审查协议</a></li>
+<li><a href="#多智能体设置演练">多智能体设置</a></li>
+<li><a href="#贡献者许可协议">贡献者许可协议</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="如何贡献"><a class="header" href="#如何贡献">如何贡献</a></h1>
 <p>我们接受来自任何愿意清晰提交代码、文档、错误报告和反馈的贡献者。本页面涵盖相关机制——如何提交更改、我们在审查中关注的内容，以及你在提交 PR 后可能遇到的情况。</p>
 <p>有关非代码贡献（报告问题、提供反馈、获取帮助），请参阅 <a href="#通信">通信</a>。</p>

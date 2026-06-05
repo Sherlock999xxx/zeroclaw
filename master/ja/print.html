@@ -38,10 +38,10 @@
             const path_to_root = "";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "searchindex-38b2b21f.js";
+            window.path_to_searchindex_js = "searchindex-9fcb62dc.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-961cbe6b.js"></script>
+        <script src="toc-658f1f54.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -211,7 +211,7 @@
 <p>このサイトはドキュメントです。<strong>Reference → CLI</strong> および <strong>Reference → Config</strong> の下にある内容は、ビルド時にコードから直接生成されます（<code>clap</code> の派生と JSON スキーマを使用）。これにより、実際に実行するバイナリと常に同期されます。それ以外の部分は、手書きのユーザー向け資料です。</p>
 <h2 id="どこから始めるか"><a class="header" href="#どこから始めるか">どこから始めるか</a></h2>
 <ul>
-<li>ZeroClaw を初めて使う方へ → <a href="#クイックスタート">クイックスタート</a></li>
+<li>ZeroClaw を初めて使う方へ → <a href="#クイックスタート-1">クイックスタート</a></li>
 <li>安全プロンプトなしで高速に実行したい場合 → <a href="#yoloモード">YOLO モード</a></li>
 <li>特定のプラットフォームにインストールするには？ → <a href="#linux">Linux</a> · <a href="#macos">macOS</a> · <a href="#windows">Windows</a> · <a href="#docker-とコンテナ">Docker</a></li>
 <li>アーキテクチャを理解する？ → <a href="#アーキテクチャの概要">アーキテクチャの概要</a></li>
@@ -275,6 +275,16 @@
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="クイックスタート"><a class="header" href="#クイックスタート">クイックスタート</a></h1>
+<p>ZeroClaw を初めてインストールする場合や、動作するエージェントへの最短ルートを選ぶ場合は、ここから始めてください。</p>
+<ul>
+<li><a href="#クイックスタート-1">クイックスタート</a> では、インストール、オンボーディング、最初のチャットを扱います。</li>
+<li><a href="#yoloモード">YOLO モード</a> では、最速だが安全ではないローカル開発プリセットを説明します。</li>
+<li><a href="#マルチモデルのセットアップ">マルチモデル設定</a> では、プロバイダーとルートの基本を説明します。</li>
+<li><a href="#zerocode">zerocode</a> では、ターミナル UI を紹介します。</li>
+<li><a href="#言語と翻訳">言語と翻訳</a> では、ロケールの選択を扱います。</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="クイックスタート-1"><a class="header" href="#クイックスタート-1">クイックスタート</a></h1>
 <p>エージェントと会話するための最短経路。</p>
 <h2 id="インストール"><a class="header" href="#インストール">インストール</a></h2>
 <p>1つ選んでください：</p>
@@ -856,9 +866,19 @@ zeroclaw locales fetch ja --catalog cli,zerocode   # CLI + TUI
 <li><strong>一部の特定の文字列は、他が翻訳されているにもかかわらず英語のままです。</strong> その個別の文字列にはまだ翻訳がなく、仕様上、英語にフォールバックします。</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="インストール-1"><a class="header" href="#インストール-1">インストール</a></h1>
+<p>使用するオペレーティングシステムまたはデプロイ先に合わせて、インストール手順を選んでください。</p>
+<ul>
+<li><a href="#linux">Linux</a></li>
+<li><a href="#macos">macOS</a></li>
+<li><a href="#windows">Windows</a></li>
+<li><a href="#docker-とコンテナ">Docker とコンテナ</a></li>
+<li><a href="#サービス管理">サービス管理</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="linux"><a class="header" href="#linux">Linux</a></h1>
 <p>インストール、更新、サービスとして実行、アンインストール — すべてのLinuxディストリビューションに対応。</p>
-<h2 id="インストール-1"><a class="header" href="#インストール-1">インストール</a></h2>
+<h2 id="インストール-2"><a class="header" href="#インストール-2">インストール</a></h2>
 <p><code>install.sh</code> はすべての Linux ディストリビューションで推奨されるパスです。<code>curl</code> からパイプラインで実行するか、ローカルでクローンして実行してください。どちらも同じ結果になります。</p>
 <h3 id="オプション-1--curl-による-installsh-のインストール最速"><a class="header" href="#オプション-1--curl-による-installsh-のインストール最速">オプション 1 — curl による <code>install.sh</code> のインストール（最速）</a></h3>
 <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash
@@ -957,13 +977,13 @@ brew uninstall zeroclaw
 <h2 id="次へ-1"><a class="header" href="#次へ-1">次へ</a></h2>
 <ul>
 <li><a href="#サービス管理">サービス管理</a> — systemd ユニットの詳細、ログ、自動起動</li>
-<li><a href="#クイックスタート">クイックスタート</a> — インストール後、すぐに使い始める</li>
+<li><a href="#クイックスタート-1">クイックスタート</a> — インストール後、すぐに使い始める</li>
 <li><a href="#操作--概要">Operations → 概要</a> — 本番環境で実行</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="macos"><a class="header" href="#macos">macOS</a></h1>
 <p>macOS（Intel または Apple Silicon）でインストール、更新、LaunchAgent として実行、およびアンインストールを行います。</p>
-<h2 id="インストール-2"><a class="header" href="#インストール-2">インストール</a></h2>
+<h2 id="インストール-3"><a class="header" href="#インストール-3">インストール</a></h2>
 <p><code>install.sh</code> が推奨されるパスです。<code>brew services</code> の統合が必要な場合は、Homebrew が適切な代替手段となります。</p>
 <h3 id="オプション-1--curl-による-installsh-のインストール最速-1"><a class="header" href="#オプション-1--curl-による-installsh-のインストール最速-1">オプション 1 — curl による <code>install.sh</code> のインストール（最速）</a></h3>
 <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash
@@ -1071,14 +1091,14 @@ rm -rf ~/Library/Logs/ZeroClaw
 <h2 id="次へ-2"><a class="header" href="#次へ-2">次へ</a></h2>
 <ul>
 <li><a href="#サービス管理">サービス管理</a></li>
-<li><a href="#クイックスタート">クイックスタート</a></li>
+<li><a href="#クイックスタート-1">クイックスタート</a></li>
 <li><a href="#操作--概要">操作 → 概要</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="windows"><a class="header" href="#windows">Windows</a></h1>
 <p>Windows 10 / 11 でインストール、更新、スケジュールタスク / Windows サービスとして実行、およびアンインストールを行います。</p>
 <p><code>setup.bat</code> は <code>install.sh</code> の Windows 版です。同じ役割を果たしますが、シェルが異なります。WSL2 を実行している場合は、代わりに <a href="#linux">Linux のセットアップ</a> を参照してください。<code>install.sh</code> は WSL 上でそのまま実行できます。</p>
-<h2 id="インストール-3"><a class="header" href="#インストール-3">インストール</a></h2>
+<h2 id="インストール-4"><a class="header" href="#インストール-4">インストール</a></h2>
 <h3 id="オプション-1--リリースからの-setupbat"><a class="header" href="#オプション-1--リリースからの-setupbat">オプション 1 — リリースからの <code>setup.bat</code></a></h3>
 <p>最新の ZeroClaw リリースをダウンロードし、解凍して、以下を実行してください：</p>
 <pre><code class="language-cmd">setup.bat
@@ -1185,7 +1205,7 @@ rmdir /s /q "%LOCALAPPDATA%\ZeroClaw"
 <h2 id="次へ-3"><a class="header" href="#次へ-3">次へ</a></h2>
 <ul>
 <li><a href="#サービス管理">サービス管理</a></li>
-<li><a href="#クイックスタート">クイックスタート</a></li>
+<li><a href="#クイックスタート-1">クイックスタート</a></li>
 <li><a href="#操作--概要">操作 → 概要</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -2270,6 +2290,17 @@ zeroclaw daemon
 </table>
 </div>
 <p><code>RpcTransport</code>トレイトは、追加のトランスポート（vsock、カスタムIPC）をディスパッチやセッションのロジックに手を加えることなく組み込めるように設計されています。<code>local.rs</code>モジュールは、<code>tokio::io::split</code>を使用して、UnixとWindowsのプリミティブを単一の<code>LocalTransport</code>構造体の背後にラップするため、読み取り/書き込みループは両プラットフォーム間で共有されます。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="リファレンス"><a class="header" href="#リファレンス">リファレンス</a></h1>
+<p>正確なコマンド、設定、環境、API の詳細が必要な運用者とインテグレーター向けのリファレンスです。</p>
+<ul>
+<li><a href="#zeroclaw-のコマンドラインヘルプ">CLI</a></li>
+<li><a href="#設定リファレンス-1">設定</a></li>
+<li><a href="#環境変数">環境変数</a></li>
+<li><a href="#api-リファレンス">API rustdoc</a></li>
+<li><a href="#ゲートウェイ-http-api">ゲートウェイ HTTP API</a></li>
+<li><a href="#web-ダッシュボード-gatewayweb_dist_dir">Web ダッシュボード</a></li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="zeroclaw-のコマンドラインヘルプ"><a class="header" href="#zeroclaw-のコマンドラインヘルプ"><code>zeroclaw</code> のコマンドラインヘルプ</a></h1>
 <p>このドキュメントには、<code>zeroclaw</code> コマンドラインプログラムのヘルプコンテンツが含まれています。</p>
@@ -7151,7 +7182,7 @@ zeroclaw config set channels.matrix.device-id &lt;new_device_id&gt;
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="mattermost"><a class="header" href="#mattermost">Mattermost</a></h1>
 <p>REST v4ポーリングクライアント。セルフホスト型、オンプレミス型、またはソブリンクラウド型のMattermostサーバーはすべて同じ方法で動作します。ボットは読み取り可能なチャンネルを3秒ごとにポーリングして新しい投稿を取得し、返信投稿は<code>POST /api/v4/posts</code>経由で送信されます。</p>
-<h2 id="クイックスタート-1"><a class="header" href="#クイックスタート-1">クイックスタート</a></h2>
+<h2 id="クイックスタート-2"><a class="header" href="#クイックスタート-2">クイックスタート</a></h2>
 <p>マルチチャネルかつDM対応のボットの最小構成:</p>
 <pre><code class="language-toml">[channels.mattermost.work]
 enabled = true
@@ -8595,7 +8626,7 @@ echo "  Web ブラウザ: http://localhost:$NOVNC_PORT/vnc.html"
 <pre><code class="language-bash">DISPLAY=:99 google-chrome --no-sandbox https://example.com &amp;
 </code></pre>
 <h2 id="chrome-remote-desktop"><a class="header" href="#chrome-remote-desktop">Chrome Remote Desktop</a></h2>
-<h3 id="インストール-4"><a class="header" href="#インストール-4">インストール</a></h3>
+<h3 id="インストール-5"><a class="header" href="#インストール-5">インストール</a></h3>
 <pre><code class="language-bash"># ダウンロードしてインストール
 wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
 apt-get install -y ./chrome-remote-desktop_current_amd64.deb
@@ -10045,7 +10076,7 @@ provider = "tailscale"       # または "cloudflare", "ngrok"
 <li>ネットワーク接続（WiFi またはイーサネット）</li>
 <li>オプション: ハードウェア統合用のUSB周辺機器</li>
 </ul>
-<h3 id="インストール-5"><a class="header" href="#インストール-5">インストール</a></h3>
+<h3 id="インストール-6"><a class="header" href="#インストール-6">インストール</a></h3>
 <p>Raspberry Pi OS を実行している Pi の場合:</p>
 <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --prebuilt
 </code></pre>
@@ -11804,6 +11835,15 @@ zeroclaw sop show &lt;name&gt;
 <li>SOP 固有の集計は <code>sop_status</code> (with <code>include_metrics: true</code>) を通じて利用可能です。</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="拡張とプラグイン"><a class="header" href="#拡張とプラグイン">拡張とプラグイン</a></h1>
+<p>ZeroClaw を拡張する場合やプロジェクトのツール類に取り組む場合は、これらのページを参照してください。</p>
+<ul>
+<li><a href="#プラグインプロトコル">プラグインプロトコル</a></li>
+<li><a href="#拡張機能の例">拡張例</a></li>
+<li><a href="#ドキュメントをローカルでビルドする">ドキュメントをローカルでビルドする</a></li>
+<li><a href="#webダッシュボードのビルド">Web ダッシュボードをビルドする</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <hr>
 <p>type: reference status: accepted last-reviewed: 2026-04-19 relates-to:</p>
 <ul>
@@ -12012,7 +12052,7 @@ rustup target add wasm32-wasip1
 cargo build --target wasm32-wasip1 --release
 </code></pre>
 <p>出力<code>.wasm</code>ファイルは<code>target/wasm32-wasip1/release/&lt;crate_name&gt;.wasm</code>にあります。<code>manifest.toml</code>と同じ場所にコピーします。</p>
-<h3 id="インストール-6"><a class="header" href="#インストール-6">インストール</a></h3>
+<h3 id="インストール-7"><a class="header" href="#インストール-7">インストール</a></h3>
 <pre><code class="language-bash"># プラグインディレクトリにコピー
 zeroclaw plugin install /path/to/my-plugin/
 
@@ -12537,7 +12577,7 @@ cargo mdbook stats   # カバレッジを確認します
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="webダッシュボードのビルド"><a class="header" href="#webダッシュボードのビルド">Webダッシュボードのビルド</a></h1>
 <p><code>web/</code> にある Web ダッシュボードは、Vite + React + TypeScript アプリです。その TypeScript API クライアントは手書きではなく、ゲートウェイのランタイム OpenAPI 仕様から生成されます。仕様のスナップショットと生成されたクライアントはどちらも派生成果物であり、いずれもコミットされません。</p>
-<h2 id="クイックスタート-2"><a class="header" href="#クイックスタート-2">クイックスタート</a></h2>
+<h2 id="クイックスタート-3"><a class="header" href="#クイックスタート-3">クイックスタート</a></h2>
 <pre><code class="language-bash">cargo web build         # production bundle を web/dist/ へ
 cargo web dev           HMR 対応の vite 開発サーバー
 cargo web check         # typecheck のみ (gen-api + tsc -b)
@@ -16302,6 +16342,20 @@ let _span = span!(
 <p>これらの基準を実践に移すのに最も適した立場にいるのはあなたです。トップダウンで強制するのではなく、自分のコードで基準を実践し、レビューでその名前を明示的に呼び出すことで実現できます。オープンソースプロジェクトにおいて最も効果的な教育は、ドキュメントではなく、PRのディスカッションやコードコメントの中で行われます。このドキュメントは、そのための用語集を提供します。日常的なレビューでこれを一貫して使用することで、単なる紙上の言葉から共有された実践へと変化させます。</p>
 <p>運用エラーのパスで <code>.unwrap()</code> を見つけたら、それを運用エラーとして命名してください。ドキュメントがない公開関数を見つけたら、将来の実装者がここで知る必要があることは何かと自問してください。有効なリファクタリングで壊れてしまうテストを見つけたら、それがなぜ重要なのかを説明してください。これらは修正ではなく、文化 RFC が最も重要なものの一つとして特定した、より経験豊富なコントリビューターが提供できる継続的なメンターシップです。</p>
 <hr><div style="break-before: page; page-break-before: always;"></div>
+<h1 id="貢献する"><a class="header" href="#貢献する">貢献する</a></h1>
+<p>Issue を開く、アーキテクチャ変更を提案する、またはプルリクエストを送る前に、ここから始めてください。</p>
+<ul>
+<li><a href="#貢献する方法">貢献方法</a></li>
+<li><a href="#アーキテクチャとコントリビューションマップ">アーキテクチャとコントリビューションのマップ</a></li>
+<li><a href="#rfc-プロセス">RFC プロセス</a></li>
+<li><a href="#通信">通信</a></li>
+<li><a href="#プライバシーとpiiの規律">プライバシーと PII の規律</a></li>
+<li><a href="#テスト-2">テスト</a></li>
+<li><a href="#prレビュープロトコル">PR レビュープロトコル</a></li>
+<li><a href="#マルチエージェントのセットアップ手順">マルチエージェント設定</a></li>
+<li><a href="#コントリビューターライセンス契約">コントリビューターライセンス契約</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="貢献する方法"><a class="header" href="#貢献する方法">貢献する方法</a></h1>
 <p>私たちは、明確に報告してくれる方からのコード、ドキュメント、バグレポート、フィードバックを受け付けています。このページでは、変更をどのように提出するか、レビューで何を重視しているか、PR をオープンした後に何を期待すべきかについて説明します。</p>
 <p>コード以外の貢献（問題の報告、フィードバック、ヘルプの取得など）については、<a href="#通信">コミュニケーション</a> を参照してください。</p>

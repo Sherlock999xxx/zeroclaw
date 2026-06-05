@@ -38,10 +38,10 @@
             const path_to_root = "";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "searchindex-057918ca.js";
+            window.path_to_searchindex_js = "searchindex-107a6783.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-836a5a90.js"></script>
+        <script src="toc-a9acbc87.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -272,6 +272,16 @@
 <li><strong><a href="https://github.com/zeroclaw-labs/zeroclaw/issues/5579">#5579</a></strong> — Engineering infrastructure: CI pipelines, release automation.</li>
 <li><strong><a href="https://github.com/zeroclaw-labs/zeroclaw/issues/5615">#5615</a></strong> — Contribution culture: human/AI co-authorship norms.</li>
 <li><strong><a href="https://github.com/zeroclaw-labs/zeroclaw/issues/5653">#5653</a></strong> — Zero Compromise: error handling, dead-code policy, release-readiness.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h1>
+<p>Start here if you are installing ZeroClaw for the first time or choosing the simplest path to a working agent.</p>
+<ul>
+<li><a href="#quick-start">Quick start</a> covers installation, onboarding, and the first chat.</li>
+<li><a href="#yolo-mode">YOLO mode</a> documents the fastest unsafe local-dev preset.</li>
+<li><a href="#multi-model-setup">Multi-model setup</a> explains provider and route basics.</li>
+<li><a href="#zerocode">zerocode</a> introduces the terminal UI.</li>
+<li><a href="#language--translations">Language and translations</a> covers locale selection.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h1>
@@ -898,6 +908,16 @@ translated for your locale yet. The available catalogues are still installed;
 untranslated strings fall back to English.</li>
 <li><strong>A specific string is in English even though the rest is translated.</strong> That
 individual string has no translation yet and falls back to English by design.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="installation"><a class="header" href="#installation">Installation</a></h1>
+<p>Choose the installation path for your operating system or deployment target.</p>
+<ul>
+<li><a href="#linux">Linux</a></li>
+<li><a href="#macos">macOS</a></li>
+<li><a href="#windows">Windows</a></li>
+<li><a href="#docker--containers">Docker and containers</a></li>
+<li><a href="#service-management">Service management</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="linux"><a class="header" href="#linux">Linux</a></h1>
@@ -2258,6 +2278,17 @@ custom IPC) slot in without touching the dispatch or session logic. The
 <code>local.rs</code> module wraps the Unix and Windows primitives behind a single
 <code>LocalTransport</code> struct using <code>tokio::io::split</code>, so the read/write loop is
 shared across both platforms.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="reference"><a class="header" href="#reference">Reference</a></h1>
+<p>Reference material for operators and integrators who need exact command, configuration, environment, and API details.</p>
+<ul>
+<li><a href="#command-line-help-for-zeroclaw">CLI</a></li>
+<li><a href="#config-reference-1">Config</a></li>
+<li><a href="#environment-variables">Environment variables</a></li>
+<li><a href="#api-reference">API rustdoc</a></li>
+<li><a href="#gateway-http-api">Gateway HTTP API</a></li>
+<li><a href="#web-dashboard-gatewayweb_dist_dir">Web dashboard</a></li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="command-line-help-for-zeroclaw"><a class="header" href="#command-line-help-for-zeroclaw">Command-Line Help for <code>zeroclaw</code></a></h1>
 <p>This document contains the help content for the <code>zeroclaw</code> command-line program.</p>
@@ -12298,6 +12329,15 @@ zeroclaw sop show &lt;name&gt;
 <li>SOP-specific aggregates are available through <code>sop_status</code> with <code>include_metrics: true</code>.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="extending--plugins"><a class="header" href="#extending--plugins">Extending &amp; Plugins</a></h1>
+<p>Use these pages when extending ZeroClaw or working on project tooling.</p>
+<ul>
+<li><a href="#plugin-protocol">Plugin protocol</a></li>
+<li><a href="#extension-examples">Extension examples</a></li>
+<li><a href="#building-the-docs-locally">Building the docs locally</a></li>
+<li><a href="#building-the-web-dashboard">Building the web dashboard</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <hr>
 <p>type: reference
 status: accepted
@@ -17337,6 +17377,20 @@ that matters. These are not corrections — they are the ongoing mentorship that
 culture RFC identified as one of the most important things a more experienced contributor
 can offer.</p>
 <hr><div style="break-before: page; page-break-before: always;"></div>
+<h1 id="contributing"><a class="header" href="#contributing">Contributing</a></h1>
+<p>Start here before opening issues, proposing architecture changes, or submitting pull requests.</p>
+<ul>
+<li><a href="#how-to-contribute">How to contribute</a></li>
+<li><a href="#architecture-and-contribution-map">Architecture and contribution map</a></li>
+<li><a href="#rfc-process">RFC process</a></li>
+<li><a href="#communication">Communication</a></li>
+<li><a href="#privacy-and-pii-discipline">Privacy and PII discipline</a></li>
+<li><a href="#testing-2">Testing</a></li>
+<li><a href="#pr-review-protocol">PR review protocol</a></li>
+<li><a href="#multi-agent-setup-walkthrough">Multi-agent setup</a></li>
+<li><a href="#contributor-license-agreement">Contributor License Agreement</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="how-to-contribute"><a class="header" href="#how-to-contribute">How to Contribute</a></h1>
 <p>We accept code, docs, bug reports, and feedback from anyone willing to file them clearly. This page covers the mechanics — how to get a change in, what we look for in review, and what to expect after you open a PR.</p>
 <p>See <a href="#communication">Communication</a> for non-code contributions (reporting issues, feedback, getting help).</p>

@@ -38,10 +38,10 @@
             const path_to_root = "";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "searchindex-ef33477f.js";
+            window.path_to_searchindex_js = "searchindex-36283083.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4cf32d98.js"></script>
+        <script src="toc-733029f0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -272,6 +272,16 @@
 <li><strong><a href="https://github.com/zeroclaw-labs/zeroclaw/issues/5579">#5579</a></strong> — Infrastructure d’ingénierie : pipelines CI, automatisation des versions.</li>
 <li><strong><a href="https://github.com/zeroclaw-labs/zeroclaw/issues/5615">#5615</a></strong> — Culture de contribution : normes de co-rédaction humain/IA.</li>
 <li><strong><a href="https://github.com/zeroclaw-labs/zeroclaw/issues/5653">#5653</a></strong> — Zero Compromise : gestion des erreurs, politique de code mort, préparation à la publication.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="premiers-pas"><a class="header" href="#premiers-pas">Premiers pas</a></h1>
+<p>Commencez ici si vous installez ZeroClaw pour la première fois ou si vous cherchez le chemin le plus simple vers un agent fonctionnel.</p>
+<ul>
+<li><a href="#démarrage-rapide">Démarrage rapide</a> couvre l’installation, l’onboarding et la première discussion.</li>
+<li><a href="#mode-yolo">Mode YOLO</a> documente le préréglage de développement local le plus rapide et non sécurisé.</li>
+<li><a href="#configuration-multi-modèle">Configuration multimodèle</a> explique les bases des fournisseurs et du routage.</li>
+<li><a href="#zerocode">zerocode</a> présente l’interface terminal.</li>
+<li><a href="#langue-et-traductions">Langue et traductions</a> couvre le choix de la locale.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="démarrage-rapide"><a class="header" href="#démarrage-rapide">Démarrage rapide</a></h1>
@@ -859,6 +869,16 @@ zeroclaw locales fetch ja --catalog cli,zerocode   # CLI + l'interface TUI
 <li><strong>Toujours en anglais après la récupération.</strong> Vérifiez que <code>locale</code> dans votre configuration correspond à la locale récupérée, puis redémarrez le processus. ZeroClaw charge les fichiers de langue au démarrage.</li>
 <li><strong><code>fetch</code> signale qu’un catalogue a été ignoré.</strong> Ce catalogue n’a pas encore été traduit pour votre langue. Les catalogues disponibles restent installés ; les chaînes non traduites reviennent à l’anglais.</li>
 <li><strong>Une chaîne spécifique est en anglais alors que le reste est traduit.</strong> Cette chaîne en particulier n’a pas encore de traduction et revient à l’anglais par conception.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="installation"><a class="header" href="#installation">Installation</a></h1>
+<p>Choisissez le parcours d’installation adapté à votre système d’exploitation ou à votre cible de déploiement.</p>
+<ul>
+<li><a href="#linux">Linux</a></li>
+<li><a href="#macos">macOS</a></li>
+<li><a href="#windows">Windows</a></li>
+<li><a href="#docker--conteneurs">Docker et conteneurs</a></li>
+<li><a href="#gestion-des-services">Gestion des services</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="linux"><a class="header" href="#linux">Linux</a></h1>
@@ -2203,6 +2223,17 @@ zeroclaw daemon
 </table>
 </div>
 <p>Le trait <code>RpcTransport</code> est conçu de sorte que des transports supplémentaires (vsock, IPC personnalisé) s’intègrent sans toucher à la logique de dispatch ou de session. Le module <code>local.rs</code> encapsule les primitives Unix et Windows derrière une seule structure <code>LocalTransport</code> à l’aide de <code>tokio::io::split</code>, de sorte que la boucle de lecture/écriture soit partagée entre les deux plateformes.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="référence"><a class="header" href="#référence">Référence</a></h1>
+<p>Référence pour les opérateurs et intégrateurs qui ont besoin de détails exacts sur les commandes, la configuration, l’environnement et les API.</p>
+<ul>
+<li><a href="#aide-en-ligne-de-commande-pour-zeroclaw">CLI</a></li>
+<li><a href="#référence-de-configuration-1">Configuration</a></li>
+<li><a href="#variables-denvironnement">Variables d’environnement</a></li>
+<li><a href="#référence-de-lapi">API rustdoc</a></li>
+<li><a href="#api-http-gateway">API HTTP de la passerelle</a></li>
+<li><a href="#tableau-de-bord-web-gatewayweb_dist_dir">Tableau de bord web</a></li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="aide-en-ligne-de-commande-pour-zeroclaw"><a class="header" href="#aide-en-ligne-de-commande-pour-zeroclaw">Aide en ligne de commande pour <code>zeroclaw</code></a></h1>
 <p>Ce document contient le contenu d’aide pour le programme en ligne de commande <code>zeroclaw</code>.</p>
@@ -11732,6 +11763,15 @@ zeroclaw sop show &lt;name&gt;
 <li>Les agrégats spécifiques à un SOP sont disponibles via <code>sop_status</code> avec <code>include_metrics: true</code>.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="extensions-et-plugins"><a class="header" href="#extensions-et-plugins">Extensions et plugins</a></h1>
+<p>Utilisez ces pages pour étendre ZeroClaw ou travailler sur l’outillage du projet.</p>
+<ul>
+<li><a href="#protocole-de-plugin">Protocole des plugins</a></li>
+<li><a href="#exemples-dextensions">Exemples d’extensions</a></li>
+<li><a href="#génération-de-la-documentation-localement">Construire la documentation en local</a></li>
+<li><a href="#création-du-tableau-de-bord-web">Construire le tableau de bord web</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <hr>
 <p>type: référence statut: accepté dernière révision: 2026-04-19 concerne:</p>
 <ul>
@@ -11940,7 +11980,7 @@ rustup target add wasm32-wasip1
 cargo build --target wasm32-wasip1 --release
 </code></pre>
 <p>Le fichier <code>.wasm</code> de sortie se trouve dans <code>target/wasm32-wasip1/release/&lt;crate_name&gt;.wasm</code>. Copiez-le à côté de votre <code>manifest.toml</code>.</p>
-<h3 id="installation"><a class="header" href="#installation">Installation</a></h3>
+<h3 id="installation-1"><a class="header" href="#installation-1">Installation</a></h3>
 <pre><code class="language-bash"># Copier dans le répertoire du plugin
 zeroclaw plugin install /path/to/my-plugin/
 
@@ -16112,6 +16152,20 @@ let _span = span!(
 <p>Vous êtes en position idéale pour concrétiser ces normes — non pas en les imposant de manière descendante, mais en les incarnant dans votre propre code et en les nommant explicitement lors des revues. L’enseignement le plus efficace dans un projet open source se fait dans les fils de discussion des PR et les commentaires de code, et non dans des documents. Ce document fournit le vocabulaire. L’utiliser de manière cohérente lors des revues quotidiennes permet de transformer ces mots écrits en pratiques partagées.</p>
 <p>Lorsque vous voyez un <code>.unwrap()</code> sur un chemin d’erreur opérationnel, nommez-le comme tel. Lorsque vous voyez une fonction publique sans documentation, posez-vous la question : qu’un futur implémenteur doit-il savoir ici ? Lorsque vous voyez un test qui échouerait lors d’une refactorisation valide, expliquez pourquoi cela importe. Ce ne sont pas des corrections — c’est le mentorat continu que la RFC sur la culture a identifié comme l’une des choses les plus importantes qu’un contributeur plus expérimenté puisse offrir.</p>
 <hr><div style="break-before: page; page-break-before: always;"></div>
+<h1 id="contribuer"><a class="header" href="#contribuer">Contribuer</a></h1>
+<p>Commencez ici avant d’ouvrir des issues, de proposer des changements d’architecture ou de soumettre des pull requests.</p>
+<ul>
+<li><a href="#comment-contribuer">Comment contribuer</a></li>
+<li><a href="#architecture-et-carte-de-contribution">Carte de l’architecture et des contributions</a></li>
+<li><a href="#processus-rfc">Processus RFC</a></li>
+<li><a href="#communication">Communication</a></li>
+<li><a href="#discipline-relative-à-la-confidentialité-et-aux-données-personnelles">Règles de confidentialité et de PII</a></li>
+<li><a href="#tests-2">Tests</a></li>
+<li><a href="#protocole-de-revue-de-pr">Protocole de revue de PR</a></li>
+<li><a href="#tutoriel-de-configuration-multi-agents">Configuration multi-agent</a></li>
+<li><a href="#accord-de-licence-de-contributeur">Accord de licence contributeur</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="comment-contribuer"><a class="header" href="#comment-contribuer">Comment contribuer</a></h1>
 <p>Nous acceptons du code, de la documentation, des rapports de bogues et des retours de quiconque est prêt à les soumettre clairement. Cette page couvre les mécanismes — comment intégrer un changement, ce que nous recherchons lors de la revue, et à quoi vous pouvez vous attendre après avoir ouvert une PR.</p>
 <p>Voir <a href="#communication">Communication</a> pour les contributions non liées au code (signalement de problèmes, retours d’expérience, obtention d’aide).</p>
