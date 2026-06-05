@@ -37,7 +37,7 @@
             const path_to_root = "../";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "../searchindex-9288cba3.js";
+            window.path_to_searchindex_js = "../searchindex-035eb3a5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-658f1f54.js"></script>
@@ -220,20 +220,20 @@ cd zeroclaw
 <li>ディストリビューションとアーキテクチャを検出します</li>
 <li>プリビルドされたバイナリを使用するか、ソースからビルドするかを尋ねます（デフォルトはインタラクティブモードです。非インタラクティブシェルでは、利用可能な場合はプリビルドがデフォルトになります）。</li>
 <li>バイナリを <code>~/.cargo/bin/zeroclaw</code> に配置します</li>
-<li><code>zeroclaw onboard</code> を実行して、初回セットアップを完了します。</li>
+<li>Runs <code>zeroclaw quickstart</code> to complete first-time setup</li>
 </ol>
 <p>フラグ:</p>
 <pre><code class="language-bash">./install.sh --prebuilt                      # 常にプリビルド、プロンプトをスキップ
 ./install.sh --source                        # 常にソースからビルドする
 ./install.sh --minimal                       # カーネルのみ（約6.6 MB）
 ./install.sh --source --features agent-runtime,channel-discord   # カスタム機能
-./install.sh --skip-onboard                  # インストールのみ；後で `zeroclaw onboard` を実行してください
+./install.sh --skip-quickstart                  # install only; run `zeroclaw quickstart` later
 ./install.sh --list-features                 # 利用可能な機能を表示して終了
 ./install.sh --help                          # フラグの完全リファレンス
 </code></pre>
 <h3 id="オプション-3--homebrew-linuxbrew"><a class="header" href="#オプション-3--homebrew-linuxbrew">オプション 3 — Homebrew (Linuxbrew)</a></h3>
 <pre><code class="language-bash">brew install zeroclaw
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <p>Linux での Homebrew のインストールは Homebrew のサービスパスの規約に従います — ワークスペースは <code>~/.zeroclaw/</code> ではなく <code>$HOMEBREW_PREFIX/var/zeroclaw/</code> の下に配置されます。これがなぜ重要なのかについては、<a href="./service.html">サービス管理</a> を参照してください。</p>
 <h2 id="システム依存関係"><a class="header" href="#システム依存関係">システム依存関係</a></h2>
@@ -273,12 +273,12 @@ sudo usermod -aG gpio,spi,i2c $USER
 </code></pre>
 <h2 id="更新"><a class="header" href="#更新">更新</a></h2>
 <p>インストーラーを再実行してください。既存のインストールを検出し、その場でアップグレードします：</p>
-<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --skip-onboard
+<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --skip-quickstart
 </code></pre>
 <p>または、クローンから:</p>
 <pre><code class="language-bash">cd /path/to/zeroclaw
 git pull
-./install.sh --skip-onboard
+./install.sh --skip-quickstart
 </code></pre>
 <p>Homebrew経由でインストールした場合:</p>
 <pre><code class="language-bash">brew update &amp;&amp; brew upgrade zeroclaw

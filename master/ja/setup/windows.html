@@ -37,7 +37,7 @@
             const path_to_root = "../";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "../searchindex-9288cba3.js";
+            window.path_to_searchindex_js = "../searchindex-035eb3a5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-658f1f54.js"></script>
@@ -232,22 +232,22 @@
 <li><code>%USERPROFILE%\.zeroclaw\bin\zeroclaw.exe</code> にインストールされます</li>
 <li>モード固有の次のステップを表示します:
 <ul>
-<li><code>--prebuilt</code>、<code>--standard</code>、<code>--full</code>：<code>zeroclaw onboard</code> を実行します</li>
-<li><code>--minimal</code>: オンボーディングは利用できません。<code>%USERPROFILE%\.zeroclaw\config.toml</code> を手動で設定し、簡易版の CLI パス（<code>zeroclaw agent ...</code>）を使用してください</li>
+<li><code>--prebuilt</code>, <code>--standard</code>, <code>--full</code>: run <code>zeroclaw quickstart</code></li>
+<li><code>--minimal</code>: quickstart is unavailable; configure <code>%USERPROFILE%\.zeroclaw\config.toml</code> manually and use the reduced CLI path (<code>zeroclaw agent ...</code>)</li>
 </ul>
 </li>
 </ol>
 <p>ソースビルドでは、<code>setup.bat</code> が実行する正確な <code>cargo build ...</code> コマンドを表示し、インストールされた <code>zeroclaw.exe</code> のサイズを報告するようになり、コマンドの形式と成果物の期待値が見えるようになりました。</p>
 <h3 id="オプション-2--scoop"><a class="header" href="#オプション-2--scoop">オプション 2 — Scoop</a></h3>
 <pre><code class="language-cmd">scoop install zeroclaw
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <h3 id="オプション-3--ソースから"><a class="header" href="#オプション-3--ソースから">オプション 3 — ソースから</a></h3>
 <p>Rust (<code>rustup</code>) および Visual Studio Build Tools が必要です。</p>
 <pre><code class="language-cmd">git clone https://github.com/zeroclaw-labs/zeroclaw
 cd zeroclaw
 cargo install --locked --path .
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <h2 id="システム依存関係"><a class="header" href="#システム依存関係">システム依存関係</a></h2>
 <p>WindowsのビルドではMSVCツールチェーンを使用します。必要なものは以下の通りです：</p>

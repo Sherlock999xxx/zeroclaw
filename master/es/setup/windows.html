@@ -37,7 +37,7 @@
             const path_to_root = "../";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "../searchindex-e5cbffa7.js";
+            window.path_to_searchindex_js = "../searchindex-90d51cec.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-f78bc604.js"></script>
@@ -232,22 +232,22 @@
 <li>Se instala en <code>%USERPROFILE%\.zeroclaw\bin\zeroclaw.exe</code></li>
 <li>Imprime los pasos siguientes específicos del modo:
 <ul>
-<li><code>--prebuilt</code>, <code>--standard</code>, <code>--full</code>: ejecuta <code>zeroclaw onboard</code></li>
-<li><code>--minimal</code>: la incorporación no está disponible; configura <code>%USERPROFILE%\.zeroclaw\config.toml</code> manualmente y usa la ruta reducida de la CLI (<code>zeroclaw agent ...</code>)</li>
+<li><code>--prebuilt</code>, <code>--standard</code>, <code>--full</code>: run <code>zeroclaw quickstart</code></li>
+<li><code>--minimal</code>: quickstart is unavailable; configure <code>%USERPROFILE%\.zeroclaw\config.toml</code> manually and use the reduced CLI path (<code>zeroclaw agent ...</code>)</li>
 </ul>
 </li>
 </ol>
 <p>Para las compilaciones desde el código fuente, <code>setup.bat</code> ahora imprime el comando exacto <code>cargo build ...</code> que ejecuta e informa el tamaño del <code>zeroclaw.exe</code> instalado, de modo que la forma del comando y las expectativas del artefacto permanezcan visibles.</p>
 <h3 id="opción-2--scoop"><a class="header" href="#opción-2--scoop">Opción 2 — Scoop</a></h3>
 <pre><code class="language-cmd">scoop install zeroclaw
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <h3 id="opción-3--desde-el-código-fuente"><a class="header" href="#opción-3--desde-el-código-fuente">Opción 3 — Desde el código fuente</a></h3>
 <p>Requiere Rust (<code>rustup</code>) y las herramientas de compilación de Visual Studio:</p>
 <pre><code class="language-cmd">git clone https://github.com/zeroclaw-labs/zeroclaw
 cd zeroclaw
 cargo install --locked --path .
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <h2 id="dependencias-del-sistema"><a class="header" href="#dependencias-del-sistema">Dependencias del sistema</a></h2>
 <p>Las compilaciones de Windows utilizan la cadena de herramientas MSVC. Necesitas:</p>

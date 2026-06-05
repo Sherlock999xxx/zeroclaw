@@ -37,7 +37,7 @@
             const path_to_root = "../";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "../searchindex-92d483cd.js";
+            window.path_to_searchindex_js = "../searchindex-d2ffd80e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-733029f0.js"></script>
@@ -220,20 +220,20 @@ cd zeroclaw
 <li>Détecte votre distribution et votre architecture</li>
 <li>Demande si vous souhaitez un binaire précompilé ou une compilation à partir du code source (la valeur par défaut est interactive — les shells non interactifs utilisent par défaut un binaire précompilé, s’il est disponible).</li>
 <li>Place le binaire dans <code>~/.cargo/bin/zeroclaw</code></li>
-<li>Exécute <code>zeroclaw onboard</code> pour terminer la configuration initiale</li>
+<li>Runs <code>zeroclaw quickstart</code> to complete first-time setup</li>
 </ol>
 <p>Drapeaux :</p>
 <pre><code class="language-bash">./install.sh --prebuilt                      # toujours précompilé, ignorer l'invite
 ./install.sh --source                        # toujours compiler depuis les sources
 ./install.sh --minimal                       # noyau uniquement (~6,6 Mo)
 ./install.sh --source --features agent-runtime,channel-discord   # fonctionnalités personnalisées
-./install.sh --skip-onboard                  # installation uniquement ; exécutez `zeroclaw onboard` plus tard
+./install.sh --skip-quickstart                  # install only; run `zeroclaw quickstart` later
 ./install.sh --list-features                 # afficher les fonctionnalités disponibles et quitter
 ./install.sh --help                          # Référence complète des indicateurs
 </code></pre>
 <h3 id="option-3--homebrew-linuxbrew"><a class="header" href="#option-3--homebrew-linuxbrew">Option 3 — Homebrew (Linuxbrew)</a></h3>
 <pre><code class="language-bash">brew install zeroclaw
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <p>Les installations de Homebrew sur Linux suivent la convention de chemin de service de Homebrew — votre espace de travail se trouve sous <code>$HOMEBREW_PREFIX/var/zeroclaw/</code> au lieu de <code>~/.zeroclaw/</code>. Consultez <a href="./service.html">Gestion des services</a> pour comprendre pourquoi cela est important.</p>
 <h2 id="dépendances-système"><a class="header" href="#dépendances-système">Dépendances système</a></h2>
@@ -273,12 +273,12 @@ sudo usermod -aG gpio,spi,i2c $USER
 </code></pre>
 <h2 id="mettre-à-jour"><a class="header" href="#mettre-à-jour">Mettre à jour</a></h2>
 <p>Relancez l’installateur — il détecte l’installation existante et effectue une mise à niveau en place :</p>
-<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --skip-onboard
+<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --skip-quickstart
 </code></pre>
 <p>Ou depuis un clone :</p>
 <pre><code class="language-bash">cd /path/to/zeroclaw
 git pull
-./install.sh --skip-onboard
+./install.sh --skip-quickstart
 </code></pre>
 <p>Si installé via Homebrew :</p>
 <pre><code class="language-bash">brew update &amp;&amp; brew upgrade zeroclaw

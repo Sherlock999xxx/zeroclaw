@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "searchindex-46025493.js";
+            window.path_to_searchindex_js = "searchindex-f99bfbf2.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-a9acbc87.js"></script>
@@ -299,15 +299,16 @@
 <p><strong>From source:</strong></p>
 <pre><code class="language-bash">cargo install --locked --path . # inside a clone
 </code></pre>
-<h2 id="onboard"><a class="header" href="#onboard">Onboard</a></h2>
-<pre><code class="language-bash">zeroclaw onboard
+<h2 id="quickstart"><a class="header" href="#quickstart">Quickstart</a></h2>
+<pre><code class="language-bash">zeroclaw quickstart
 </code></pre>
-<p><code>zeroclaw onboard</code> walks through configured sections (model providers, risk profiles, channels, agents, …) and prompts for each. Minimum inputs:</p>
+<p><code>zeroclaw quickstart</code> writes a working config with one provider and one agent in a single shot. Minimum inputs:</p>
 <ol>
 <li>An <strong>LLM provider</strong> (Anthropic, OpenAI, Ollama, OpenRouter, etc.) and its API key or endpoint</li>
-<li>At least <strong>one channel</strong> — the default <code>cli</code> channel works; add Discord, Telegram, Slack, etc. if you want to chat from those platforms</li>
+<li>An <strong>agent alias</strong> — defaults to a sanitized provider name</li>
 </ol>
-<p>Everything else has safe defaults. Total time: ~2 minutes.</p>
+<p>Channels are configured separately. The default <code>cli</code> channel works out of the box; to add Discord, Telegram, Slack, etc., use <code>zeroclaw config set channels.&lt;name&gt;.&lt;field&gt;=&lt;value&gt;</code> or follow the per-channel guide under <a href="#channels--overview">Channels → Overview</a>.</p>
+<p>Everything else has safe defaults. Total time: ~1 minute.</p>
 <h2 id="talk-to-it"><a class="header" href="#talk-to-it">Talk to it</a></h2>
 <pre><code class="language-bash">zeroclaw agent -a &lt;alias&gt;
 </code></pre>
@@ -317,11 +318,11 @@
 zeroclaw service start
 </code></pre>
 <p>Then use a chat platform channel to reach the agent from Discord, Telegram, or wherever you configured.</p>
-<h2 id="if-onboardings-questions-annoy-you"><a class="header" href="#if-onboardings-questions-annoy-you">If onboarding’s questions annoy you</a></h2>
-<p>Run non-interactively with <code>--quick</code>:</p>
-<pre><code class="language-bash">zeroclaw onboard --quick --model-provider ollama --model qwen3.6:35b-a3b
+<h2 id="skip-the-prompts"><a class="header" href="#skip-the-prompts">Skip the prompts</a></h2>
+<p>Run non-interactively by passing all required flags:</p>
+<pre><code class="language-bash">zeroclaw quickstart --model-provider ollama --model qwen3.6:35b-a3b
 </code></pre>
-<p>Or go all the way and use <a href="#yolo-mode">YOLO mode</a> — one config preset that disables approvals and safety gates. For dev boxes and home labs only.</p>
+<p>Add <code>--api-key &lt;key&gt;</code> for hosted providers and <code>--agent &lt;alias&gt;</code> to override the default agent name. Or go all the way and use <a href="#yolo-mode">YOLO mode</a> — one config preset that disables approvals and safety gates. For dev boxes and home labs only.</p>
 <h2 id="next"><a class="header" href="#next">Next</a></h2>
 <ul>
 <li><a href="#multi-model-setup">Multi-model setup</a> — multi-agent dispatch, hint-based routes</li>
@@ -937,20 +938,20 @@ cd zeroclaw
 <li>Detects your distribution and architecture</li>
 <li>Asks whether you want a prebuilt binary or to build from source (the default is interactive — non-interactive shells default to prebuilt when available)</li>
 <li>Places the binary at <code>~/.cargo/bin/zeroclaw</code></li>
-<li>Runs <code>zeroclaw onboard</code> to complete first-time setup</li>
+<li>Runs <code>zeroclaw quickstart</code> to complete first-time setup</li>
 </ol>
 <p>Flags:</p>
 <pre><code class="language-bash">./install.sh --prebuilt                      # always prebuilt, skip the prompt
 ./install.sh --source                        # always build from source
 ./install.sh --minimal                       # kernel only (~6.6 MB)
 ./install.sh --source --features agent-runtime,channel-discord   # custom features
-./install.sh --skip-onboard                  # install only; run `zeroclaw onboard` later
+./install.sh --skip-quickstart                  # install only; run `zeroclaw quickstart` later
 ./install.sh --list-features                 # print available features and exit
 ./install.sh --help                          # full flag reference
 </code></pre>
 <h3 id="option-3--homebrew-linuxbrew"><a class="header" href="#option-3--homebrew-linuxbrew">Option 3 — Homebrew (Linuxbrew)</a></h3>
 <pre><code class="language-bash">brew install zeroclaw
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <p>Homebrew-on-Linux installs follow Homebrew’s service path convention — your workspace lives under <code>$HOMEBREW_PREFIX/var/zeroclaw/</code> instead of <code>~/.zeroclaw/</code>. See <a href="#service-management">Service management</a> for why this matters.</p>
 <h2 id="system-dependencies"><a class="header" href="#system-dependencies">System dependencies</a></h2>
@@ -990,12 +991,12 @@ sudo usermod -aG gpio,spi,i2c $USER
 </code></pre>
 <h2 id="update"><a class="header" href="#update">Update</a></h2>
 <p>Re-run the installer — it detects the existing install and upgrades in place:</p>
-<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --skip-onboard
+<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --skip-quickstart
 </code></pre>
 <p>Or from a clone:</p>
 <pre><code class="language-bash">cd /path/to/zeroclaw
 git pull
-./install.sh --skip-onboard
+./install.sh --skip-quickstart
 </code></pre>
 <p>If installed via Homebrew instead:</p>
 <pre><code class="language-bash">brew update &amp;&amp; brew upgrade zeroclaw
@@ -1041,20 +1042,20 @@ cd zeroclaw
 <ol>
 <li>Asks whether you want a prebuilt binary or to build from source</li>
 <li>Installs to <code>~/.cargo/bin/zeroclaw</code></li>
-<li>Runs <code>zeroclaw onboard</code> to complete first-time setup</li>
+<li>Runs <code>zeroclaw quickstart</code> to complete first-time setup</li>
 </ol>
 <p>Flags:</p>
 <pre><code class="language-bash">./install.sh --prebuilt                      # always prebuilt, skip the prompt
 ./install.sh --source                        # always build from source
 ./install.sh --minimal                       # kernel only (~6.6 MB)
 ./install.sh --source --features agent-runtime,channel-discord   # custom features
-./install.sh --skip-onboard                  # install only; run `zeroclaw onboard` later
+./install.sh --skip-quickstart                  # install only; run `zeroclaw quickstart` later
 ./install.sh --list-features                 # print available features and exit
 ./install.sh --help                          # full flag reference
 </code></pre>
 <h3 id="option-3--homebrew"><a class="header" href="#option-3--homebrew">Option 3 — Homebrew</a></h3>
 <pre><code class="language-bash">brew install zeroclaw
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <p>Gets you <code>brew services</code> integration. Binary lives at <code>$HOMEBREW_PREFIX/bin/zeroclaw</code>.</p>
 <p><strong>Workspace location gotcha:</strong> with Homebrew, the service user and the CLI user may be different, so the workspace lives at <code>$HOMEBREW_PREFIX/var/zeroclaw/</code> rather than <code>~/.zeroclaw/</code>. Point CLI invocations at the same workspace:</p>
@@ -1092,13 +1093,13 @@ brew services info zeroclaw
 <p>Full details: <a href="#service-management">Service management</a>.</p>
 <h2 id="update-1"><a class="header" href="#update-1">Update</a></h2>
 <p>Re-run the installer — it detects the existing install and upgrades in place:</p>
-<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --skip-onboard
+<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --skip-quickstart
 zeroclaw service restart
 </code></pre>
 <p>Or from a clone:</p>
 <pre><code class="language-bash">cd /path/to/zeroclaw
 git pull
-./install.sh --skip-onboard
+./install.sh --skip-quickstart
 zeroclaw service restart
 </code></pre>
 <p>If installed via Homebrew instead:</p>
@@ -1168,22 +1169,22 @@ rm -rf ~/Library/Logs/ZeroClaw
 <li>Installs to <code>%USERPROFILE%\.zeroclaw\bin\zeroclaw.exe</code></li>
 <li>Prints mode-specific next steps:
 <ul>
-<li><code>--prebuilt</code>, <code>--standard</code>, <code>--full</code>: run <code>zeroclaw onboard</code></li>
-<li><code>--minimal</code>: onboarding is unavailable; configure <code>%USERPROFILE%\.zeroclaw\config.toml</code> manually and use the reduced CLI path (<code>zeroclaw agent ...</code>)</li>
+<li><code>--prebuilt</code>, <code>--standard</code>, <code>--full</code>: run <code>zeroclaw quickstart</code></li>
+<li><code>--minimal</code>: quickstart is unavailable; configure <code>%USERPROFILE%\.zeroclaw\config.toml</code> manually and use the reduced CLI path (<code>zeroclaw agent ...</code>)</li>
 </ul>
 </li>
 </ol>
 <p>For source builds, <code>setup.bat</code> now prints the exact <code>cargo build ...</code> command it executes and reports the installed <code>zeroclaw.exe</code> size so command shape and artifact expectations stay visible.</p>
 <h3 id="option-2--scoop"><a class="header" href="#option-2--scoop">Option 2 — Scoop</a></h3>
 <pre><code class="language-cmd">scoop install zeroclaw
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <h3 id="option-3--from-source"><a class="header" href="#option-3--from-source">Option 3 — From source</a></h3>
 <p>Requires Rust (<code>rustup</code>) and Visual Studio Build Tools:</p>
 <pre><code class="language-cmd">git clone https://github.com/zeroclaw-labs/zeroclaw
 cd zeroclaw
 cargo install --locked --path .
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <h2 id="system-dependencies-2"><a class="header" href="#system-dependencies-2">System dependencies</a></h2>
 <p>Windows builds use the MSVC toolchain. You need:</p>
@@ -1273,8 +1274,8 @@ rmdir /s /q "%LOCALAPPDATA%\ZeroClaw"
   -p 42617:42617 \
   ghcr.io/zeroclaw-labs/zeroclaw:latest
 </code></pre>
-<p>The image expects persistent state at <code>/zeroclaw-data</code>. On first run, it bootstraps a default config — you still need to onboard before it’s useful:</p>
-<pre><code class="language-bash">docker exec -it zeroclaw zeroclaw onboard
+<p>The image expects persistent state at <code>/zeroclaw-data</code>. On first run, it bootstraps a default config — you still need to run quickstart before it’s useful:</p>
+<pre><code class="language-bash">docker exec -it zeroclaw zeroclaw quickstart
 </code></pre>
 <h2 id="compose"><a class="header" href="#compose">Compose</a></h2>
 <p>A minimal <code>docker-compose.yml</code>:</p>
@@ -1289,8 +1290,8 @@ rmdir /s /q "%LOCALAPPDATA%\ZeroClaw"
     environment:
       ZEROCLAW_ALLOW_PUBLIC_BIND: "1"   # only if the gateway must be reachable on the LAN
 </code></pre>
-<p>After the container starts, run onboarding:</p>
-<pre><code class="language-bash">docker compose exec zeroclaw zeroclaw onboard
+<p>After the container starts, run quickstart:</p>
+<pre><code class="language-bash">docker compose exec zeroclaw zeroclaw quickstart
 </code></pre>
 <p>Drop <code>ZEROCLAW_ALLOW_PUBLIC_BIND</code> if you only need local access.</p>
 <h2 id="config-inside-containers"><a class="header" href="#config-inside-containers">Config inside containers</a></h2>
@@ -1310,7 +1311,7 @@ rmdir /s /q "%LOCALAPPDATA%\ZeroClaw"
 <li><strong>Expose the gateway</strong> — <code>-p 42617:42617</code> + reverse proxy with TLS in front, point the webhook URL at the public address</li>
 <li><strong>Use a tunnel</strong> — ngrok, Cloudflare Tunnel, or Tailscale Funnel; set the tunnel URL as the webhook target</li>
 </ol>
-<p><code>zeroclaw onboard tunnel</code> configures ngrok or Cloudflare tunnels directly; the resulting public URL is what you point your webhook senders at.</p>
+<p>Configure a tunnel via <code>zeroclaw config set gateway.tunnel.provider=&lt;ngrok|cloudflare&gt;</code> and the related <code>gateway.tunnel.*</code> fields (see the <a href="#config-reference-1">Config reference</a>); the resulting public URL is what you point your webhook senders at.</p>
 <h2 id="kubernetes"><a class="header" href="#kubernetes">Kubernetes</a></h2>
 <p>Helm chart templates are published to the <a href="https://github.com/zeroclaw-labs/zeroclaw-templates">zeroclaw-templates</a> repo. Typical manifest fragment:</p>
 <pre><code class="language-yaml">apiVersion: apps/v1
@@ -6515,7 +6516,7 @@ uri     = "https://..."     # optional operator override; otherwise the family's
 <li><strong>Config-level secrets store</strong> — encrypted at <code>~/.zeroclaw/secrets</code> via a local key file.</li>
 <li><strong>Generic env override</strong> — <code>ZEROCLAW_providers__models__&lt;type&gt;__&lt;alias&gt;__api_key=...</code> sets <code>providers.models.&lt;type&gt;.&lt;alias&gt;.api_key</code> at startup. See <a href="#environment-variables">Environment variables</a> for the full grammar.</li>
 </ol>
-<p><code>zeroclaw onboard</code> writes credentials to the secrets store by default. Configs you commit should not contain inline keys. For ecosystem-default names you already export in your shell (<code>$ANTHROPIC_API_KEY</code>, <code>$OPENROUTER_API_KEY</code>, …), the <a href="#bridging-ecosystem-default-env-vars">env-vars reference</a> shows the one-line bash expansions that point a schema-mirror name at the existing value.</p>
+<p><code>zeroclaw quickstart</code> writes credentials to the secrets store by default. Configs you commit should not contain inline keys. For ecosystem-default names you already export in your shell (<code>$ANTHROPIC_API_KEY</code>, <code>$OPENROUTER_API_KEY</code>, …), the <a href="#bridging-ecosystem-default-env-vars">env-vars reference</a> shows the one-line bash expansions that point a schema-mirror name at the existing value.</p>
 <h2 id="oauth-and-subscription-auth"><a class="header" href="#oauth-and-subscription-auth">OAuth and subscription auth</a></h2>
 <p>Several providers accept OAuth or subscription-style tokens instead of raw API keys. Get the token from the vendor’s own dashboard or CLI flow, then drop it into the alias entry the same way you would an API key:</p>
 <ul>
@@ -7220,7 +7221,7 @@ channels = ["discord.default"]
 </table>
 </div>
 <h2 id="pairing"><a class="header" href="#pairing">Pairing</a></h2>
-<p>Most channels require <strong>pairing</strong> — a one-time handshake that binds an incoming message source to the agent’s policy. <code>zeroclaw onboard channels</code> walks you through pairing each channel you configure; use <code>zeroclaw channel bind-telegram</code> for Telegram-specific identities and the channel-specific guide for channels such as WhatsApp or Signal. Without pairing, the channel rejects everything.</p>
+<p>Most channels require <strong>pairing</strong> — a one-time handshake that binds an incoming message source to the agent’s policy. Each channel’s setup guide (linked from the matrix above) walks through that channel’s pairing flow; <code>zeroclaw channel bind-telegram</code> handles Telegram-specific identities. Without pairing, the channel rejects everything.</p>
 <p>The rationale: an agent with a public Telegram bot token and no pairing is a publicly-accessible shell. Pairing is the gate.</p>
 <h2 id="streaming-capability"><a class="header" href="#streaming-capability">Streaming capability</a></h2>
 <p>Channels declare what kind of streaming they support — see <a href="#streaming">Providers → Streaming</a> for the capability matrix and what <code>supports_draft_updates</code> / <code>supports_multi_message_streaming</code> mean.</p>
@@ -7252,11 +7253,13 @@ channels = ["discord.default"]
 <li>For E2EE rooms, the bot device has received encryption keys for the room.</li>
 </ol>
 <h2 id="2-configuration"><a class="header" href="#2-configuration">2. Configuration</a></h2>
-<p>All config management goes through <code>zeroclaw config</code> or <code>zeroclaw onboard</code>. Do not hand-edit <code>~/.zeroclaw/config.toml</code>.</p>
-<p>Easiest: run the wizard and let it prompt for every Matrix field:</p>
-<pre><code class="language-bash">zeroclaw onboard channels
+<p>All config management goes through <code>zeroclaw config</code>. Do not hand-edit <code>~/.zeroclaw/config.toml</code>.</p>
+<p>Easiest: set each Matrix field with <code>zeroclaw config set</code> (see below). For the fastest one-shot bring-up, the most ergonomic path is to set the required fields back-to-back:</p>
+<pre><code class="language-bash">zeroclaw config set channels.matrix.homeserver https://matrix.example.com
+zeroclaw config set channels.matrix.access-token   # prompts, input masked
+zeroclaw config set channels.matrix.allowed-users '["*"]'
 </code></pre>
-<p>Or set individual fields after onboarding:</p>
+<p>Or set individual fields directly:</p>
 <pre><code class="language-bash">zeroclaw config set channels.matrix.homeserver https://matrix.example.com
 zeroclaw config set channels.matrix.access-token           # prompts, input masked
 zeroclaw config set channels.matrix.user-id @bot:matrix.example.com
@@ -7293,7 +7296,7 @@ zeroclaw config set channels.matrix.device-id NEWDEVICE
 zeroclaw config set channels.matrix.user-id @bot:example.com
 </code></pre>
 <p>Restart for the new values to take effect: <code>zeroclaw service restart</code>.</p>
-<p>The wizard (<code>zeroclaw onboard channels</code>) prompts for these same fields if you’d rather work through it interactively.</p>
+<p>Each of the three <code>zeroclaw config set</code> calls above can be re-run any time to update an individual field.</p>
 <h3 id="notes"><a class="header" href="#notes">Notes</a></h3>
 <ul>
 <li><strong>Keep a copy of the token</strong> when you first paste it. Secrets are encrypted at rest and <code>zeroclaw config get</code> will print <code>[masked]</code> for the token field; you can’t retrieve it later. Stash it in a scratch note if you’ll need it for the curl validation snippets in §5C.</li>
@@ -7302,7 +7305,7 @@ zeroclaw config set channels.matrix.user-id @bot:example.com
 <li><strong>Token shows as expired or invalid</strong> at startup: mint a new one with the same curl, repeat Step 2.</li>
 </ul>
 <h2 id="4-quick-validation"><a class="header" href="#4-quick-validation">4. Quick validation</a></h2>
-<p>Run <code>zeroclaw onboard channels</code> if you haven’t yet, then restart with <code>zeroclaw service restart</code> (background) or <code>zeroclaw daemon</code> (foreground). Send a plain-text message in the configured Matrix room. Confirm:</p>
+<p>Apply the field set in §2 if you haven’t yet, then restart with <code>zeroclaw service restart</code> (background) or <code>zeroclaw daemon</code> (foreground). Send a plain-text message in the configured Matrix room. Confirm:</p>
 <ul>
 <li>ZeroClaw logs show the Matrix listener starting with no repeated sync/auth errors.</li>
 <li>In an encrypted room, the bot can read and reply to encrypted messages from allowed users.</li>
@@ -7325,7 +7328,7 @@ zeroclaw config set channels.matrix.user-id @bot:example.com
 <p><strong>About <code>$MATRIX_TOKEN</code> in the snippets below.</strong> Secrets in ZeroClaw are encrypted at rest and intentionally <strong>not</strong> retrievable via <code>zeroclaw config get</code> — it prints <code>[masked]</code> for any secret field. You have two options:</p>
 <ol>
 <li><strong>Get a fresh token</strong> by re-running the password-login curl from §3 Step 1. Export the <code>access_token</code> it returns. Good for validation and recovery paths — doesn’t affect what’s in your config.</li>
-<li><strong>Keep a copy</strong> of the token when you first paste it into <code>zeroclaw onboard</code> or <code>zeroclaw config set channels.matrix.access-token</code>. A one-time side-effect — write it to a scratch note if you want to run these curl checks later.</li>
+<li><strong>Keep a copy</strong> of the token when you first paste it into <code>zeroclaw config set channels.matrix.access-token</code>. A one-time side-effect — write it to a scratch note if you want to run these curl checks later.</li>
 </ol>
 <p>The non-secret fields <em>are</em> retrievable:</p>
 <pre><code class="language-bash">MATRIX_HOMESERVER=$(zeroclaw config get channels.matrix.homeserver)
@@ -7339,7 +7342,7 @@ MATRIX_USER=$(zeroclaw config get channels.matrix.user-id)
 <ul>
 <li>Returned <code>user_id</code> must match the bot account.</li>
 <li>If <code>device_id</code> is missing from the response, set it manually (see §5H).</li>
-<li>Rotate the access token without re-running onboard: <code>zeroclaw config set channels.matrix.access-token</code> (prompts, masked), then <code>zeroclaw service restart</code>.</li>
+<li>Rotate the access token: <code>zeroclaw config set channels.matrix.access-token</code> (prompts, masked), then <code>zeroclaw service restart</code>.</li>
 </ul>
 <h3 id="d-e2ee-specific-checks"><a class="header" href="#d-e2ee-specific-checks">D. E2EE-specific checks</a></h3>
 <ul>
@@ -7437,15 +7440,7 @@ zeroclaw config set channels.matrix.device-id &lt;new_device_id&gt;
 <li>Log out of Element.</li>
 </ol>
 <h4 id="step-2--add-the-recovery-key-to-zeroclaw"><a class="header" href="#step-2--add-the-recovery-key-to-zeroclaw">Step 2 — Add the recovery key to ZeroClaw</a></h4>
-<p>Either path works. The onboarding wizard is easier for fresh installs; <code>zeroclaw config set</code> is preferred for existing installs.</p>
-<p><strong>Option A — during onboarding:</strong></p>
-<pre><code class="language-bash">zeroclaw onboard channels
-</code></pre>
-<p>When prompted:</p>
-<pre><code>E2EE recovery key (or Enter to skip): EsTj 3yST y93F SLpB jJsz ...
-</code></pre>
-<p>Input is masked. The key is encrypted at rest.</p>
-<p><strong>Option B — existing installs:</strong></p>
+<p>Apply the recovery key to ZeroClaw:</p>
 <pre><code class="language-bash">zeroclaw config set channels.matrix.recovery-key    # input masked
 </code></pre>
 <p>Then <code>zeroclaw service restart</code>. The recovery key is encrypted at rest immediately.</p>
@@ -7512,7 +7507,7 @@ zeroclaw config set channels.matrix.device-id &lt;new_device_id&gt;
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="mattermost"><a class="header" href="#mattermost">Mattermost</a></h1>
 <p>REST v4 polling client. Self-hosted, on-prem, or sovereign-cloud Mattermost servers all work the same way: the bot polls the channels it can read every 3 seconds for new posts, and reply posts go out via <code>POST /api/v4/posts</code>.</p>
-<h2 id="quickstart"><a class="header" href="#quickstart">Quickstart</a></h2>
+<h2 id="quickstart-1"><a class="header" href="#quickstart-1">Quickstart</a></h2>
 <p>Minimum config for a multi-channel, DM-aware bot:</p>
 <pre><code class="language-toml">[channels.mattermost.work]
 enabled = true
@@ -7859,9 +7854,7 @@ if X-Nextcloud-Talk-Signature != expected_sig:
 </ul>
 <p>Keep the daemon bound to localhost unless you have put it behind your own authenticated network boundary. The daemon can send and receive as the linked Signal account.</p>
 <h2 id="configure-the-channel"><a class="header" href="#configure-the-channel">Configure the channel</a></h2>
-<p>The easiest path is the channels onboarding flow:</p>
-<pre><code class="language-bash">zeroclaw onboard channels
-</code></pre>
+<p>Set the required Signal channel fields with <code>zeroclaw config set</code> (see the manual config block below for the full field list), or create the block directly in <code>~/.zeroclaw/config.toml</code>.</p>
 <p>For manual config, create or update a Signal channel block:</p>
 <pre><code class="language-toml">[channels.signal.default]
 enabled = true
@@ -7922,7 +7915,7 @@ verify_token = "&lt;webhook-verify-token&gt;"
 access_token = "&lt;meta-access-token&gt;"
 # app_secret = "&lt;meta-app-secret&gt;" # recommended for webhook signature verification
 </code></pre>
-<p>The gateway must be reachable by Meta for inbound webhooks. Use <code>zeroclaw onboard tunnel</code> or your own reverse proxy to expose the webhook endpoint when developing locally.</p>
+<p>The gateway must be reachable by Meta for inbound webhooks. Configure a tunnel via <code>zeroclaw config set gateway.tunnel.provider=&lt;ngrok|cloudflare&gt;</code> and the related <code>gateway.tunnel.*</code> fields (see the <a href="#config-reference-1">Config reference</a>), or front the gateway with your own reverse proxy when developing locally.</p>
 <h2 id="web-mode"><a class="header" href="#web-mode">Web mode</a></h2>
 <p>WhatsApp Web mode links a regular WhatsApp account through the optional Web backend. It does not need a Meta Business account. It does need a ZeroClaw build with the <code>whatsapp-web</code> feature enabled and a persistent session database path.</p>
 <pre><code class="language-toml">[channels.whatsapp.default]
@@ -7969,11 +7962,10 @@ ignore = []
 </code></pre>
 <p>Use the peer identifier shape that the active backend reports. Cloud API usually reports sender phone identifiers from the webhook payload. Web mode may report chat or JID-shaped identifiers. Keep examples and fixtures neutral; do not commit real phone numbers, account IDs, or chat IDs.</p>
 <h2 id="configuring-from-the-cli"><a class="header" href="#configuring-from-the-cli">Configuring from the CLI</a></h2>
-<p>Prefer onboarding or <code>zeroclaw config set</code> for WhatsApp:</p>
-<pre><code class="language-bash">zeroclaw onboard channels
-zeroclaw config set channels.whatsapp.default.session-path ~/.zeroclaw/state/whatsapp-web/session.db
+<p>Prefer <code>zeroclaw config set</code> for WhatsApp fields:</p>
+<pre><code class="language-bash">zeroclaw config set channels.whatsapp.default.session-path ~/.zeroclaw/state/whatsapp-web/session.db
 </code></pre>
-<p><code>zeroclaw channel add &lt;type&gt; &lt;CONFIG&gt;</code> is not the recommended setup path for WhatsApp. It takes a JSON object at the CLI layer, but current channel setup is routed through onboarding and config editing so secret handling, pairing, and peer authorization stay explicit.</p>
+<p><code>zeroclaw channel add &lt;type&gt; &lt;CONFIG&gt;</code> is not the recommended setup path for WhatsApp. It takes a JSON object at the CLI layer, but current channel setup is routed through <code>zeroclaw config set</code> so secret handling, pairing, and peer authorization stay explicit.</p>
 <h2 id="start-and-check-1"><a class="header" href="#start-and-check-1">Start and check</a></h2>
 <p>After configuring one mode, start the channel runner:</p>
 <pre><code class="language-bash">zeroclaw channel start
@@ -10351,19 +10343,17 @@ sudo pacman -S base-devel
 </code></pre>
 <p>Persist in your shell profile.</p>
 <hr>
-<h2 id="onboarding"><a class="header" href="#onboarding">Onboarding</a></h2>
-<h3 id="wizard-insists-on-a-config-that-doesnt-exist"><a class="header" href="#wizard-insists-on-a-config-that-doesnt-exist">Wizard insists on a config that doesn’t exist</a></h3>
-<p>If an earlier install left <code>~/.zeroclaw/config.toml</code>, re-run with <code>--force</code>:</p>
-<pre><code class="language-bash">zeroclaw onboard --force
-</code></pre>
-<p>Or just delete the directory and start over:</p>
+<h2 id="quickstart-2"><a class="header" href="#quickstart-2">Quickstart</a></h2>
+<h3 id="quickstart-wont-overwrite-an-existing-config"><a class="header" href="#quickstart-wont-overwrite-an-existing-config">Quickstart won’t overwrite an existing config</a></h3>
+<p><code>zeroclaw quickstart</code> does not have a <code>--force</code> flag — it intentionally leaves an existing <code>~/.zeroclaw/config.toml</code> alone. To run a fresh quickstart on a stale install, delete the directory and start over:</p>
 <pre><code class="language-bash">rm -rf ~/.zeroclaw
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
+<p>Or, to edit a single stale field instead of wiping everything, use <code>zeroclaw config set &lt;key&gt;=&lt;value&gt;</code> directly.</p>
 <h3 id="homebrew-install-config-path-mismatch"><a class="header" href="#homebrew-install-config-path-mismatch">Homebrew install: config path mismatch</a></h3>
-<p>Homebrew installs prefer <code>$HOMEBREW_PREFIX/var/zeroclaw/</code> (so <code>brew services</code> works) while the default config dir is <code>~/.zeroclaw/</code>. Set <code>ZEROCLAW_WORKSPACE</code> to the Homebrew path before onboarding so the two paths line up:</p>
+<p>Homebrew installs prefer <code>$HOMEBREW_PREFIX/var/zeroclaw/</code> (so <code>brew services</code> works) while the default config dir is <code>~/.zeroclaw/</code>. Set <code>ZEROCLAW_WORKSPACE</code> to the Homebrew path before running quickstart so the two paths line up:</p>
 <pre><code class="language-bash">export ZEROCLAW_WORKSPACE="$HOMEBREW_PREFIX/var/zeroclaw"
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <p>Or manually symlink once:</p>
 <pre><code class="language-bash">ln -s "$HOMEBREW_PREFIX/var/zeroclaw" ~/.zeroclaw
@@ -10588,7 +10578,7 @@ curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/insta
 <h3 id="checklist"><a class="header" href="#checklist">Checklist</a></h3>
 <ul>
 <li><input disabled="" type="checkbox"> Install the binary (prefer prebuilt on a Pi)</li>
-<li><input disabled="" type="checkbox"> Run <code>zeroclaw onboard</code></li>
+<li><input disabled="" type="checkbox"> Run <code>zeroclaw quickstart</code></li>
 <li><input disabled="" type="checkbox"> Configure your channels — Telegram needs no port; webhooks need a tunnel</li>
 <li><input disabled="" type="checkbox"> Install the service: <code>zeroclaw service install &amp;&amp; zeroclaw service start</code></li>
 <li><input disabled="" type="checkbox"> For LAN access: set <code>[gateway] host = "0.0.0.0"</code> + <code>allow_public_bind = true</code></li>
@@ -11170,11 +11160,11 @@ ssh arduino@&lt;UNO_Q_IP&gt; "sudo mv ~/zeroclaw /usr/local/bin/"
 <p>If cross-compile fails, use Option A and build on the device.</p>
 <hr>
 <h2 id="phase-3-configure-zeroclaw"><a class="header" href="#phase-3-configure-zeroclaw">Phase 3: Configure ZeroClaw</a></h2>
-<h3 id="31-run-onboard-or-create-config-manually"><a class="header" href="#31-run-onboard-or-create-config-manually">3.1 Run Onboard (or Create Config Manually)</a></h3>
+<h3 id="31-run-quickstart-or-create-config-manually"><a class="header" href="#31-run-quickstart-or-create-config-manually">3.1 Run Quickstart (or Create Config Manually)</a></h3>
 <pre><code class="language-bash">ssh arduino@&lt;UNO_Q_IP&gt;
 
 # Quick config
-zeroclaw onboard --api-key YOUR_OPENROUTER_KEY --provider openrouter
+zeroclaw quickstart --api-key YOUR_OPENROUTER_KEY --model-provider openrouter
 
 # Or create config manually
 mkdir -p ~/.zeroclaw/workspace
@@ -11221,8 +11211,8 @@ zeroclaw daemon --host 127.0.0.1 --port 42617
 <tr><td>4</td><td><code>sudo apt-get install -y pkg-config libssl-dev</code></td></tr>
 <tr><td>5</td><td><code>git clone https://github.com/zeroclaw-labs/zeroclaw.git &amp;&amp; cd zeroclaw</code></td></tr>
 <tr><td>6</td><td><code>export CARGO_BUILD_JOBS=1 &amp;&amp; cargo build --release --features hardware</code></td></tr>
-<tr><td>7</td><td><code>zeroclaw onboard --api-key KEY --provider openrouter</code></td></tr>
-<tr><td>8</td><td><code>zeroclaw onboard channels</code></td></tr>
+<tr><td>7</td><td><code>zeroclaw quickstart --api-key KEY --model-provider openrouter</code></td></tr>
+<tr><td>8</td><td><code>zeroclaw config set channels.telegram.default.bot-token &lt;token&gt;</code></td></tr>
 <tr><td>9</td><td><code>zeroclaw daemon --host 127.0.0.1 --port 42617</code></td></tr>
 <tr><td>10</td><td>Message your Telegram bot — it responds</td></tr>
 <tr><td>11</td><td><code>zeroclaw peripheral setup-uno-q</code> (deploys Bridge)</td></tr>
@@ -11253,7 +11243,7 @@ zeroclaw daemon --host 127.0.0.1 --port 42617
 <li><em>“Chip info”</em></li>
 </ul>
 <p>The agent uses the <code>hardware_board_info</code> tool to return chip name, architecture, and memory map. With the <code>probe</code> feature, it reads live data via USB/SWD; otherwise it returns static datasheet info.</p>
-<p><strong>Config:</strong> Run <code>zeroclaw onboard</code> (hardware step adds the board interactively), or use <code>zeroclaw config set peripherals.boards.0.board nucleo-f401re</code>, <code>transport serial</code>, and <code>path &lt;your-serial-port&gt;</code>. See the <a href="#config-reference-1">Config reference</a> for all fields.</p>
+<p><strong>Config:</strong> Use <code>zeroclaw config set peripherals.boards.0.board nucleo-f401re</code>, <code>transport serial</code>, and <code>path &lt;your-serial-port&gt;</code>. See the <a href="#config-reference-1">Config reference</a> for all fields.</p>
 <p><strong>CLI alternative:</strong></p>
 <pre><code class="language-bash">cargo build --features hardware,probe
 zeroclaw hardware info
@@ -11328,7 +11318,7 @@ probe-rs run --chip STM32F401RETx target/thumbv7em-none-eabihf/release/nucleo
 <tr><td>1</td><td>Connect Nucleo via USB</td></tr>
 <tr><td>2</td><td><code>cargo install probe-rs-tools --locked</code></td></tr>
 <tr><td>3</td><td><code>zeroclaw peripheral flash-nucleo</code></td></tr>
-<tr><td>4</td><td><code>zeroclaw onboard</code> → hardware step (or <code>zeroclaw config set peripherals.boards.0.path &lt;serial-port&gt;</code>)</td></tr>
+<tr><td>4</td><td><code>zeroclaw config set peripherals.boards.0.path &lt;serial-port&gt;</code> (and <code>board</code>, <code>transport</code> if not yet set)</td></tr>
 <tr><td>5</td><td><code>zeroclaw daemon</code> or <code>zeroclaw agent -a assistant -m "Turn on LED"</code></td></tr>
 </tbody>
 </table>
@@ -11386,7 +11376,7 @@ mv zeroclaw $PREFIX/bin/
 zeroclaw --version
 
 # Run setup
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <h2 id="direct-installation-via-adb"><a class="header" href="#direct-installation-via-adb">Direct Installation via ADB</a></h2>
 <p>For advanced users who want to run ZeroClaw outside Termux:</p>
@@ -11907,7 +11897,7 @@ systemctl --user start zeroclaw.service
 <p>For rootless setups, also run <code>loginctl enable-linger $USER</code> so the service starts before you log in.</p>
 <h2 id="post-install-native-non-container-setup"><a class="header" href="#post-install-native-non-container-setup">Post-Install: Native (non-container) setup</a></h2>
 <h3 id="1-initialize-zeroclaw"><a class="header" href="#1-initialize-zeroclaw">1. Initialize ZeroClaw</a></h3>
-<pre><code class="language-bash">zeroclaw onboard
+<pre><code class="language-bash">zeroclaw quickstart
 </code></pre>
 <p>This walks you through provider auth, gateway config, and creates <code>~/.zeroclaw/config.toml</code>.</p>
 <h3 id="2-verify-it-works"><a class="header" href="#2-verify-it-works">2. Verify it works</a></h3>
@@ -13105,7 +13095,7 @@ cargo mdbook stats   # review coverage
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="building-the-web-dashboard"><a class="header" href="#building-the-web-dashboard">Building the web dashboard</a></h1>
 <p>The web dashboard at <code>web/</code> is a Vite + React + TypeScript app. Its TypeScript API client is generated from the gateway’s runtime OpenAPI spec, not hand-written. Both the spec snapshot and the generated client are derived artifacts — neither is committed.</p>
-<h2 id="quickstart-1"><a class="header" href="#quickstart-1">Quickstart</a></h2>
+<h2 id="quickstart-3"><a class="header" href="#quickstart-3">Quickstart</a></h2>
 <pre><code class="language-bash">cargo web build         # production bundle into web/dist/
 cargo web dev           # vite dev server with HMR
 cargo web check         # typecheck only (gen-api + tsc -b)

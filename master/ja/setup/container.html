@@ -37,7 +37,7 @@
             const path_to_root = "../";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "../searchindex-9288cba3.js";
+            window.path_to_searchindex_js = "../searchindex-035eb3a5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-658f1f54.js"></script>
@@ -223,8 +223,8 @@
   -p 42617:42617 \
   ghcr.io/zeroclaw-labs/zeroclaw:latest
 </code></pre>
-<p>このイメージは <code>/zeroclaw-data</code> に永続的な状態を期待します。初回実行時にデフォルトの構成をブートストラップしますが、まだ初期設定が必要です。</p>
-<pre><code class="language-bash">docker exec -it zeroclaw zeroclaw onboard
+<p>The image expects persistent state at <code>/zeroclaw-data</code>. On first run, it bootstraps a default config — you still need to run quickstart before it’s useful:</p>
+<pre><code class="language-bash">docker exec -it zeroclaw zeroclaw quickstart
 </code></pre>
 <h2 id="作成"><a class="header" href="#作成">作成</a></h2>
 <p>最小限の <code>docker-compose.yml</code>:</p>
@@ -239,8 +239,8 @@
     環境:
       ZEROCLAW_ALLOW_PUBLIC_BIND: "1"   # ゲートウェイが LAN 上で到達可能である場合にのみ
 </code></pre>
-<p>コンテナの起動後、オンボーディングを実行します:</p>
-<pre><code class="language-bash">docker compose exec zeroclaw zeroclaw onboard
+<p>After the container starts, run quickstart:</p>
+<pre><code class="language-bash">docker compose exec zeroclaw zeroclaw quickstart
 </code></pre>
 <p>ローカルアクセスのみが必要な場合は、<code>ZEROCLAW_ALLOW_PUBLIC_BIND</code> を削除してください。</p>
 <h2 id="コンテナ内の設定"><a class="header" href="#コンテナ内の設定">コンテナ内の設定</a></h2>
@@ -260,7 +260,7 @@
 <li><strong>ゲートウェイを公開する</strong> — <code>-p 42617:42617</code> + TLS付きリバースプロキシを前面に配置し、Webhook URLを公開アドレスに設定</li>
 <li><strong>トンネルを使用する</strong> — ngrok、Cloudflare Tunnel、または Tailscale Funnel を使用し、トンネルの URL をウェブフックのターゲットとして設定します。</li>
 </ol>
-<p><code>zeroclaw onboard tunnel</code> は ngrok または Cloudflare トンネルを直接構成します。生成された公開 URL が、Webhook 送信元のポイント先となります。</p>
+<p>Configure a tunnel via <code>zeroclaw config set gateway.tunnel.provider=&lt;ngrok|cloudflare&gt;</code> and the related <code>gateway.tunnel.*</code> fields (see the <a href="../reference/config.html">Config reference</a>); the resulting public URL is what you point your webhook senders at.</p>
 <h2 id="kubernetes"><a class="header" href="#kubernetes">Kubernetes</a></h2>
 <p>Helm chartテンプレートは<a href="https://github.com/zeroclaw-labs/zeroclaw-templates">zeroclaw-templates</a>リポジトリに公開されています。一般的なマニフェストの断片：</p>
 <pre><code class="language-yaml">apiVersion: apps/v1

@@ -37,7 +37,7 @@
             const path_to_root = "../";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "../searchindex-9288cba3.js";
+            window.path_to_searchindex_js = "../searchindex-035eb3a5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-658f1f54.js"></script>
@@ -319,7 +319,7 @@ channels = ["discord.default"]
 </table>
 </div>
 <h2 id="ペアリング"><a class="header" href="#ペアリング">ペアリング</a></h2>
-<p>ほとんどのチャネルでは <strong>ペアリング</strong> が必要です。これは、受信メッセージのソースをエージェントのポリシーに紐付ける一度限りのハンドシェイクです。<code>zeroclaw onboard channels</code> は、設定する各チャネルのペアリングを順を追って案内します。Telegram 固有のアイデンティティには <code>zeroclaw channel bind-telegram</code> を使用し、WhatsApp や Signal などのチャネルにはチャネル固有のガイドを使用してください。ペアリングを行わないと、チャネルはすべてを拒否します。</p>
+<p>Most channels require <strong>pairing</strong> — a one-time handshake that binds an incoming message source to the agent’s policy. Each channel’s setup guide (linked from the matrix above) walks through that channel’s pairing flow; <code>zeroclaw channel bind-telegram</code> handles Telegram-specific identities. Without pairing, the channel rejects everything.</p>
 <p>理由：公開のTelegramボットトークンを持ち、ペアリングが設定されていないエージェントは、誰でもアクセスできるシェルとなります。ペアリングがそのゲート（扉）となります。</p>
 <h2 id="ストリーミング機能"><a class="header" href="#ストリーミング機能">ストリーミング機能</a></h2>
 <p>チャンネルは、サポートするストリーミングの種類を宣言します。機能マトリックスおよび <code>supports_draft_updates</code> / <code>supports_multi_message_streaming</code> の意味については、<a href="../providers/streaming.html">プロバイダー → ストリーミング</a> を参照してください。</p>

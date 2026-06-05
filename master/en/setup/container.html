@@ -37,7 +37,7 @@
             const path_to_root = "../";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "../searchindex-46025493.js";
+            window.path_to_searchindex_js = "../searchindex-f99bfbf2.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-a9acbc87.js"></script>
@@ -223,8 +223,8 @@
   -p 42617:42617 \
   ghcr.io/zeroclaw-labs/zeroclaw:latest
 </code></pre>
-<p>The image expects persistent state at <code>/zeroclaw-data</code>. On first run, it bootstraps a default config — you still need to onboard before it’s useful:</p>
-<pre><code class="language-bash">docker exec -it zeroclaw zeroclaw onboard
+<p>The image expects persistent state at <code>/zeroclaw-data</code>. On first run, it bootstraps a default config — you still need to run quickstart before it’s useful:</p>
+<pre><code class="language-bash">docker exec -it zeroclaw zeroclaw quickstart
 </code></pre>
 <h2 id="compose"><a class="header" href="#compose">Compose</a></h2>
 <p>A minimal <code>docker-compose.yml</code>:</p>
@@ -239,8 +239,8 @@
     environment:
       ZEROCLAW_ALLOW_PUBLIC_BIND: "1"   # only if the gateway must be reachable on the LAN
 </code></pre>
-<p>After the container starts, run onboarding:</p>
-<pre><code class="language-bash">docker compose exec zeroclaw zeroclaw onboard
+<p>After the container starts, run quickstart:</p>
+<pre><code class="language-bash">docker compose exec zeroclaw zeroclaw quickstart
 </code></pre>
 <p>Drop <code>ZEROCLAW_ALLOW_PUBLIC_BIND</code> if you only need local access.</p>
 <h2 id="config-inside-containers"><a class="header" href="#config-inside-containers">Config inside containers</a></h2>
@@ -260,7 +260,7 @@
 <li><strong>Expose the gateway</strong> — <code>-p 42617:42617</code> + reverse proxy with TLS in front, point the webhook URL at the public address</li>
 <li><strong>Use a tunnel</strong> — ngrok, Cloudflare Tunnel, or Tailscale Funnel; set the tunnel URL as the webhook target</li>
 </ol>
-<p><code>zeroclaw onboard tunnel</code> configures ngrok or Cloudflare tunnels directly; the resulting public URL is what you point your webhook senders at.</p>
+<p>Configure a tunnel via <code>zeroclaw config set gateway.tunnel.provider=&lt;ngrok|cloudflare&gt;</code> and the related <code>gateway.tunnel.*</code> fields (see the <a href="../reference/config.html">Config reference</a>); the resulting public URL is what you point your webhook senders at.</p>
 <h2 id="kubernetes"><a class="header" href="#kubernetes">Kubernetes</a></h2>
 <p>Helm chart templates are published to the <a href="https://github.com/zeroclaw-labs/zeroclaw-templates">zeroclaw-templates</a> repo. Typical manifest fragment:</p>
 <pre><code class="language-yaml">apiVersion: apps/v1

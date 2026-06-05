@@ -37,7 +37,7 @@
             const path_to_root = "../";
             const default_light_theme = "default-dark";
             const default_dark_theme = "default-dark";
-            window.path_to_searchindex_js = "../searchindex-a018b5c8.js";
+            window.path_to_searchindex_js = "../searchindex-9060ffed.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-2b885720.js"></script>
@@ -232,22 +232,22 @@
 <li>安装到 <code>%USERPROFILE%\.zeroclaw\bin\zeroclaw.exe</code></li>
 <li>打印特定模式的后续步骤：
 <ul>
-<li><code>--prebuilt</code>、<code>--standard</code>、<code>--full</code>：运行 <code>zeroclaw onboard</code></li>
-<li><code>--minimal</code>：引导功能不可用；请手动配置 <code>%USERPROFILE%\.zeroclaw\config.toml</code>，并使用精简版 CLI 路径（<code>zeroclaw agent ...</code>）</li>
+<li><code>--prebuilt</code>, <code>--standard</code>, <code>--full</code>: run <code>zeroclaw quickstart</code></li>
+<li><code>--minimal</code>: quickstart is unavailable; configure <code>%USERPROFILE%\.zeroclaw\config.toml</code> manually and use the reduced CLI path (<code>zeroclaw agent ...</code>)</li>
 </ul>
 </li>
 </ol>
 <p>对于源码构建，<code>setup.bat</code> 现在会打印它所执行的确切 <code>cargo build ...</code> 命令，并报告已安装的 <code>zeroclaw.exe</code> 大小，以便命令形式和产物预期保持可见。</p>
 <h3 id="选项-2--scoop"><a class="header" href="#选项-2--scoop">选项 2 — Scoop</a></h3>
 <pre><code class="language-cmd">scoop install zeroclaw
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <h3 id="选项-3--从源代码"><a class="header" href="#选项-3--从源代码">选项 3 — 从源代码</a></h3>
 <p>需要 Rust（<code>rustup</code>）和 Visual Studio 构建工具：</p>
 <pre><code class="language-cmd">git clone https://github.com/zeroclaw-labs/zeroclaw
 cd zeroclaw
 cargo install --locked --path .
-zeroclaw onboard
+zeroclaw quickstart
 </code></pre>
 <h2 id="系统依赖"><a class="header" href="#系统依赖">系统依赖</a></h2>
 <p>Windows 构建使用 MSVC 工具链。你需要：</p>
