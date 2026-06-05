@@ -459,6 +459,31 @@ pub struct Config {
     #[nested]
     pub jira: JiraConfig,
 
+    /// Home Assistant integration configuration (`[home_assistant]`).
+    #[serde(default)]
+    #[nested]
+    pub home_assistant: HomeAssistantConfig,
+
+    /// Philips Hue integration configuration (`[philips_hue]`).
+    #[serde(default)]
+    #[nested]
+    pub philips_hue: PhilipsHueConfig,
+
+    /// Eight Sleep integration configuration (`[eight_sleep]`).
+    #[serde(default)]
+    #[nested]
+    pub eight_sleep: EightSleepConfig,
+
+    /// Spotify integration configuration (`[spotify]`).
+    #[serde(default)]
+    #[nested]
+    pub spotify: SpotifyConfig,
+
+    /// Sonos integration configuration (`[sonos]`).
+    #[serde(default)]
+    #[nested]
+    pub sonos: SonosConfig,
+
     /// Secure inter-node transport configuration (`[node_transport]`).
     #[serde(default)]
     #[nested]
@@ -13392,6 +13417,431 @@ impl Default for JiraConfig {
     }
 }
 
+// ── Home Assistant ──────────────────────────────────────────────
+
+/// Home Assistant integration configuration (`[home_assistant]`).
+///
+/// When `enabled = true`, registers the `home_assistant` tool which can read
+/// entity state and call services on a self-hosted Home Assistant instance via
+/// its REST API. Requires `base_url` (e.g. `http://homeassistant.local:8123`)
+/// and `access_token` (a long-lived access token), or the
+/// `HOME_ASSISTANT_TOKEN` env var.
+///
+/// ## Defaults
+/// - `enabled`: `false`
+/// - `allowed_domains`: `["light", "switch", "scene", "climate", "media_player",
+///   "input_boolean", "script", "automation"]` — the service domains the agent
+///   is permitted to call. Add or remove entries to widen or narrow the
+///   blast radius.
+/// - `request_timeout_secs`: `15`
+///
+/// ## Auth
+/// Generate a long-lived access token from the HA UI under
+/// *Profile → Security → Long-lived access tokens*. The token is stored
+/// encrypted at rest when `[secrets] encrypt = true`.
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "home-assistant"]
+#[integration(
+    category = "ToolsAutomation",
+    display_name = "Home Assistant",
+    description = "Home automation hub",
+    status_field = "enabled"
+)]
+pub struct HomeAssistantConfig {
+    /// Enable the `home_assistant` tool. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Home Assistant base URL, e.g. `http://homeassistant.local:8123`.
+    #[serde(default)]
+    pub base_url: String,
+    /// Long-lived access token. Encrypted at rest. Falls back to
+    /// `HOME_ASSISTANT_TOKEN` env var.
+    #[serde(default)]
+    #[secret]
+    #[credential_class = "encrypted_secret"]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub access_token: String,
+    /// Service domains the agent is permitted to call. Empty means
+    /// no `call_service` actions are allowed.
+    #[serde(default = "default_home_assistant_allowed_domains")]
+    pub allowed_domains: Vec<String>,
+    /// Request timeout in seconds. Default: `15`.
+    #[serde(default = "default_home_assistant_timeout_secs")]
+    pub request_timeout_secs: u64,
+}
+
+fn default_home_assistant_allowed_domains() -> Vec<String> {
+    vec![
+        "light".into(),
+        "switch".into(),
+        "scene".into(),
+        "climate".into(),
+        "media_player".into(),
+        "input_boolean".into(),
+        "script".into(),
+        "automation".into(),
+    ]
+}
+
+fn default_home_assistant_timeout_secs() -> u64 {
+    15
+}
+
+impl Default for HomeAssistantConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: String::new(),
+            access_token: String::new(),
+            allowed_domains: default_home_assistant_allowed_domains(),
+            request_timeout_secs: default_home_assistant_timeout_secs(),
+        }
+    }
+}
+
+// ── Philips Hue ─────────────────────────────────────────────────
+
+/// Philips Hue integration configuration (`[philips_hue]`).
+///
+/// When `enabled = true`, registers the `philips_hue` tool which can list
+/// and control lights, scenes, rooms, and groups on a local Philips Hue
+/// Bridge via its v2 CLIP API. Requires `bridge_address` (the bridge's IP
+/// or `<id>.local` hostname) and `application_key` (the bridge "username"
+/// minted via push-button pairing), or the `PHILIPS_HUE_APPLICATION_KEY`
+/// env var.
+///
+/// ## Defaults
+/// - `enabled`: `false`
+/// - `allowed_resource_types`: `["light", "grouped_light", "scene", "room"]` —
+///   the v2 resource types the agent is permitted to mutate. Read actions
+///   (`list_*`, `get_*`) ignore this allowlist.
+/// - `verify_tls`: `false` — Hue bridges present a self-signed certificate
+///   on the local network, so TLS verification is disabled by default.
+///   Set to `true` only if you have installed the bridge's CA in the
+///   system trust store.
+/// - `request_timeout_secs`: `15`
+///
+/// ## Auth (push-button pairing)
+/// First-time setup, performed once outside ZeroClaw:
+///
+/// 1. Discover the bridge IP via `https://discovery.meethue.com` or mDNS.
+/// 2. Press the round button on top of the bridge.
+/// 3. Within 30 seconds:
+///    `curl -k -X POST -d '{"devicetype":"zeroclaw#host","generateclientkey":true}' \`
+///    `      https://<bridge-ip>/api`
+/// 4. Copy the `username` from the response into `application_key`
+///    (or export `PHILIPS_HUE_APPLICATION_KEY`).
+///
+/// The application key is stored encrypted at rest when
+/// `[secrets] encrypt = true`.
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "philips-hue"]
+#[integration(
+    category = "ToolsAutomation",
+    display_name = "Philips Hue",
+    description = "Smart lighting via local Hue Bridge",
+    status_field = "enabled"
+)]
+pub struct PhilipsHueConfig {
+    /// Enable the `philips_hue` tool. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Hue Bridge address — IP (`192.168.1.42`) or mDNS hostname
+    /// (`<bridge-id>.local`).
+    #[serde(default)]
+    pub bridge_address: String,
+    /// Application key (bridge "username") minted via push-button pairing.
+    /// Encrypted at rest. Falls back to `PHILIPS_HUE_APPLICATION_KEY` env var.
+    #[serde(default)]
+    #[secret]
+    #[credential_class = "encrypted_secret"]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub application_key: String,
+    /// Resource types the agent is permitted to mutate (`set_*`, `recall_*`).
+    /// Empty means all mutations are blocked.
+    #[serde(default = "default_philips_hue_allowed_resource_types")]
+    pub allowed_resource_types: Vec<String>,
+    /// Verify TLS certificate of the bridge. Default `false` because
+    /// bridges ship with self-signed certs on the local network.
+    #[serde(default)]
+    pub verify_tls: bool,
+    /// Request timeout in seconds. Default: `15`.
+    #[serde(default = "default_philips_hue_timeout_secs")]
+    pub request_timeout_secs: u64,
+}
+
+fn default_philips_hue_allowed_resource_types() -> Vec<String> {
+    vec![
+        "light".into(),
+        "grouped_light".into(),
+        "scene".into(),
+        "room".into(),
+    ]
+}
+
+fn default_philips_hue_timeout_secs() -> u64 {
+    15
+}
+
+impl Default for PhilipsHueConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bridge_address: String::new(),
+            application_key: String::new(),
+            allowed_resource_types: default_philips_hue_allowed_resource_types(),
+            verify_tls: false,
+            request_timeout_secs: default_philips_hue_timeout_secs(),
+        }
+    }
+}
+
+// ── 8Sleep ──────────────────────────────────────────────────────
+
+/// 8Sleep Pod integration configuration (`[eight_sleep]`).
+///
+/// Controls bed temperature, priming, alarms, and reads sleep metrics
+/// through the 8Sleep cloud API. Uses JWT auth (email + password).
+///
+/// Disclaimer: 8Sleep does not publish a stable public API. This
+/// integration uses the same HTTPS endpoints the official mobile app
+/// calls and may break without notice.
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "eight_sleep"]
+pub struct EightSleepConfig {
+    /// Enable the `eight_sleep` tool. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// 8Sleep account email.
+    #[serde(default)]
+    pub email: String,
+    /// 8Sleep account password. Encrypted at rest.
+    /// Falls back to `EIGHT_SLEEP_PASSWORD` env var.
+    #[serde(default)]
+    #[secret]
+    #[credential_class = "encrypted_secret"]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub password: String,
+    /// Optional Pod device ID. When empty, the first device on the
+    /// account is used automatically.
+    #[serde(default)]
+    pub device_id: Option<String>,
+    /// Request timeout in seconds. Default: 30.
+    #[serde(default = "default_eight_sleep_timeout_secs")]
+    pub request_timeout_secs: u64,
+}
+
+fn default_eight_sleep_timeout_secs() -> u64 {
+    30
+}
+
+impl Default for EightSleepConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            email: String::new(),
+            password: String::new(),
+            device_id: None,
+            request_timeout_secs: default_eight_sleep_timeout_secs(),
+        }
+    }
+}
+
+// ── Spotify ─────────────────────────────────────────────────────
+
+/// Spotify integration configuration (`[spotify]`).
+///
+/// When `enabled = true`, registers the `spotify` tool which can read
+/// playback state, list devices and playlists, search the catalogue,
+/// and (when allowed) drive playback (play/pause/skip/volume) via the
+/// Spotify Web API.
+///
+/// ## Defaults
+/// - `enabled`: `false`
+/// - `allowed_actions`: read-only set —
+///   `["get_playback_state", "list_devices", "list_playlists", "search"]`.
+///   Add any of `play`, `pause`, `next`, `previous`, `set_volume` to
+///   enable the matching mutation.
+/// - `request_timeout_secs`: `15`
+///
+/// ## Auth
+/// Refresh-token flow only — no embedded auth dance. The operator
+/// performs the one-time OAuth exchange externally (see the setup guide)
+/// and pastes the resulting `refresh_token` into config (or sets
+/// `SPOTIFY_REFRESH_TOKEN`). The tool exchanges the refresh token for a
+/// short-lived access token at startup and on `401`. `client_secret` and
+/// `refresh_token` are encrypted at rest when `[secrets] encrypt = true`.
+///
+/// Required scopes when minting the refresh token: `user-read-playback-state`,
+/// `user-modify-playback-state`, `playlist-read-private`, `user-read-currently-playing`.
+///
+/// Note: playback control (`play`, `pause`, `next`, `previous`,
+/// `set_volume`) requires Spotify Premium on the controlled account.
+/// The tool surfaces upstream `403`s verbatim when the account is Free.
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "spotify"]
+#[integration(
+    category = "ToolsAutomation",
+    display_name = "Spotify",
+    description = "Music playback control",
+    status_field = "enabled"
+)]
+pub struct SpotifyConfig {
+    /// Enable the `spotify` tool. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Spotify developer-portal application client ID.
+    #[serde(default)]
+    pub client_id: String,
+    /// Spotify developer-portal application client secret. Encrypted at
+    /// rest. Falls back to `SPOTIFY_CLIENT_SECRET` env var.
+    #[serde(default)]
+    #[secret]
+    #[credential_class = "encrypted_secret"]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub client_secret: String,
+    /// Refresh token minted via the one-time OAuth flow. Encrypted at
+    /// rest. Falls back to `SPOTIFY_REFRESH_TOKEN` env var.
+    #[serde(default)]
+    #[secret]
+    #[credential_class = "encrypted_secret"]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub refresh_token: String,
+    /// Actions the agent is permitted to invoke. Read actions
+    /// (`get_playback_state`, `list_devices`, `list_playlists`, `search`)
+    /// must be present here too — empty list disables the tool entirely.
+    #[serde(default = "default_spotify_allowed_actions")]
+    pub allowed_actions: Vec<String>,
+    /// Request timeout in seconds. Default: `15`.
+    #[serde(default = "default_spotify_timeout_secs")]
+    pub request_timeout_secs: u64,
+}
+
+fn default_spotify_allowed_actions() -> Vec<String> {
+    vec![
+        "get_playback_state".into(),
+        "list_devices".into(),
+        "list_playlists".into(),
+        "search".into(),
+    ]
+}
+
+fn default_spotify_timeout_secs() -> u64 {
+    15
+}
+
+impl Default for SpotifyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            client_id: String::new(),
+            client_secret: String::new(),
+            refresh_token: String::new(),
+            allowed_actions: default_spotify_allowed_actions(),
+            request_timeout_secs: default_spotify_timeout_secs(),
+        }
+    }
+}
+
+// ── Sonos ───────────────────────────────────────────────────────
+
+/// Sonos integration configuration (`[sonos]`).
+///
+/// When `enabled = true`, registers the `sonos` tool which can list
+/// households, groups, and favorites, read playback state, and (when
+/// allowed) drive playback (play/pause/set_volume/play_favorite) via
+/// the official Sonos Control API at `api.ws.sonos.com`.
+///
+/// ## Defaults
+/// - `enabled`: `false`
+/// - `allowed_actions`: read-only set —
+///   `["list_households", "list_groups", "get_playback_status", "list_favorites"]`.
+///   Add any of `play`, `pause`, `set_volume`, `play_favorite` to enable
+///   the matching mutation.
+/// - `request_timeout_secs`: `15`
+///
+/// ## Auth
+/// Refresh-token flow only — no embedded auth dance. The operator
+/// performs the one-time OAuth exchange externally (see the setup guide)
+/// and pastes the resulting `refresh_token` into config (or sets
+/// `SONOS_REFRESH_TOKEN`). The tool exchanges the refresh token for a
+/// short-lived access token via `https://api.sonos.com/login/v3/oauth/access`,
+/// caches it in memory, and refreshes on `401` or when within 60s of
+/// expiry. `client_secret` and `refresh_token` are encrypted at rest
+/// when `[secrets] encrypt = true`.
+///
+/// Required scope when minting the refresh token: `playback-control-all`.
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "sonos"]
+#[integration(
+    category = "ToolsAutomation",
+    display_name = "Sonos",
+    description = "Multi-room audio control",
+    status_field = "enabled"
+)]
+pub struct SonosConfig {
+    /// Enable the `sonos` tool. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Sonos developer-portal application client ID.
+    #[serde(default)]
+    pub client_id: String,
+    /// Sonos developer-portal application client secret. Encrypted at
+    /// rest. Falls back to `SONOS_CLIENT_SECRET` env var.
+    #[serde(default)]
+    #[secret]
+    #[credential_class = "encrypted_secret"]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub client_secret: String,
+    /// Refresh token minted via the one-time OAuth flow. Encrypted at
+    /// rest. Falls back to `SONOS_REFRESH_TOKEN` env var.
+    #[serde(default)]
+    #[secret]
+    #[credential_class = "encrypted_secret"]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub refresh_token: String,
+    /// Actions the agent is permitted to invoke. Read actions
+    /// (`list_households`, `list_groups`, `get_playback_status`,
+    /// `list_favorites`) must be present here too — empty list disables
+    /// the tool entirely.
+    #[serde(default = "default_sonos_allowed_actions")]
+    pub allowed_actions: Vec<String>,
+    /// Request timeout in seconds. Default: `15`.
+    #[serde(default = "default_sonos_timeout_secs")]
+    pub request_timeout_secs: u64,
+}
+
+fn default_sonos_allowed_actions() -> Vec<String> {
+    vec![
+        "list_households".into(),
+        "list_groups".into(),
+        "get_playback_status".into(),
+        "list_favorites".into(),
+    ]
+}
+
+fn default_sonos_timeout_secs() -> u64 {
+    15
+}
+
+impl Default for SonosConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            client_id: String::new(),
+            client_secret: String::new(),
+            refresh_token: String::new(),
+            allowed_actions: default_sonos_allowed_actions(),
+            request_timeout_secs: default_sonos_timeout_secs(),
+        }
+    }
+}
+
 ///
 /// Controls the read-only cloud transformation analysis tools:
 /// IaC review, migration assessment, cost analysis, and architecture review.
@@ -13718,6 +14168,11 @@ impl Default for Config {
             onboard_state: OnboardStateConfig::default(),
             notion: NotionConfig::default(),
             jira: JiraConfig::default(),
+            home_assistant: HomeAssistantConfig::default(),
+            philips_hue: PhilipsHueConfig::default(),
+            eight_sleep: EightSleepConfig::default(),
+            spotify: SpotifyConfig::default(),
+            sonos: SonosConfig::default(),
             node_transport: NodeTransportConfig::default(),
             knowledge: KnowledgeConfig::default(),
             linkedin: LinkedInConfig::default(),
@@ -14270,6 +14725,16 @@ impl Config {
         vec![
             self.browser.integration_descriptor(),
             self.google_workspace.integration_descriptor(),
+            self.home_assistant.integration_descriptor(),
+            self.philips_hue.integration_descriptor(),
+            self.spotify.integration_descriptor(),
+            self.sonos.integration_descriptor(),
+            crate::config::IntegrationDescriptor {
+                display_name: "8Sleep",
+                description: "Pod temperature, priming, alarms & sleep metrics",
+                category: "ToolsAutomation",
+                active: self.eight_sleep.enabled,
+            },
             crate::config::IntegrationDescriptor {
                 display_name: "Cron",
                 description: "Scheduled tasks",
@@ -17238,6 +17703,11 @@ auto_save = true
             onboard_state: OnboardStateConfig::default(),
             notion: NotionConfig::default(),
             jira: JiraConfig::default(),
+            home_assistant: HomeAssistantConfig::default(),
+            philips_hue: PhilipsHueConfig::default(),
+            eight_sleep: EightSleepConfig::default(),
+            spotify: SpotifyConfig::default(),
+            sonos: SonosConfig::default(),
             node_transport: NodeTransportConfig::default(),
             knowledge: KnowledgeConfig::default(),
             linkedin: LinkedInConfig::default(),
@@ -17855,6 +18325,11 @@ default_temperature = 0.7
             onboard_state: OnboardStateConfig::default(),
             notion: NotionConfig::default(),
             jira: JiraConfig::default(),
+            home_assistant: HomeAssistantConfig::default(),
+            philips_hue: PhilipsHueConfig::default(),
+            eight_sleep: EightSleepConfig::default(),
+            spotify: SpotifyConfig::default(),
+            sonos: SonosConfig::default(),
             node_transport: NodeTransportConfig::default(),
             knowledge: KnowledgeConfig::default(),
             linkedin: LinkedInConfig::default(),

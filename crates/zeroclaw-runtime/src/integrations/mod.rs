@@ -148,6 +148,73 @@ pub fn show_integration_info(config: &Config, name: &str) -> Result<()> {
             println!("    Supports city names, IATA airport codes, GPS coordinates,");
             println!("    postal/zip codes, and Unicode location names.");
         }
+        "Home Assistant" => {
+            println!("  Setup:");
+            println!("    1. Generate a long-lived access token in HA:");
+            println!("       Profile → Security → Long-lived access tokens");
+            println!("    2. Add to config:");
+            println!("       [home_assistant]");
+            println!("       enabled = true");
+            println!("       base_url = \"http://homeassistant.local:8123\"");
+            println!("       access_token = \"...\"  # or set HOME_ASSISTANT_TOKEN");
+            println!("    3. Narrow `allowed_domains` to only the service domains you trust.");
+        }
+        "Philips Hue" => {
+            println!("  Setup:");
+            println!("    1. Discover bridge IP via https://discovery.meethue.com or mDNS.");
+            println!("    2. Press the round button on top of the bridge.");
+            println!("    3. Within 30 seconds, mint an application key:");
+            println!(
+                "       curl -k -X POST -d '{{\"devicetype\":\"zeroclaw#host\",\"generateclientkey\":true}}' \\"
+            );
+            println!("            https://<bridge-ip>/api");
+            println!("    4. Add to config:");
+            println!("       [philips_hue]");
+            println!("       enabled = true");
+            println!("       bridge_address = \"192.168.1.42\"");
+            println!("       application_key = \"...\"  # or set PHILIPS_HUE_APPLICATION_KEY");
+        }
+        "8Sleep" => {
+            println!("  Setup:");
+            println!("    1. Use your 8Sleep account email and password.");
+            println!("    2. Add to config:");
+            println!("       [eight_sleep]");
+            println!("       enabled = true");
+            println!("       email = \"you@example.com\"");
+            println!("       password = \"...\"  # or set EIGHT_SLEEP_PASSWORD");
+            println!("    Note: 8Sleep has no public API; endpoints may change without notice.");
+        }
+        "Spotify" => {
+            println!("  Setup:");
+            println!("    1. Register an app at https://developer.spotify.com/dashboard.");
+            println!("    2. Mint a refresh token (one-time external OAuth dance — see");
+            println!("       docs/book/src/tools/spotify.md for the recipe).");
+            println!("    3. Add to config:");
+            println!("       [spotify]");
+            println!("       enabled = true");
+            println!("       client_id = \"...\"");
+            println!("       client_secret = \"...\"  # or SPOTIFY_CLIENT_SECRET");
+            println!("       refresh_token = \"...\" # or SPOTIFY_REFRESH_TOKEN");
+            println!(
+                "    4. Default allowed_actions is read-only; add play/pause/etc to enable mutations."
+            );
+            println!("    Note: playback control requires Spotify Premium.");
+        }
+        "Sonos" => {
+            println!("  Setup:");
+            println!("    1. Register an integration at https://developer.sonos.com/.");
+            println!("    2. Mint a refresh token (one-time external OAuth dance — see");
+            println!("       docs/book/src/tools/sonos.md for the recipe).");
+            println!("    3. Add to config:");
+            println!("       [sonos]");
+            println!("       enabled = true");
+            println!("       client_id = \"...\"");
+            println!("       client_secret = \"...\"  # or SONOS_CLIENT_SECRET");
+            println!("       refresh_token = \"...\" # or SONOS_REFRESH_TOKEN");
+            println!(
+                "    4. Default allowed_actions is read-only; add play/pause/etc to enable mutations."
+            );
+        }
         _ if entry.category == IntegrationCategory::Chat => {
             println!("  Setup:");
             println!("    Run: zeroclaw config set channels.<name>.<field>=<value>");

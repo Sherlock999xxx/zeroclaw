@@ -61,6 +61,7 @@ pub use zeroclaw_tools::composio::ComposioTool;
 pub use zeroclaw_tools::content_search::ContentSearchTool;
 pub use zeroclaw_tools::data_management::DataManagementTool;
 pub use zeroclaw_tools::discord_search::DiscordSearchTool;
+pub use zeroclaw_tools::eight_sleep::EightSleepTool;
 pub use zeroclaw_tools::escalate::EscalateToHumanTool;
 pub use zeroclaw_tools::file_download::FileDownloadTool;
 pub use zeroclaw_tools::file_edit::FileEditTool;
@@ -74,6 +75,7 @@ pub use zeroclaw_tools::google_workspace::GoogleWorkspaceTool;
 pub use zeroclaw_tools::hardware_board_info::HardwareBoardInfoTool;
 pub use zeroclaw_tools::hardware_memory_map::HardwareMemoryMapTool;
 pub use zeroclaw_tools::hardware_memory_read::HardwareMemoryReadTool;
+pub use zeroclaw_tools::home_assistant::HomeAssistantTool;
 pub use zeroclaw_tools::http_request::HttpRequestTool;
 pub use zeroclaw_tools::image_gen::ImageGenTool;
 pub use zeroclaw_tools::image_info::ImageInfoTool;
@@ -98,6 +100,7 @@ pub use zeroclaw_tools::notion_tool::NotionTool;
 pub use zeroclaw_tools::opencode_cli::OpenCodeCliTool;
 #[cfg(feature = "rag-pdf")]
 pub use zeroclaw_tools::pdf_read::PdfReadTool;
+pub use zeroclaw_tools::philips_hue::PhilipsHueTool;
 pub use zeroclaw_tools::pipeline::PipelineTool;
 pub use zeroclaw_tools::poll::PollTool;
 pub use zeroclaw_tools::project_intel::ProjectIntelTool;
@@ -110,6 +113,8 @@ pub use zeroclaw_tools::sessions::{
     SessionDeleteTool, SessionResetTool, SessionsCurrentTool, SessionsHistoryTool,
     SessionsListTool, SessionsSendTool,
 };
+pub use zeroclaw_tools::sonos::SonosTool;
+pub use zeroclaw_tools::spotify::SpotifyTool;
 pub use zeroclaw_tools::text_browser::TextBrowserTool;
 pub use zeroclaw_tools::tool_search::ToolSearchTool;
 pub use zeroclaw_tools::weather_tool::WeatherTool;
@@ -823,6 +828,188 @@ pub fn all_tools_with_runtime(
                 root_config.jira.allowed_actions.clone(),
                 security.clone(),
                 root_config.jira.timeout_secs,
+            )));
+        }
+    }
+
+    // Home Assistant integration (config-gated)
+    if root_config.home_assistant.enabled {
+        let access_token = if root_config.home_assistant.access_token.trim().is_empty() {
+            std::env::var("HOME_ASSISTANT_TOKEN").unwrap_or_default()
+        } else {
+            root_config.home_assistant.access_token.trim().to_string()
+        };
+        if access_token.trim().is_empty() {
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "home_assistant: enabled but no access token found (set home_assistant.access_token or HOME_ASSISTANT_TOKEN env var) — skipping registration"
+            );
+        } else if root_config.home_assistant.base_url.trim().is_empty() {
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "home_assistant: enabled but home_assistant.base_url is empty — skipping registration"
+            );
+        } else {
+            tool_arcs.push(Arc::new(HomeAssistantTool::new(
+                root_config.home_assistant.base_url.trim().to_string(),
+                access_token,
+                root_config.home_assistant.allowed_domains.clone(),
+                root_config.home_assistant.request_timeout_secs,
+                security.clone(),
+            )));
+        }
+    }
+
+    // Philips Hue integration (config-gated)
+    if root_config.philips_hue.enabled {
+        let application_key = if root_config.philips_hue.application_key.trim().is_empty() {
+            std::env::var("PHILIPS_HUE_APPLICATION_KEY").unwrap_or_default()
+        } else {
+            root_config.philips_hue.application_key.trim().to_string()
+        };
+        if application_key.trim().is_empty() {
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "philips_hue: enabled but no application key found (set philips_hue.application_key or PHILIPS_HUE_APPLICATION_KEY env var) — skipping registration"
+            );
+        } else if root_config.philips_hue.bridge_address.trim().is_empty() {
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "philips_hue: enabled but philips_hue.bridge_address is empty — skipping registration"
+            );
+        } else {
+            match PhilipsHueTool::new(
+                root_config.philips_hue.bridge_address.trim().to_string(),
+                application_key,
+                root_config.philips_hue.allowed_resource_types.clone(),
+                root_config.philips_hue.verify_tls,
+                root_config.philips_hue.request_timeout_secs,
+                security.clone(),
+            ) {
+                Ok(tool) => tool_arcs.push(Arc::new(tool)),
+                Err(e) => ::zeroclaw_log::record!(
+                    WARN,
+                    ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                        .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
+                        .with_attrs(::serde_json::json!({"error": format!("{e}")})),
+                    "philips_hue: failed to construct HTTP client — skipping registration"
+                ),
+            }
+        }
+    }
+
+    // 8Sleep Pod integration (config-gated)
+    if root_config.eight_sleep.enabled {
+        let email = if root_config.eight_sleep.email.trim().is_empty() {
+            std::env::var("EIGHT_SLEEP_EMAIL").unwrap_or_default()
+        } else {
+            root_config.eight_sleep.email.trim().to_string()
+        };
+        let password = if root_config.eight_sleep.password.trim().is_empty() {
+            std::env::var("EIGHT_SLEEP_PASSWORD").unwrap_or_default()
+        } else {
+            root_config.eight_sleep.password.trim().to_string()
+        };
+        if email.is_empty() || password.is_empty() {
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "8Sleep tool enabled but no credentials found (set eight_sleep.email/password or EIGHT_SLEEP_EMAIL/EIGHT_SLEEP_PASSWORD env vars)"
+            );
+        } else {
+            tool_arcs.push(Arc::new(EightSleepTool::new(
+                email,
+                password,
+                root_config.eight_sleep.device_id.clone(),
+                root_config.eight_sleep.request_timeout_secs,
+                security.clone(),
+            )));
+        }
+    }
+
+    // Spotify integration (config-gated)
+    if root_config.spotify.enabled {
+        let client_id = if root_config.spotify.client_id.trim().is_empty() {
+            std::env::var("SPOTIFY_CLIENT_ID").unwrap_or_default()
+        } else {
+            root_config.spotify.client_id.trim().to_string()
+        };
+        let client_secret = if root_config.spotify.client_secret.trim().is_empty() {
+            std::env::var("SPOTIFY_CLIENT_SECRET").unwrap_or_default()
+        } else {
+            root_config.spotify.client_secret.trim().to_string()
+        };
+        let refresh_token = if root_config.spotify.refresh_token.trim().is_empty() {
+            std::env::var("SPOTIFY_REFRESH_TOKEN").unwrap_or_default()
+        } else {
+            root_config.spotify.refresh_token.trim().to_string()
+        };
+        if client_id.trim().is_empty()
+            || client_secret.trim().is_empty()
+            || refresh_token.trim().is_empty()
+        {
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "spotify: enabled but missing one of client_id, client_secret, refresh_token (or their SPOTIFY_* env vars) — skipping registration"
+            );
+        } else {
+            tool_arcs.push(Arc::new(SpotifyTool::new(
+                client_id,
+                client_secret,
+                refresh_token,
+                root_config.spotify.allowed_actions.clone(),
+                root_config.spotify.request_timeout_secs,
+                security.clone(),
+            )));
+        }
+    }
+
+    // Sonos integration (config-gated)
+    if root_config.sonos.enabled {
+        let client_id = if root_config.sonos.client_id.trim().is_empty() {
+            std::env::var("SONOS_CLIENT_ID").unwrap_or_default()
+        } else {
+            root_config.sonos.client_id.trim().to_string()
+        };
+        let client_secret = if root_config.sonos.client_secret.trim().is_empty() {
+            std::env::var("SONOS_CLIENT_SECRET").unwrap_or_default()
+        } else {
+            root_config.sonos.client_secret.trim().to_string()
+        };
+        let refresh_token = if root_config.sonos.refresh_token.trim().is_empty() {
+            std::env::var("SONOS_REFRESH_TOKEN").unwrap_or_default()
+        } else {
+            root_config.sonos.refresh_token.trim().to_string()
+        };
+        if client_id.trim().is_empty()
+            || client_secret.trim().is_empty()
+            || refresh_token.trim().is_empty()
+        {
+            ::zeroclaw_log::record!(
+                WARN,
+                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+                "sonos: enabled but missing one of client_id, client_secret, refresh_token (or their SONOS_* env vars) — skipping registration"
+            );
+        } else {
+            tool_arcs.push(Arc::new(SonosTool::new(
+                client_id,
+                client_secret,
+                refresh_token,
+                root_config.sonos.allowed_actions.clone(),
+                root_config.sonos.request_timeout_secs,
+                security.clone(),
             )));
         }
     }

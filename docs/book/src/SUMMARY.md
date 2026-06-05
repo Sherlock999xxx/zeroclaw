@@ -61,6 +61,11 @@
   - [Browser automation](./tools/browser.md)
   - [Skills](./tools/skills.md)
   - [Python skills](./tools/python-skills.md)
+  - [Home Assistant](./tools/home_assistant.md)
+  - [Philips Hue](./tools/philips_hue.md)
+  - [8Sleep](./tools/eight-sleep.md)
+  - [Spotify](./tools/spotify.md)
+  - [Sonos](./tools/sonos.md)
 
 - [Security & Autonomy](./security/overview.md)
   - [Autonomy levels](./security/autonomy.md)
