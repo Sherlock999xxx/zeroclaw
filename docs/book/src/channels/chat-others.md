@@ -186,6 +186,37 @@ databases = ["..."]                # DB IDs the agent can write to
 
 Treats a Notion database as a message surface. Useful for asynchronous workflows where the "channel" is a task inbox.
 
+## Rocket.Chat
+
+```toml
+[channels.rocketchat.default]
+enabled = true
+server_url = "https://chat.example.com"
+auth_token = "..."                 # Personal Access Token (My Account → Personal Access Tokens), sent as X-Auth-Token
+user_id = "..."                    # bot account's _id, sent as X-User-Id (shown next to the token)
+allowed_users = ["alice"]          # usernames without leading @; empty = deny all, "*" = allow all
+room_ids = ["GENERAL"]             # DM / channel / private-group IDs to poll
+poll_interval_secs = 10            # REST poll cadence
+```
+
+REST-polling channel. Mint a Personal Access Token in Rocket.Chat and copy both the token and the bot's `_id` into `auth_token` and `user_id`. The agent polls each listed `room_ids` for new messages every `poll_interval_secs`. Slot: alias-keyed `[channels.rocketchat.<alias>]`.
+
+## Zulip
+
+```toml
+[channels.zulip.default]
+enabled = true
+server_url = "https://yourorg.zulipchat.com"
+bot_email = "agent-bot@yourorg.zulipchat.com"   # HTTP Basic auth username
+api_key = "..."                                  # HTTP Basic auth password (Personal settings → Bots → Add a new bot)
+allowed_users = ["alice@yourorg.zulipchat.com"]  # empty = deny all, "*" = allow all (case-insensitive)
+streams = ["general"]                            # bot must be subscribed in the Zulip UI; empty = private messages only
+default_topic = "agent"                          # topic used when sending to a stream without an explicit topic
+event_timeout_secs = 60                          # long-poll timeout for GET /api/v1/events
+```
+
+Long-poll channel against the Zulip Events API. Create a bot under **Personal settings → Bots → Add a new bot** and copy the bot email + API key. Subscribe the bot to each stream in `streams` from the Zulip UI (v1 does not auto-subscribe). Inbound mentions/messages arrive via long-polled `GET /api/v1/events`. Slot: alias-keyed `[channels.zulip.<alias>]`.
+
 ---
 
 ## When to prefer a dedicated guide

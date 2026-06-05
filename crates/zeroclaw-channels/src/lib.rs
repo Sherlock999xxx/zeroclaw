@@ -39,10 +39,14 @@ pub mod imessage;
 pub mod irc;
 #[cfg(feature = "channel-lark")]
 pub mod lark;
+#[cfg(feature = "channel-lemmy")]
+pub mod lemmy;
 #[cfg(feature = "channel-line")]
 pub mod line;
 #[cfg(feature = "channel-linq")]
 pub mod linq;
+#[cfg(feature = "channel-mastodon")]
+pub mod mastodon;
 #[cfg(feature = "channel-matrix")]
 pub mod matrix;
 #[cfg(feature = "channel-mattermost")]
@@ -59,6 +63,8 @@ pub mod notion;
 pub mod qq;
 #[cfg(feature = "channel-reddit")]
 pub mod reddit;
+#[cfg(feature = "channel-rocketchat")]
+pub mod rocketchat;
 #[cfg(feature = "channel-signal")]
 pub mod signal;
 #[cfg(feature = "channel-slack")]
@@ -87,3 +93,5 @@ pub mod whatsapp;
 pub mod whatsapp_storage;
 #[cfg(feature = "whatsapp-web")]
 pub mod whatsapp_web;
+#[cfg(feature = "channel-zulip")]
+pub mod zulip;

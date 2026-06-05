@@ -66,6 +66,42 @@ subreddit = "rust"                        # optional: filter to a single subredd
 - **Inbound:** new posts and comments in the configured subreddit (or all subreddits the bot has access to when `subreddit` is unset), plus replies to the agent's own posts.
 - **Outbound:** posts, comments, private messages.
 
+## Mastodon
+
+```toml
+[channels.mastodon.default]
+enabled = true
+instance_url = "https://mastodon.social"
+access_token = "..."                       # Settings → Development → New Application (read, write:statuses, read:notifications)
+allowed_users = ["alice@mastodon.social"]  # user@instance; empty = deny all, "*" = allow all
+mention_only = true                        # only respond to statuses that @-mention the bot (DMs always count)
+visibility = "direct"                      # direct | private | unlisted | public — outbound reply visibility
+poll_interval_secs = 60                    # notification poll cadence
+```
+
+- **Auth:** a personal access token from the instance's Development settings. Needs `read`, `write:statuses`, and `read:notifications` scopes.
+- **Inbound:** ActivityPub notifications — mentions and direct messages polled every `poll_interval_secs`.
+- **Outbound:** status replies posted at the configured `visibility` (defaults to `direct` so replies are not broadcast to public timelines).
+- **Slot:** alias-keyed `[channels.mastodon.<alias>]` (any ActivityPub-compatible instance).
+
+## Lemmy
+
+```toml
+[channels.lemmy.default]
+enabled = true
+instance_url = "https://lemmy.world"
+username = "your-bot"                       # required when `jwt` is empty
+password = "..."                            # required when `jwt` is empty (prefer jwt in production)
+jwt = ""                                    # pre-minted JWT; takes precedence over username/password, required for 2FA accounts
+allowed_users = ["alice", "bob@lemmy.world"]  # bare or instance-qualified; empty = deny all, "*" = allow all
+poll_interval_secs = 30                     # private-message poll cadence (min 5)
+```
+
+- **Auth:** username + password auto-login at startup, or a pre-minted `jwt` (recommended for production, required for 2FA-enabled accounts).
+- **Inbound:** private messages via `GET /api/v3/private_message/list`, polled every `poll_interval_secs`.
+- **Outbound:** private-message replies.
+- **Slot:** alias-keyed `[channels.lemmy.<alias>]`.
+
 ---
 
 ## Operating social channels safely

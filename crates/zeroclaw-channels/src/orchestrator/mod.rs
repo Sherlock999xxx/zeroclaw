@@ -46,6 +46,8 @@ pub use crate::lark::LarkChannel;
 pub use crate::line::LineChannel;
 #[cfg(feature = "channel-linq")]
 pub use crate::linq::LinqChannel;
+#[cfg(feature = "channel-mastodon")]
+pub use crate::mastodon::MastodonChannel;
 #[cfg(feature = "channel-mattermost")]
 pub use crate::mattermost::MattermostChannel;
 #[cfg(feature = "channel-mochat")]
@@ -60,6 +62,8 @@ pub use crate::notion::NotionChannel;
 pub use crate::qq::QQChannel;
 #[cfg(feature = "channel-reddit")]
 pub use crate::reddit::RedditChannel;
+#[cfg(feature = "channel-rocketchat")]
+pub use crate::rocketchat::RocketChatChannel;
 #[cfg(feature = "channel-signal")]
 pub use crate::signal::SignalChannel;
 #[cfg(feature = "channel-slack")]
@@ -84,9 +88,13 @@ pub use crate::wecom::WeComChannel;
 pub use crate::wecom_ws::WeComWsChannel;
 #[cfg(feature = "channel-whatsapp-cloud")]
 pub use crate::whatsapp::WhatsAppChannel;
+#[cfg(feature = "channel-zulip")]
+pub use crate::zulip::ZulipChannel;
 pub use zeroclaw_api::channel::{Channel, ChannelMessage, SendMessage};
 // Local channel types (in misc, not zeroclaw-channels)
 pub use crate::cli::CliChannel;
+#[cfg(feature = "channel-lemmy")]
+pub use crate::lemmy::LemmyChannel;
 pub use crate::link_enricher;
 #[cfg(feature = "channel-matrix")]
 pub use crate::matrix::MatrixChannel;
@@ -5308,6 +5316,91 @@ fn build_channel_by_id(
         "mattermost" => {
             anyhow::bail!("Mattermost channel requires the `channel-mattermost` feature");
         }
+        #[cfg(feature = "channel-mastodon")]
+        "mastodon" => {
+            let m = config
+                .channels
+                .mastodon
+                .get("default")
+                .context("Mastodon channel is not configured")?;
+            Ok(Arc::new(MastodonChannel::new(
+                m.instance_url.clone(),
+                m.access_token.clone(),
+                m.allowed_users.clone(),
+                m.mention_only,
+                m.visibility,
+                m.poll_interval_secs,
+                "default",
+            )))
+        }
+        #[cfg(not(feature = "channel-mastodon"))]
+        "mastodon" => {
+            anyhow::bail!("Mastodon channel requires the `channel-mastodon` feature");
+        }
+        #[cfg(feature = "channel-rocketchat")]
+        "rocketchat" => {
+            let rc = config
+                .channels
+                .rocketchat
+                .get("default")
+                .context("Rocket.Chat channel is not configured")?;
+            Ok(Arc::new(RocketChatChannel::new(
+                rc.server_url.clone(),
+                rc.auth_token.clone(),
+                rc.user_id.clone(),
+                rc.allowed_users.clone(),
+                rc.room_ids.clone(),
+                rc.poll_interval_secs,
+                "default",
+            )))
+        }
+        #[cfg(not(feature = "channel-rocketchat"))]
+        "rocketchat" => {
+            anyhow::bail!("Rocket.Chat channel requires the `channel-rocketchat` feature");
+        }
+        #[cfg(feature = "channel-zulip")]
+        "zulip" => {
+            let zu = config
+                .channels
+                .zulip
+                .get("default")
+                .context("Zulip channel is not configured")?;
+            Ok(Arc::new(ZulipChannel::new(
+                zu.server_url.clone(),
+                zu.bot_email.clone(),
+                zu.api_key.clone(),
+                zu.allowed_users.clone(),
+                zu.streams.clone(),
+                zu.default_topic.clone(),
+                zu.event_timeout_secs,
+                "default",
+            )))
+        }
+        #[cfg(not(feature = "channel-zulip"))]
+        "zulip" => {
+            anyhow::bail!("Zulip channel requires the `channel-zulip` feature");
+        }
+        #[cfg(feature = "channel-lemmy")]
+        "lemmy" => {
+            let lm = config
+                .channels
+                .lemmy
+                .get("default")
+                .context("Lemmy channel is not configured")?;
+            Ok(Arc::new(LemmyChannel::new(
+                lm.instance_url.clone(),
+                lm.username.clone(),
+                lm.password.clone(),
+                lm.jwt.clone(),
+                lm.allowed_users.clone(),
+                lm.poll_interval_secs,
+                "default",
+            )))
+        }
+        #[cfg(not(feature = "channel-lemmy"))]
+        "lemmy" => {
+            anyhow::bail!("Lemmy channel requires the `channel-lemmy` feature");
+        }
         #[cfg(feature = "channel-signal")]
         "signal" => {
             let sg = config
@@ -6235,6 +6328,143 @@ fn collect_configured_channels(
                 .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
             "Mattermost channel is configured but this build was compiled without \
              `channel-mattermost`; skipping Mattermost."
+        );
+    }
+
+    #[cfg(feature = "channel-mastodon")]
+    for (alias, m) in &config.channels.mastodon {
+        if !active_channel_aliases.contains(&format!("mastodon.{alias}")) {
+            continue;
+        }
+        if !m.enabled {
+            continue;
+        }
+        channels.push(ConfiguredChannel {
+            display_name: "Mastodon",
+            alias: Some(alias.clone()),
+            channel: Arc::new(MastodonChannel::new(
+                m.instance_url.clone(),
+                m.access_token.clone(),
+                m.allowed_users.clone(),
+                m.mention_only,
+                m.visibility,
+                m.poll_interval_secs,
+                alias.clone(),
+            )),
+        });
+    }
+
+    #[cfg(not(feature = "channel-mastodon"))]
+    if !config.channels.mastodon.is_empty() {
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "Mastodon channel is configured but this build was compiled without \
+             `channel-mastodon`; skipping Mastodon."
+        );
+    }
+
+    #[cfg(feature = "channel-rocketchat")]
+    for (alias, rc) in &config.channels.rocketchat {
+        if !active_channel_aliases.contains(&format!("rocketchat.{alias}")) {
+            continue;
+        }
+        if !rc.enabled {
+            continue;
+        }
+        channels.push(ConfiguredChannel {
+            display_name: "RocketChat",
+            alias: Some(alias.clone()),
+            channel: Arc::new(RocketChatChannel::new(
+                rc.server_url.clone(),
+                rc.auth_token.clone(),
+                rc.user_id.clone(),
+                rc.allowed_users.clone(),
+                rc.room_ids.clone(),
+                rc.poll_interval_secs,
+                alias.clone(),
+            )),
+        });
+    }
+
+    #[cfg(not(feature = "channel-rocketchat"))]
+    if !config.channels.rocketchat.is_empty() {
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "Rocket.Chat channel is configured but this build was compiled without \
+             `channel-rocketchat`; skipping Rocket.Chat."
+        );
+    }
+
+    #[cfg(feature = "channel-zulip")]
+    for (alias, zu) in &config.channels.zulip {
+        if !active_channel_aliases.contains(&format!("zulip.{alias}")) {
+            continue;
+        }
+        if !zu.enabled {
+            continue;
+        }
+        channels.push(ConfiguredChannel {
+            display_name: "Zulip",
+            alias: Some(alias.clone()),
+            channel: Arc::new(ZulipChannel::new(
+                zu.server_url.clone(),
+                zu.bot_email.clone(),
+                zu.api_key.clone(),
+                zu.allowed_users.clone(),
+                zu.streams.clone(),
+                zu.default_topic.clone(),
+                zu.event_timeout_secs,
+                alias.clone(),
+            )),
+        });
+    }
+
+    #[cfg(not(feature = "channel-zulip"))]
+    if !config.channels.zulip.is_empty() {
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "Zulip channel is configured but this build was compiled without \
+             `channel-zulip`; skipping Zulip."
+        );
+    }
+
+    #[cfg(feature = "channel-lemmy")]
+    for (alias, lm) in &config.channels.lemmy {
+        if !active_channel_aliases.contains(&format!("lemmy.{alias}")) {
+            continue;
+        }
+        if !lm.enabled {
+            continue;
+        }
+        channels.push(ConfiguredChannel {
+            display_name: "Lemmy",
+            alias: Some(alias.clone()),
+            channel: Arc::new(LemmyChannel::new(
+                lm.instance_url.clone(),
+                lm.username.clone(),
+                lm.password.clone(),
+                lm.jwt.clone(),
+                lm.allowed_users.clone(),
+                lm.poll_interval_secs,
+                alias.clone(),
+            )),
+        });
+    }
+
+    #[cfg(not(feature = "channel-lemmy"))]
+    if !config.channels.lemmy.is_empty() {
+        ::zeroclaw_log::record!(
+            WARN,
+            ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
+                .with_outcome(::zeroclaw_log::EventOutcome::Unknown),
+            "Lemmy channel is configured but this build was compiled without \
+             `channel-lemmy`; skipping Lemmy."
         );
     }
 

@@ -10353,6 +10353,22 @@ pub struct ChannelsConfig {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[nested]
     pub mattermost: HashMap<String, MattermostConfig>,
+    /// Mastodon channel instances (`[channels.mastodon.<alias>]`).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[nested]
+    pub mastodon: HashMap<String, MastodonConfig>,
+    /// Rocket.Chat channel instances (`[channels.rocketchat.<alias>]`).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[nested]
+    pub rocketchat: HashMap<String, RocketChatConfig>,
+    /// Zulip channel instances (`[channels.zulip.<alias>]`).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[nested]
+    pub zulip: HashMap<String, ZulipConfig>,
+    /// Lemmy channel instances (`[channels.lemmy.<alias>]`).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[nested]
+    pub lemmy: HashMap<String, LemmyConfig>,
     /// Webhook channel instances (`[channels.webhook.<alias>]`).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[nested]
@@ -10532,6 +10548,30 @@ impl ChannelsConfig {
                 name: "Mattermost",
                 desc: "connect to your bot",
                 configured: !self.mattermost.is_empty(),
+            },
+            ChannelInfo {
+                kind: "mastodon",
+                name: "Mastodon",
+                desc: "ActivityPub fediverse",
+                configured: !self.mastodon.is_empty(),
+            },
+            ChannelInfo {
+                kind: "rocketchat",
+                name: "Rocket.Chat",
+                desc: "Rocket.Chat REST API",
+                configured: !self.rocketchat.is_empty(),
+            },
+            ChannelInfo {
+                kind: "zulip",
+                name: "Zulip",
+                desc: "Zulip Events API",
+                configured: !self.zulip.is_empty(),
+            },
+            ChannelInfo {
+                kind: "lemmy",
+                name: "Lemmy",
+                desc: "Lemmy private messages",
+                configured: !self.lemmy.is_empty(),
             },
             ChannelInfo {
                 kind: "imessage",
@@ -10714,6 +10754,10 @@ impl ChannelsConfig {
             || self.discord.values().any(|c| c.enabled)
             || self.slack.values().any(|c| c.enabled)
             || self.mattermost.values().any(|c| c.enabled)
+            || self.mastodon.values().any(|c| c.enabled)
+            || self.rocketchat.values().any(|c| c.enabled)
+            || self.zulip.values().any(|c| c.enabled)
+            || self.lemmy.values().any(|c| c.enabled)
             || self.webhook.values().any(|c| c.enabled)
             || self.imessage.values().any(|c| c.enabled)
             || self.matrix.values().any(|c| c.enabled)
@@ -10761,6 +10805,10 @@ impl Default for ChannelsConfig {
             discord: HashMap::new(),
             slack: HashMap::new(),
             mattermost: HashMap::new(),
+            mastodon: HashMap::new(),
+            rocketchat: HashMap::new(),
+            zulip: HashMap::new(),
+            lemmy: HashMap::new(),
             webhook: HashMap::new(),
             imessage: HashMap::new(),
             matrix: HashMap::new(),
@@ -11102,6 +11150,301 @@ impl ChannelConfig for SlackConfig {
     }
     fn desc() -> &'static str {
         "connect your bot"
+    }
+}
+
+/// Default post visibility for outbound Mastodon statuses.
+///
+/// Defaults to `Direct` so that bot replies are not posted to public timelines
+/// unless an operator explicitly opts in. Mirrors Mastodon's own visibility
+/// states verbatim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum MastodonVisibility {
+    /// Direct message — only mentioned users see the status.
+    #[default]
+    Direct,
+    /// Followers-only post.
+    Private,
+    /// Visible everywhere except public/local timelines.
+    Unlisted,
+    /// Public, federated.
+    Public,
+}
+
+fn default_mastodon_poll_interval_secs() -> u64 {
+    60
+}
+
+fn default_mastodon_mention_only() -> bool {
+    true
+}
+
+/// Mastodon channel configuration (any ActivityPub-compatible instance).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "channels.mastodon"]
+pub struct MastodonConfig {
+    /// Whether this channel is active (must be explicitly enabled). Default: false.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub enabled: bool,
+    /// Instance base URL, e.g. `"https://mastodon.social"`. Trailing slash is
+    /// optional and stripped at load time.
+    #[tab(Connection)]
+    pub instance_url: String,
+    /// Personal access token minted via instance Settings → Development →
+    /// New Application. Requires the `read` and `write:statuses` scopes;
+    /// `read:notifications` is required for inbound listening.
+    #[secret]
+    #[tab(Connection)]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub access_token: String,
+    /// Allowed Mastodon accounts in `user@instance` form (e.g.
+    /// `"alice@mastodon.social"`). Empty list = deny all. `"*"` allows
+    /// everyone. Local-instance accounts may also be listed without the
+    /// `@instance` suffix.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+    /// When true (default), only respond to statuses that @-mention the bot
+    /// account. Direct messages always count as mentions.
+    #[tab(Behavior)]
+    #[serde(default = "default_mastodon_mention_only")]
+    pub mention_only: bool,
+    /// Default visibility for outbound replies. See `MastodonVisibility`.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub visibility: MastodonVisibility,
+    /// Interval (seconds) for the polling fallback when the streaming WebSocket
+    /// is unavailable (e.g. an instance behind a strict reverse proxy).
+    /// Default: 60.
+    #[tab(Advanced)]
+    #[serde(default = "default_mastodon_poll_interval_secs")]
+    pub poll_interval_secs: u64,
+
+    /// Tools excluded from this channel's tool spec. When set, these tools
+    /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub excluded_tools: Vec<String>,
+}
+
+impl ChannelConfig for MastodonConfig {
+    fn name() -> &'static str {
+        "Mastodon"
+    }
+    fn desc() -> &'static str {
+        "ActivityPub fediverse"
+    }
+}
+
+fn default_rocketchat_poll_interval_secs() -> u64 {
+    10
+}
+
+/// Rocket.Chat channel configuration (REST polling).
+///
+/// Mints a Personal Access Token in Rocket.Chat (My Account → Personal
+/// Access Tokens → Add) and copies both the token and the bot's `_id`
+/// into `auth_token` and `user_id` respectively. The agent polls each
+/// listed `room_ids` for new messages every `poll_interval_secs`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "channels.rocketchat"]
+pub struct RocketChatConfig {
+    /// Whether this channel is active (must be explicitly enabled). Default: false.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub enabled: bool,
+    /// Rocket.Chat server base URL, e.g. `"https://chat.example.com"`.
+    /// Trailing slash is optional and stripped at load time.
+    #[tab(Connection)]
+    pub server_url: String,
+    /// Personal Access Token sent as `X-Auth-Token`.
+    #[secret]
+    #[tab(Connection)]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub auth_token: String,
+    /// Bot account's Rocket.Chat `_id`, sent as `X-User-Id`. Shown next to
+    /// the token in the PAT creation dialog.
+    #[tab(Connection)]
+    pub user_id: String,
+    /// Allowed Rocket.Chat usernames (no leading `@`). Empty list = deny all.
+    /// `"*"` allows everyone.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+    /// Room IDs (DM, channel, or private group) to poll for new messages.
+    /// Find them via the RC web UI URL (`/channel/<name>` then look up `_id`
+    /// via the admin REST API, or open the channel in admin mode).
+    #[tab(Advanced)]
+    #[serde(default)]
+    pub room_ids: Vec<String>,
+    /// Polling cadence (seconds). Default: 10.
+    #[tab(Advanced)]
+    #[serde(default = "default_rocketchat_poll_interval_secs")]
+    pub poll_interval_secs: u64,
+
+    /// Tools excluded from this channel's tool spec. When set, these tools
+    /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub excluded_tools: Vec<String>,
+}
+
+impl ChannelConfig for RocketChatConfig {
+    fn name() -> &'static str {
+        "RocketChat"
+    }
+    fn desc() -> &'static str {
+        "Rocket.Chat (REST polling)"
+    }
+}
+
+fn default_zulip_event_timeout_secs() -> u64 {
+    60
+}
+
+fn default_zulip_topic() -> String {
+    "agent".to_string()
+}
+
+/// Zulip channel configuration (long-poll Events API).
+///
+/// Operator creates a bot in **Personal settings → Bots → Add a new bot**
+/// and copies the bot email + API key into `bot_email` and `api_key`. The
+/// bot must be subscribed to the streams listed in `streams` (do this from
+/// the Zulip web UI — v1 does not auto-subscribe).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "channels.zulip"]
+pub struct ZulipConfig {
+    /// Whether this channel is active (must be explicitly enabled). Default: false.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub enabled: bool,
+    /// Zulip server base URL, e.g. `"https://yourorg.zulipchat.com"` or
+    /// `"https://chat.example.com"`. Trailing slash is optional and stripped
+    /// at load time.
+    #[tab(Connection)]
+    pub server_url: String,
+    /// Bot email, e.g. `"agent-bot@yourorg.zulipchat.com"`. Sent as the HTTP
+    /// Basic auth username and used to suppress self-messages on inbound.
+    #[tab(Connection)]
+    pub bot_email: String,
+    /// Bot API key — sent as the HTTP Basic auth password.
+    #[secret]
+    #[tab(Connection)]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub api_key: String,
+    /// Allowed sender emails. Empty list = deny all. `"*"` allows everyone.
+    /// Comparison is case-insensitive.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+    /// Streams to listen on. The bot must be subscribed to each (operator
+    /// handles subscription in the Zulip UI). Empty list narrows to
+    /// private-message events only.
+    #[tab(Advanced)]
+    #[serde(default)]
+    pub streams: Vec<String>,
+    /// Default topic to use when sending to a stream without an explicit
+    /// topic in the recipient string. Default: `"agent"`.
+    #[tab(Advanced)]
+    #[serde(default = "default_zulip_topic")]
+    pub default_topic: String,
+    /// Long-poll timeout (seconds) for `GET /api/v1/events`. Zulip holds the
+    /// request open up to this duration before returning empty so we can
+    /// reissue. Default: 60.
+    #[tab(Advanced)]
+    #[serde(default = "default_zulip_event_timeout_secs")]
+    pub event_timeout_secs: u64,
+
+    /// Tools excluded from this channel's tool spec. When set, these tools
+    /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub excluded_tools: Vec<String>,
+}
+
+impl ChannelConfig for ZulipConfig {
+    fn name() -> &'static str {
+        "Zulip"
+    }
+    fn desc() -> &'static str {
+        "Zulip (long-poll Events API)"
+    }
+}
+
+fn default_lemmy_poll_interval_secs() -> u64 {
+    30
+}
+
+/// Lemmy channel configuration (private-message polling).
+///
+/// `username` + `password` for the channel to auto-login at startup. v1
+/// does not support 2FA — operators with 2FA on the bot account must use
+/// the pre-minted JWT path.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "channels.lemmy"]
+pub struct LemmyConfig {
+    /// Whether this channel is active (must be explicitly enabled). Default: false.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub enabled: bool,
+    /// Lemmy instance base URL, e.g. `"https://lemmy.world"`. Trailing
+    /// slash is optional and stripped at load time.
+    #[tab(Connection)]
+    pub instance_url: String,
+    /// Bot account username. Required when `jwt` is empty and the channel
+    /// must auto-login.
+    #[tab(Connection)]
+    #[serde(default)]
+    pub username: String,
+    /// Bot account password. Required when `jwt` is empty. Stored as a
+    /// secret. Prefer the pre-minted JWT path in production.
+    #[tab(Connection)]
+    #[serde(default)]
+    #[secret]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub password: String,
+    /// Pre-minted JWT. When non-empty, takes precedence over
+    /// username/password — the channel uses it directly and skips the
+    /// login call. Recommended for production deployments and required
+    /// for accounts with 2FA.
+    #[tab(Connection)]
+    #[serde(default)]
+    #[secret]
+    #[cfg_attr(feature = "schema-export", schemars(extend("x-secret" = true)))]
+    pub jwt: String,
+    /// Allowed sender Lemmy usernames. Either bare (`"alice"`) or
+    /// instance-qualified (`"alice@lemmy.world"`). Empty list = deny all.
+    /// `"*"` allows everyone. Comparison is case-insensitive.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+    /// Polling cadence (seconds) for `GET /api/v3/private_message/list`.
+    /// Default: 30. Lower bound 5.
+    #[tab(Advanced)]
+    #[serde(default = "default_lemmy_poll_interval_secs")]
+    pub poll_interval_secs: u64,
+
+    /// Tools excluded from this channel's tool spec. When set, these tools
+    /// are not exposed to the model when responding via this channel.
+    #[tab(Behavior)]
+    #[serde(default)]
+    pub excluded_tools: Vec<String>,
+}
+
+impl ChannelConfig for LemmyConfig {
+    fn name() -> &'static str {
+        "Lemmy"
+    }
+    fn desc() -> &'static str {
+        "Lemmy (private-message polling)"
     }
 }
 
@@ -16380,6 +16723,7 @@ impl_enum_prop_kind!(
     SearchMode,
     CronScheduleDecl,
     StreamMode,
+    MastodonVisibility,
     WhatsAppWebMode,
     WhatsAppChatPolicy,
     LineDmPolicy,
@@ -17163,6 +17507,10 @@ auto_save = true
                 discord: HashMap::new(),
                 slack: HashMap::new(),
                 mattermost: HashMap::new(),
+                mastodon: HashMap::new(),
+                rocketchat: HashMap::new(),
+                zulip: HashMap::new(),
+                lemmy: HashMap::new(),
                 webhook: HashMap::new(),
                 imessage: HashMap::new(),
                 matrix: HashMap::new(),
@@ -18573,6 +18921,10 @@ allowed_users = ["@u:matrix.org"]
             discord: HashMap::new(),
             slack: HashMap::new(),
             mattermost: HashMap::new(),
+            mastodon: HashMap::new(),
+            rocketchat: HashMap::new(),
+            zulip: HashMap::new(),
+            lemmy: HashMap::new(),
             webhook: HashMap::new(),
             imessage: HashMap::from([(
                 "default".to_string(),
@@ -18999,6 +19351,10 @@ allowed_numbers = ["+1", "+2"]
             discord: HashMap::new(),
             slack: HashMap::new(),
             mattermost: HashMap::new(),
+            mastodon: HashMap::new(),
+            rocketchat: HashMap::new(),
+            zulip: HashMap::new(),
+            lemmy: HashMap::new(),
             webhook: HashMap::new(),
             imessage: HashMap::new(),
             matrix: HashMap::new(),

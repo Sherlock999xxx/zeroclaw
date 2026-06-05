@@ -84,8 +84,10 @@ pub enum ChannelKind {
     IMessage,
     Irc,
     Lark,
+    Lemmy,
     Line,
     Linq,
+    Mastodon,
     Matrix,
     Mattermost,
     #[strum(serialize = "mochat")]
@@ -95,6 +97,7 @@ pub enum ChannelKind {
     Notion,
     Qq,
     Reddit,
+    Rocketchat,
     Signal,
     Slack,
     Telegram,
@@ -110,6 +113,7 @@ pub enum ChannelKind {
     Wechat,
     WhatsappBusiness,
     WhatsappWeb,
+    Zulip,
 }
 
 /// Built-in tool implementations. Closed set — plugins that need their

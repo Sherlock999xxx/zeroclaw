@@ -44,6 +44,26 @@ const CHANNEL_COMPILE_SPECS: &[ChannelCompileSpec] = &[
         compiled: cfg!(feature = "channel-mattermost"),
     },
     ChannelCompileSpec {
+        schema_name: Some("Mastodon"),
+        type_keys: &["mastodon"],
+        compiled: cfg!(feature = "channel-mastodon"),
+    },
+    ChannelCompileSpec {
+        schema_name: Some("Rocket.Chat"),
+        type_keys: &["rocketchat"],
+        compiled: cfg!(feature = "channel-rocketchat"),
+    },
+    ChannelCompileSpec {
+        schema_name: Some("Zulip"),
+        type_keys: &["zulip"],
+        compiled: cfg!(feature = "channel-zulip"),
+    },
+    ChannelCompileSpec {
+        schema_name: Some("Lemmy"),
+        type_keys: &["lemmy"],
+        compiled: cfg!(feature = "channel-lemmy"),
+    },
+    ChannelCompileSpec {
         schema_name: Some("iMessage"),
         type_keys: &["imessage"],
         compiled: cfg!(feature = "channel-imessage"),
